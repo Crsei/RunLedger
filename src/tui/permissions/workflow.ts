@@ -108,7 +108,11 @@ export class PermissionsWorkflow {
 	#openFullAccessConfirmation(view: PermissionSettingsView): void {
 		const modal = new SecondarySelectionView({
 			title: "Confirm Full Access",
-			subtitle: "This allows editing files outside this workspace and network access without routine approval.",
+			subtitle: "Allow normal commands, files outside this workspace and network access.",
+			detailLines: [
+				"System-destructive operations still require one-time confirmation.",
+				"Deny rules and policy protections remain active.",
+			],
 			items: [
 				{ value: "confirm", name: "Continue with Full Access", description: "Use only when you understand the risks." },
 				{ value: "cancel", name: "Cancel", description: "Return to the permission choices." },

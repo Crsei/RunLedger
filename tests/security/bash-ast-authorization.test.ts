@@ -171,8 +171,8 @@ describe("Bash AST authorization", () => {
 	it.each([
 		["guarded on-request", snapshot("on-request"), "ask"],
 		["approval never", snapshot("never"), "deny"],
-		["YOLO", snapshot("never", { yolo: true }), "deny"],
-	] as const)("fails closed for unavailable AST in %s", async (_name, policy, decision) => {
+		["Full Access", snapshot("never", { yolo: true }), "allow"],
+	] as const)("applies profile policy to unavailable AST in %s", async (_name, policy, decision) => {
 		const resolved = await resolveToolAccessRequestsWithBashAnalyzer(
 			"bash",
 			{ command: "git status" },
@@ -191,7 +191,7 @@ describe("Bash AST authorization", () => {
 		const evaluation = new PermissionEngine().evaluate(resolved.value, policy);
 		expect(evaluation.decision).toBe(decision);
 		expect(evaluation.requestDecisions[0]?.matchedRuleIds)
-			.toContain("builtin-shell-ast-failure");
+			.toContain(decision === "allow" ? "builtin-shell-full-access" : "builtin-shell-ast-failure");
 	});
 
 	it("keeps AST failure conservative under untrusted and granular approval", () => {
@@ -207,7 +207,7 @@ describe("Bash AST authorization", () => {
 		expect(new PermissionEngine().evaluate([request], snapshot("granular", { granularRules: false })).decision).toBe("deny");
 	});
 
-	it("keeps hardline and managed deny stronger than AST simple and YOLO", () => {
+	it("keeps circuit confirmation and managed deny stronger than AST simple and Full Access", () => {
 		const hardline = new PermissionEngine().evaluate([{
 			kind: "shell",
 			command: "rm -rf /",
@@ -216,9 +216,9 @@ describe("Bash AST authorization", () => {
 			bashAnalyzerMode: "ast",
 			bashAst: SIMPLE,
 		}], snapshot("never", { yolo: true }));
-		expect(hardline.decision).toBe("deny");
+		expect(hardline.decision).toBe("ask");
 		expect(hardline.requestDecisions[0]?.matchedRuleIds)
-			.toContain("builtin-shell-hardline");
+			.toContain("builtin-shell-circuit-breaker");
 
 		const managedDeny: SecurityRule = {
 			id: "managed-deny-shell",
@@ -239,7 +239,7 @@ describe("Bash AST authorization", () => {
 		expect(managed.requestDecisions[0]?.matchedRuleIds).toEqual([managedDeny.id]);
 	});
 
-	it("does not let an allow rule override hardline or AST failure", () => {
+	it("does not let an allow rule override circuit confirmation or guarded AST failure", () => {
 		const allow: SecurityRule = {
 			id: "project-allow-shell",
 			action: "allow",
@@ -256,9 +256,9 @@ describe("Bash AST authorization", () => {
 			bashAnalyzerMode: "ast",
 			bashAst: SIMPLE,
 		}], policy);
-		expect(hardline.decision).toBe("deny");
+		expect(hardline.decision).toBe("ask");
 		expect(hardline.requestDecisions[0]?.matchedRuleIds)
-			.toContain("builtin-shell-hardline");
+			.toContain("builtin-shell-circuit-breaker");
 
 		const unavailable = new PermissionEngine().evaluate([{
 			kind: "shell",

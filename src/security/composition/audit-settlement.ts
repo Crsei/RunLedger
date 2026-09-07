@@ -14,6 +14,7 @@ import type { SecurityResult } from "../types.ts";
 
 export async function settleGatewayEffect<T>(context: ExecutionGatewayContext, effect: () => Promise<T>): Promise<T> {
 	try {
+		unwrapSecurityResult(await context.validateAuthorization());
 		const value = await effect();
 		unwrapSecurityResult(await context.complete());
 		return value;

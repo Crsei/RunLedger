@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { approvalDecisionBody, parseApprovalReverseRequest } from "../../src/tui/approval.ts";
+import { approvalChoices, approvalDecisionBody, approvalShellCommand, parseApprovalReverseRequest } from "../../src/tui/approval.ts";
 
 describe("TUI approval reverse request projection", () => {
+	it("shows only exact confirmation choices for system circuit breakers, including AST redirect requests", () => {
+		const view = parseApprovalReverseRequest({
+			requestType: "permission", toolName: "bash", summary: "System circuit breaker: system_shutdown",
+			requiresExplicitConfirmation: true,
+			requests: [
+				{ kind: "shell", command: "reboot > /tmp/reboot.log", cwd: "/workspace", analysis: "known" },
+				{ kind: "filesystem", operation: "write", path: "/tmp/reboot.log" },
+			],
+		});
+		expect(approvalChoices(view).map((choice) => choice.decision.decision)).toEqual(["allow-once", "deny", "cancel"]);
+		expect(approvalShellCommand(view)).toBe("reboot > /tmp/reboot.log");
+	});
 	it("accepts only bounded permission prompts and exposes safe display fields", () => {
 		expect(parseApprovalReverseRequest({
 			requestType: "permission",

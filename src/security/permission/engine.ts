@@ -6,6 +6,13 @@ import type { AccessRequest, PolicyDecision, SecurityAccessEvaluation, SecurityS
 import { resolveFilesystemAccess } from "./filesystem-entries.ts";
 import { aggregatePolicyDecisions, strongestRuleDecision } from "./rule-matcher.ts";
 import { analyzeShellCommand, hardlineShellDenialReason } from "./shell-analyzer.ts";
+import { isPolicyControlMutation, POLICY_CONTROL_REASON, shellPolicyControlMutation } from "./policy-control.ts";
+
+export const CIRCUIT_BREAKER_RULE = "builtin-shell-circuit-breaker";
+
+export function requiresExplicitConfirmation(evaluation: SecurityAccessEvaluation): boolean {
+	return evaluation.requestDecisions.some((decision) => decision.matchedRuleIds.includes(CIRCUIT_BREAKER_RULE));
+}
 
 const DANGEROUS = new Set(["rm", "chmod", "chown", "chgrp", "kill", "pkill", "sudo", "tee"]);
 
@@ -25,6 +32,7 @@ function builtinDecision(request: AccessRequest, snapshot: SecuritySnapshot): Po
 	switch (request.kind) {
 		case "filesystem": {
 			const target = resolve(snapshot.workspaceRoot, request.path);
+			if (request.operation !== "read" && isPolicyControlMutation(target, snapshot)) return { action: "deny", reason: POLICY_CONTROL_REASON, matchedRuleIds: ["builtin-policy-control"], source: "builtin" };
 			const protectedPath = snapshot.filesystem.protectedPaths.some((path) => within(path, target));
 			if (protectedPath) return { action: "deny", reason: "target is a protected control-plane path", matchedRuleIds: ["builtin-protected-path"], source: "builtin" };
 			const denied = request.operation === "read" ? snapshot.filesystem.denyRead : snapshot.filesystem.denyWrite;
@@ -71,8 +79,15 @@ function builtinDecision(request: AccessRequest, snapshot: SecuritySnapshot): Po
 		}
 		case "shell": {
 			const hardlineReason = hardlineShellDenialReason(request.command);
-			if (hardlineReason) return { action: "deny", reason: `hardline shell policy denied ${hardlineReason}`, matchedRuleIds: ["builtin-shell-hardline"], source: "builtin" };
+			const circuitReason = hardlineReason ?? hardlineShellDenialReason(request.command, 0, { cwd: request.cwd ?? snapshot.workspaceRoot, homeDirectories: snapshot.homeDirectories });
+			if (circuitReason === "fork_bomb" || circuitReason === "kill_all") return { action: "deny", reason: `hardline shell policy denied ${circuitReason}`, matchedRuleIds: ["builtin-shell-hardline"], source: "builtin" };
+			const protectAncestors = circuitReason !== "system_root_delete" && circuitReason !== "system_home_delete";
+			if (shellPolicyControlMutation(request.command, snapshot, request.cwd ?? snapshot.workspaceRoot, protectAncestors)) return { action: "deny", reason: POLICY_CONTROL_REASON, matchedRuleIds: ["builtin-policy-control"], source: "builtin" };
+			if (circuitReason) return { action: "ask", reason: `System circuit breaker: ${circuitReason}; explicit one-time user confirmation is required`, matchedRuleIds: [CIRCUIT_BREAKER_RULE], source: "builtin" };
 			const analyzerMode = request.bashAnalyzerMode ?? snapshot.bashAnalyzer?.mode ?? "legacy";
+			const managedAst = snapshot.managedConstraints?.minimumBashAnalyzerMode === "ast" || (snapshot.bashAnalyzer?.source === "managed" && snapshot.bashAnalyzer.mode === "ast");
+			if (managedAst && (analyzerMode !== "ast" || request.bashAst?.kind !== "simple")) return { action: "ask", reason: "Bash AST classification failed closed: managed policy requires a classified command", matchedRuleIds: ["builtin-shell-ast-failure"], source: "managed" };
+			if (snapshot.profile.name === "danger-full-access" && snapshot.profile.approvalPolicy === "never" && (!managedAst || (analyzerMode === "ast" && request.bashAst?.kind === "simple"))) return { action: "allow", reason: "Full Access allows ordinary shell execution", matchedRuleIds: ["builtin-shell-full-access"], source: "builtin" };
 			if (analyzerMode === "ast") {
 				if (request.bashAst?.kind !== "simple") {
 					return {
@@ -135,6 +150,7 @@ function applyApprovalPolicy(
 	snapshot: SecuritySnapshot,
 ): PolicyDecision {
 	if (decision.action === "deny") return decision;
+	if (decision.matchedRuleIds.includes(CIRCUIT_BREAKER_RULE)) return decision;
 	switch (snapshot.profile.approvalPolicy) {
 		case "never":
 			return decision.action === "ask"
@@ -162,6 +178,8 @@ export class PermissionEngine {
 			const builtin = builtinDecision(request, snapshot);
 			if (builtin.action === "deny") return builtin;
 			const ruleDecision = strongestRuleDecision(request, snapshot.rules, builtin);
+			// 显式 deny 仍优先；allow/ask 规则不能取消系统级单次确认。
+			if (builtin.matchedRuleIds.includes(CIRCUIT_BREAKER_RULE) && ruleDecision.action !== "deny") return builtin;
 			// AST failure is a fail-closed approval boundary: an allow rule cannot
 			// turn an unknown parse into allow, while a matching deny still wins.
 			const selected = builtin.matchedRuleIds.includes("builtin-shell-ast-failure") &&

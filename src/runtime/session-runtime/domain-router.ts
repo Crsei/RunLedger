@@ -65,6 +65,8 @@ export type SessionDomainResult =
 			readonly ok: false;
 			readonly status: Exclude<SessionDomainResultStatus, "ok">;
 			readonly code: string;
+			/** 可对外显示的固定安全诊断，不包含原始底层错误。 */
+			readonly reason?: string;
 			readonly operation: string;
 			readonly currentRevision?: number;
 	  };

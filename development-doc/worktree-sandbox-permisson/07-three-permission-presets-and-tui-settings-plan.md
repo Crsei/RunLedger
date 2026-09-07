@@ -17,6 +17,24 @@
 
 ## 0. 决策摘要
 
+### 2026-09-07 Full Access 与独立系统确认
+
+当前内置 Full Access（`danger-full-access` + `never`）允许普通 shell 命令，包括 legacy/AST 无法完整分类的重定向、控制流与脚本。显式设置其他 approval policy 仍保留其收紧语义；管理员要求的 AST 分类也不被普通 Full Access 放行规则覆盖。其他 profile 的 `never` 仍将普通 `ask` 转为 `deny`。
+
+优先级为：显式 deny / 管理员约束 → 自身策略保护及系统安全门禁 → 普通 Full Access 放行。根目录、整个 HOME 的递归删除、格式化/擦除文件系统、分区修改、关机/重启要求单次用户确认；fork bomb、全系统进程终止仍硬拒绝。整体根/HOME 删除按系统确认处理，不因为其包含 policy 文件而降为普通文件写入。shell 检查覆盖常见包装、HOME 写法、命令替换与控制流，但不承诺解释任意动态脚本。
+
+系统确认独立于常规 `never`，不会被 allow rule、session/prefix grant 或 auto-review 跳过；无交互通道、取消、超时、绑定变化时拒绝，且不启动进程。确认绑定完整命令、cwd、policy digest 和当前 request；只接受 `allow-once`，UI 不提供持久批准选项。原来的 `2>/dev/null; ...` 分类缺口同时修复。
+
+Composition root 将 canonical user/project `settings.json` 与 `/etc/runledger/security.json`（含已解析的别名）纳入控制文件保护。受治理文件操作可按原 read policy 读取，但不得写入、删除或替换这些文件及其父目录；canonical revalidation 同样检查符号链接。可识别的 shell 控制文件写入也拒绝。Agent 可提出修改，实际更新通过用户的 `/permissions` / 受控配置入口，不能用普通工具的 Full Access 自行降低限制。
+
+**验收边界**：上述是执行治理与路径检查，不是 OS 级隔离。`sandbox=off` 下，外部脚本、计算得到的路径、硬链接或同用户进程仍可能绕过 shell 文本检查；当前 immutable Session snapshot 不随配置文件改写而更新，但这不等于防止所有宿主机文件写入。完整防绕过依赖独立的 OS/权限分离工作，本次未修改被冻结的 sandbox 实现。原生终端验证使用合成工作区与隔离配置，不读取真实用户凭据或操作现有工作目录。
+
+拒绝结果保留稳定错误码，并通过 `SessionDomainResult.reason` 给 Bash/TUI 传递固定、有界的原因摘要；不透传底层原始错误、审批自由文本或路径。测试入口为 `full-access-policy`、`approval-session-scope`、`security-composition`、`process-composition` 与 `approval-reverse`。
+
+2026-09-07 验证：`npm run check`、`npm run build` 通过，本次涉及的 9 个测试文件、175 个用例通过。构建后的真实 CLI 在隔离 HOME / `RUNLEDGER_DIR`、本地确定性 HTTP 模型夹具下，通过 80 列 light / 143 列 dark 的 tmux 验证：原始 `wc ... 2>/dev/null; echo ...; head ...` 和控制流命令直接执行，系统确认取消时零执行、allow-once 后执行无害 `reboot` 替身，策略文件写入返回 `policy_denied` 和固定摘要、文件内容不变，退出码 0 且无残留进程。未执行真实系统破坏命令；不作为真实 provider、人工视觉/IME 或跨平台验收。
+
+完整 `npm test` 被工作树原有未跟踪用例 `tests/runtime/session-runtime/model-selection-policy.test.ts` 阻塞：它期待为 `fixture/unverified` 自动选择替代模型，但当前实现拒绝替代；将该用例单独复制到隔离 HEAD 副本后复现相同失败，证明与本次修改无关。中断后剩余 179 个测试文件已按 canonical bucket 补跑，退出码 0。本次未修改该用例或模型选择实现；完整回归不标记通过。
+
 ### 0.1 三张卡不是三个 approval 值
 
 一个预设必须原子组合以下维度：
@@ -36,9 +54,9 @@ profile / filesystem capability / network capability / sandbox target
 |---|---|---|---|
 | **Ask for approval** | `workspace-write` | 可在当前 workspace 读、编辑、运行已知安全命令；访问网络或编辑 workspace 外文件前询问。 | workspace read/write、network `review`（初始 hosts 为空）、sandbox `workspace-write`、`on-request` |
 | **Approve for me** | `approve-for-me`（新增系统 profile） | 低风险且可验证的动作由本机 deterministic reviewer 代表用户批准；不确定、高风险、网络/路径越界仍询问。 | workspace read/write、network `review`、sandbox `workspace-write`、`on-request` + `approvalReviewer: auto-review` |
-| **Full Access** | `danger-full-access` | 可编辑 workspace 外文件并访问网络，不显示常规 approval。 | unrestricted filesystem、network `allow`、sandbox `off`、`never` |
+| **Full Access** | `danger-full-access` | 普通命令、workspace 外写及网络无需常规审批；系统级破坏操作仍单次确认。 | unrestricted filesystem、network `allow`、sandbox `off`、`never` |
 
-三者都不绕过以下边界：managed deny、硬性 shell deny、`protectedPaths`（至少 `.git`、`.runledger`）、canonical path/symlink 重验、ExecutionGateway 和 Host final leaf。`Full Access` 的“无 approval”含义是正常 `ask` 不再出现；它不是对这些不可提升 deny 的豁免。
+三者都不绕过 managed/explicit deny、保留的硬性 shell 禁令、自身策略保护、`protectedPaths`（至少 `.git`、`.runledger`）、canonical path/symlink 重验、ExecutionGateway 和 Host final leaf。Full Access 只免除普通审批，系统确认按上方 2026-09-07 规则执行。
 
 ### 0.3 用户面与内部 ID
 
@@ -104,7 +122,7 @@ rules 不采用“后层 allow 覆盖前层 deny”：所有来源保留，针�
 ### 2.3 关键不变量
 
 1. 所有生产工具副作用继续经 `ExecutionGateway`；预设不能创建旁路。
-2. `never` 仍是“ask → deny”，不是“deny → allow”。
+2. 普通 `never` 仍是“ask → deny”，不是“deny → allow”。内置 Full Access 普通 shell 在分类前产生 allow，系统 circuit breaker 则独立产生不可持久化的单次 user ask。
 3. temporary escalation 永远不修改存储 profile；它是 request/policy/session generation 绑定的短期 grant，并在完成、取消、超时、takeover、snapshot 变更时失效。
 4. `auto-review` 的不确定、异常、超时、重复响应、证据缺失结果均为 user ask；headless 时为 deny。
 5. `Full Access` 选择必须被审计，且 managed policy 不允许时不可展示为可选。

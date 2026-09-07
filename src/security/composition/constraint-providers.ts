@@ -17,7 +17,8 @@ import type { ShellExecOptions } from "../../runtime/execution-env.ts";
 import { pathWithin } from "../policy-filesystem.ts";
 import { existingLocalPaths } from "../integration/session-local-leaves.ts";
 import type { SandboxLaunchPlan, SandboxPrepareRequest } from "../sandbox/types.ts";
-import type { HostWorkspaceExecutionContext, SecuritySnapshot } from "../types.ts";
+import type { AccessRequest, HostWorkspaceExecutionContext, SecuritySnapshot } from "../types.ts";
+import { PermissionEngine, requiresExplicitConfirmation } from "../permission/engine.ts";
 import type { SessionIdentity } from "./session-security.ts";
 
 export interface ProcessBinding {
@@ -31,6 +32,7 @@ export function executionConstraintInput(
 	requestDigest: RuntimeDigest,
 	snapshot: SecuritySnapshot,
 	sandbox: "none" | "profile",
+	requests: readonly AccessRequest[] = [],
 ): ExecutionConstraintInput {
 	return {
 		authorityId: identity.authorityId,
@@ -44,7 +46,7 @@ export function executionConstraintInput(
 		policyDigest: snapshot.policyDigest,
 		modes: {
 			permission: "policy",
-			approval: snapshot.profile.approvalPolicy === "never" ? "none" : "required",
+			approval: snapshot.profile.approvalPolicy === "never" && !requiresExplicitConfirmation(new PermissionEngine().evaluate(requests, snapshot)) ? "none" : "required",
 			sandbox,
 			gateway: "mediated",
 			containment: "none",

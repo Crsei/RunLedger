@@ -29,6 +29,12 @@ describe("conservative shell analyzer", () => {
 		});
 	});
 
+	it("recognizes a stderr sink at a command-segment boundary without changing quoted text", () => {
+		expect(analyzeShellCommand('wc -l *.py 2>/dev/null; echo "---"; head -50 prompts.json').analysis).toBe("known");
+		expect(analyzeShellCommand('echo "2>/dev/null"; head x').segments[0]?.arguments).toEqual(["2>/dev/null"]);
+		expect(analyzeShellCommand('wc -l *.py 2>/dev/null-other; head x').analysis).toBe("unknown");
+	});
+
 	it.each([
 		["echo $(rm -rf x)", "unsupported_shell_syntax"],
 		["rg --pre evil needle .", "rg_preprocessor"],

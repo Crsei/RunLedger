@@ -68,11 +68,11 @@ describe("permission rule matching", () => {
 		expect(result.decision).toBe("ask");
 	});
 
-	it("hard-denies catastrophic shell commands even when classified as known", () => {
+	it("requires exact confirmation for catastrophic shell commands even when classified as known", () => {
 		const result = new PermissionEngine().evaluate([
 			{ kind: "shell", command: "bash -c 'rm -rf /'", cwd: "/repo", analysis: "known" },
 		], snapshot());
-		expect(result.decision).toBe("deny");
+		expect(result.decision).toBe("ask");
 	});
 
 	it("does not let an allow rule override protected metadata", () => {

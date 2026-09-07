@@ -256,6 +256,8 @@ Exact event:
 
 path canonicalization、symlink/TOCTOU、policy merge、approval UI/store、credential injection、sandbox enforcement 与 lease CAS 全部归行为 owner。
 
+2026-09-07：系统级危险操作的 permission reverse request 可携带 `requiresExplicitConfirmation: true`，表示只接受本次 `allow-once`，不能投影 session/prefix/automatic 授权。进程启动拒绝的 `SessionDomainResult` 可携带固定、有界的 `reason` 摘要，稳定 `code` 不变；不暴露底层自由文本或控制路径。`SecuritySnapshot.policyControlPaths` / `homeDirectories` 仅用于 Host 内部判定，公共 workspace DTO 不新增 native path。行为与验证边界见[三权限预设](../worktree-sandbox-permisson/07-three-permission-presets-and-tui-settings-plan.md)。
+
 <a id="contract-artifact-evidence"></a>
 
 ### 3.5 Artifact、Checkpoint、Episode 与 Verification

@@ -8,6 +8,7 @@
  */
 
 import { isAbsolute } from "node:path";
+import { securityRejectionSummary } from "../../../security/rejection-summary.ts";
 import { createRuntimeId } from "../../protocol/ids.ts";
 import { runtimeDigest } from "../../protocol/foundation.ts";
 import type { CommandId } from "../../protocol/ids.ts";
@@ -105,7 +106,7 @@ export class ProcessMutationHandler {
 			executionMode,
 			requestDigest,
 		}, context.signal);
-		if (!prepared.ok) return this.port.domainFailure(operation, "denied", prepared.error.code);
+		if (!prepared.ok) return { ...this.port.domainFailure(operation, "denied", prepared.error.code), reason: securityRejectionSummary(prepared.error) };
 		if (context.signal?.aborted) {
 			const completed = await prepared.value.complete();
 			return this.port.domainFailure(operation, "denied", completed.ok ? "approval_cancelled" : completed.error.code);

@@ -86,6 +86,7 @@ function toStats(value: Stats) {
 }
 
 async function composition(input: {
+	readonly now?: () => Date;
 	readonly document: Record<string, unknown>;
 	readonly onWrite?: () => void;
 	readonly networkBroker?: NetworkBrokerPort;
@@ -108,6 +109,7 @@ async function composition(input: {
 	const home = join(root, "home");
 	await fs.mkdir(home, { recursive: true });
 	return createSessionSecurity({
+		...(input.now === undefined ? {} : { now: input.now }),
 		layout: buildRunledgerLayout(home, "posix"),
 		cwd: root,
 		fence: fence(),
@@ -142,6 +144,103 @@ function unavailableAnalyzer(): BashSecurityAnalyzerPort {
 }
 
 describe("session-scoped Security/ExecutionGateway composition", () => {
+	it.each(["expiry", "cancellation"] as const)("revalidates circuit approval at the managed final leaf after %s", async (change) => {
+		let now = new Date("2026-09-07T00:00:00.000Z");
+		const controller = new AbortController();
+		const security = await composition({
+			document: { profile: "danger-full-access" }, now: () => now,
+			approvalPorts: {
+				stateStore: new MemoryApprovalStateStore(),
+				audit: { requested: async () => undefined, decided: async () => undefined, revoked: async () => undefined },
+				prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "explicit-user") }) },
+			},
+		});
+		try {
+			const result = await security.managedProcess.prepare({
+				commandId: "command_system_expiry", command: "reboot", cwd: root,
+				timeoutMs: 1_000, backend: "pipe", executionMode: "foreground", requestDigest: runtimeDigest("system-expiry"),
+			}, controller.signal);
+			if (!result.ok) throw new Error(result.error.message);
+			expect(result.value.constraintInput.modes.approval).toBe("required");
+			if (change === "expiry") now = new Date(now.getTime() + 60_000);
+			else controller.abort();
+			expect(await result.value.validateFinalLeaf()).toMatchObject({ ok: false, error: { code: change === "expiry" ? "approval_expired" : "approval_cancelled" } });
+			await result.value.complete();
+		} finally { await security.close(); }
+	});
+	it("runs the reported ordinary command under Full Access and asks before a system operation reaches the process leaf", async () => {
+		let calls = 0;
+		let prompts = 0;
+		const security = await composition({
+			document: { profile: "danger-full-access" },
+			// 危险命令只抵达此测试替身，绝不启动真实系统进程。
+			unrestrictedShell: { exec: async () => { calls += 1; return { stdout: "fake-leaf", stderr: "", exitCode: 0 }; } },
+			approvalPorts: {
+				stateStore: new MemoryApprovalStateStore(),
+				audit: { requested: async () => undefined, decided: async () => undefined, revoked: async () => undefined },
+				prompter: { request: async (prompt) => {
+					prompts += 1;
+					expect(calls).toBe(1);
+					expect(prompt.requiresExplicitConfirmation).toBe(true);
+					return { decision: "allow-once", decidedBy: createRuntimeId("principal", "explicit-user") };
+				} },
+			},
+		});
+		try {
+			await security.executionEnv.shell.exec('wc -l tests/manual/development-cases/*.py tests/manual/development-cases/*.json 2>/dev/null; echo "---"; head -50 tests/manual/development-cases/prompts.json');
+			expect(prompts).toBe(0);
+			await security.executionEnv.shell.exec("reboot");
+			expect(calls).toBe(2);
+			expect(prompts).toBe(1);
+		} finally { await security.close(); }
+	});
+
+	it.each(["deny", "cancel"] as const)("never executes a circuit-breaker operation after user %s", async (decision) => {
+		let calls = 0;
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalReviewer: "auto-review" },
+			unrestrictedShell: { exec: async () => { calls += 1; return { stdout: "fake-leaf", stderr: "", exitCode: 0 }; } },
+			approvalPorts: {
+				stateStore: new MemoryApprovalStateStore(),
+				audit: { requested: async () => undefined, decided: async () => undefined, revoked: async () => undefined },
+				prompter: { request: async () => ({ decision, decidedBy: createRuntimeId("principal", "explicit-user") }) },
+			},
+		});
+		try {
+			await expect(security.executionEnv.shell.exec("rm -rf /" )).rejects.toMatchObject({ code: decision === "deny" ? "policy_denied" : "approval_cancelled" });
+			expect(calls).toBe(0);
+		} finally { await security.close(); }
+	});
+
+	it("protects canonical policy writes, symlink aliases and parent replacement while permitting reads", async () => {
+		const security = await composition({ document: { profile: "danger-full-access" } });
+		const policyPath = join(root, "home", "settings.json");
+		const alias = join(root, "alias.json");
+		const proposed = join(root, "proposed.json");
+		await fs.writeFile(policyPath, '{"security":{"profile":"read-only"}}');
+		await fs.writeFile(proposed, "{}");
+		await fs.symlink(policyPath, alias);
+		try {
+			expect(String(await security.executionEnv.fs.readFile(policyPath))).toContain("read-only");
+			await expect(security.executionEnv.fs.writeFile(policyPath, "{}")).rejects.toMatchObject({ code: "policy_denied" });
+			await expect(security.executionEnv.fs.writeFile(alias, "{}")).rejects.toMatchObject({ code: "protected_path" });
+			await expect(security.executionEnv.fs.rename(proposed, policyPath)).rejects.toMatchObject({ code: "policy_denied" });
+			await expect(security.executionEnv.fs.rm(join(root, "home"), { recursive: true })).rejects.toMatchObject({ code: "policy_denied" });
+			expect(await fs.readFile(policyPath, "utf8")).toContain("read-only");
+			expect(await fs.readFile(proposed, "utf8")).toBe("{}");
+		} finally { await security.close(); }
+	});
+
+	it("keeps system confirmation mandatory in the managed-process path with no approval channel", async () => {
+		const security = await composition({ document: { profile: "danger-full-access" } });
+		try {
+			const result = await security.managedProcess.prepare({
+				commandId: "command_system_confirmation", command: "reboot", cwd: root,
+				timeoutMs: 1_000, backend: "pipe", executionMode: "foreground", requestDigest: runtimeDigest("system-confirmation"),
+			});
+			expect(result).toMatchObject({ ok: false, error: { code: "policy_denied" } });
+		} finally { await security.close(); }
+	});
 	it("exposes the actual sandbox capability for preset availability projection", async () => {
 		const security = await composition({
 			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" },

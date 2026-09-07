@@ -90,6 +90,7 @@ export function createGovernedShell(input: {
 					requestDigest,
 					input.snapshot,
 					restrictive ? "profile" : "none",
+					requests,
 				);
 				const constraints = await evaluateExecutionConstraints(constraintInput, input.providers);
 				if (!constraints.ok) throw new Error(`execution constraint ${constraints.code} at ${constraints.dimension}`);

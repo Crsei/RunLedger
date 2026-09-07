@@ -30,6 +30,7 @@ import {
 	type ExecPrefixRule,
 } from "./exec-prefix-rule.ts";
 import { normalizeNetworkApprovalKey, type NetworkApprovalKey } from "../network/network-approval.ts";
+import { requiresExplicitConfirmation } from "./engine.ts";
 import type {
 	AutoApprovalReviewAuditPort,
 	AutoApprovalReviewInput,
@@ -335,6 +336,17 @@ export class ApprovalCoordinator {
 		return pending;
 	}
 
+	/** 最终副作用前检查单次确认仍有效；不创建或扩展授权。 */
+	public async validateAllowOnce(request: AuthorizationRequest, receipt: ApprovalReceiptRef): Promise<SecurityResult<void>> {
+		let current: ApprovalReceiptRef | undefined;
+		try { current = await this.#store.read(receipt.approvalId); }
+		catch { return failure("approval receipt is unavailable before execution", "approval_stale"); }
+		if (current === undefined || canonicalDigest(current) !== canonicalDigest(receipt) || current.requestDigest.digest !== requestDigest(request).digest || current.scope !== "once" || current.decision !== "allowed") return failure("approval receipt changed before execution", "approval_stale");
+		const expiresAt = Date.parse(current.expiresAt ?? "");
+		if (!Number.isFinite(expiresAt) || expiresAt <= this.#clock().getTime()) return failure("approval expired before execution", "approval_expired");
+		return { ok: true, value: undefined };
+	}
+
 	/** Consumes an exact allow-once receipt after the authorized effect settles. */
 	public async consumeAllowOnce(
 		request: AuthorizationRequest,
@@ -400,8 +412,9 @@ export class ApprovalCoordinator {
 		autoReview?: AutoApprovalReviewInput,
 	): Promise<SecurityResult<AuthorizationResult>> {
 		const shellRequest = request.requests.length === 1 && request.requests[0]?.kind === "shell" ? request.requests[0] : undefined;
+		const explicit = requiresExplicitConfirmation(evaluation);
 		const networkRequest = request.requests.length === 1 && request.requests[0]?.kind === "network" ? request.requests[0] : undefined;
-		if (shellRequest !== undefined && supportsAmendments(this.#store)) {
+		if (!explicit && shellRequest !== undefined && supportsAmendments(this.#store)) {
 			let amendment: ExecPrefixApproval | undefined;
 			try {
 				amendment = await this.#store.findExecPrefixApproval({ sessionId: request.sessionId, policyDigest: request.snapshot.policyDigest, command: shellRequest.command });
@@ -439,17 +452,18 @@ export class ApprovalCoordinator {
 			}
 		}
 		const sessionTicket = createTicket(request, this.#clock(), this.#timeoutMs, "session");
-		const sessionReplay = await this.#replayDurableDecision(request, evaluation, sessionTicket, revalidate);
+		const sessionReplay = explicit ? undefined : await this.#replayDurableDecision(request, evaluation, sessionTicket, revalidate);
 		if (sessionReplay !== undefined) return sessionReplay;
 		const ticket = createTicket(request, this.#clock(), this.#timeoutMs, "once");
 		const replayed = await this.#replayDurableDecision(request, evaluation, ticket, revalidate);
 		if (replayed !== undefined) return replayed;
 		const prompt: PermissionPrompt = {
+			...(explicit ? { requiresExplicitConfirmation: true } : {}),
 			requestId: request.requestId,
 			sessionId: request.sessionId,
 			toolCallId: request.toolCallId,
 			toolName: request.toolName,
-			summary: promptSummary(request),
+			summary: `${evaluation.reason}; ${promptSummary(request)}`.slice(0, 512),
 			requests: request.requests,
 			argumentsDigest: request.argumentsDigest,
 			cwd: request.cwd,
@@ -462,13 +476,16 @@ export class ApprovalCoordinator {
 		} catch {
 			return failure("approval request audit is unavailable", "approval_stale");
 		}
-		const automatic = await this.#runAutoReview(autoReview, signal);
+		const automatic = explicit ? undefined : await this.#runAutoReview(autoReview, signal);
 		let raced = automatic === undefined
 			? await this.#racePrompt(prompt, signal)
 			: { kind: "response" as const, response: automatic };
 		let response: PermissionPromptResponse = raced.kind === "response"
 			? raced.response
 			: { decision: raced.kind === "timeout" ? "cancel" : "cancel", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID };
+		if (explicit && isAllowResponse(response) && response.decision !== "allow-once") {
+			return this.#commitDenied(request, ticket, response, "abort", "system circuit breaker requires explicit allow-once; persistent approval is not accepted");
+		}
 		if (response.decision === "allow-session" && request.requests.some((item) => item.kind === "shell" && isDangerousExecCommand(item.command))) {
 			response = { decision: "allow-once", decidedBy: response.decidedBy };
 		}
@@ -547,7 +564,7 @@ export class ApprovalCoordinator {
 				requests: request.requests,
 				policyDigest: request.snapshot.policyDigest,
 				approval: committedReceipt,
-				reason: outcome === "allow" ? evaluation.reason : `approval ${committedReceipt.decision}`,
+				reason: outcome === "allow" ? evaluation.reason : `${explicit ? `${evaluation.reason}; ` : ""}approval ${committedReceipt.decision}`,
 			},
 		};
 	}

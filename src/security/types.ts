@@ -144,6 +144,10 @@ export interface SecurityConfigLayer {
 }
 
 export interface SecuritySnapshot {
+	/** Composition root 注入的控制文件；配置文档和模型不能自行缩减。 */
+	readonly policyControlPaths?: readonly string[];
+	/** 实际宿主及受治理进程 HOME，用于整目录删除确认。 */
+	readonly homeDirectories?: readonly string[];
 	readonly profile: SecurityProfile;
 	/** 旧 replay snapshot 未携带该字段时按 user 处理。 */
 	readonly approvalReviewer?: ApprovalReviewerName;
@@ -189,6 +193,7 @@ export interface SecurityAccessEvaluation {
 }
 
 export interface PermissionPrompt {
+	readonly requiresExplicitConfirmation?: boolean;
 	readonly requestId: CommandId;
 	readonly sessionId: SessionId;
 	readonly toolCallId: ToolCallId;

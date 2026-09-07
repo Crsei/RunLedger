@@ -3,6 +3,7 @@ import { normalizeNetworkApprovalKey } from "../security/network/network-approva
 import type { AccessRequest } from "../security/types.ts";
 
 export interface ApprovalReverseRequestView {
+	readonly requiresExplicitConfirmation?: boolean;
 	readonly toolName: string;
 	readonly summary: string;
 	readonly cwd?: string;
@@ -24,12 +25,14 @@ export interface ApprovalChoice {
 
 export function parseApprovalReverseRequest(body: Record<string, unknown>): ApprovalReverseRequestView | undefined {
 	if (body.requestType !== "permission") return undefined;
+	if (body.requiresExplicitConfirmation !== undefined && typeof body.requiresExplicitConfirmation !== "boolean") return undefined;
 	if (!isBoundedString(body.toolName, 128) || !isBoundedString(body.summary, 512)) return undefined;
 	if (body.cwd !== undefined && !isBoundedString(body.cwd, 1_024)) return undefined;
 	if (body.expiresAt !== undefined && !isBoundedString(body.expiresAt, 64)) return undefined;
 	const requests = body.requests === undefined ? undefined : parseAccessRequests(body.requests);
 	if (body.requests !== undefined && requests === undefined) return undefined;
 	return {
+		...(body.requiresExplicitConfirmation === undefined ? {} : { requiresExplicitConfirmation: body.requiresExplicitConfirmation }),
 		toolName: body.toolName,
 		summary: body.summary,
 		...(body.cwd === undefined ? {} : { cwd: body.cwd }),
@@ -47,8 +50,11 @@ export function approvalChoices(view: ApprovalReverseRequestView | undefined): r
 	const choices: ApprovalChoice[] = [
 		{ id: "allow-once", decision: { decision: "allow-once" }, label: "Allow once", description: view.cwd === undefined ? "Permit this request once" : `Permit once in ${view.cwd}` },
 		{ id: "deny", decision: { decision: "deny" }, label: "Deny", description: "Reject without executing" },
-		{ id: "allow-session", decision: { decision: "allow-session" }, label: "Allow for session", description: "Permit this exact request for this session" },
 	];
+	if (view.requiresExplicitConfirmation) {
+		return [...choices, { id: "cancel", decision: { decision: "cancel" }, label: "Cancel", description: "Cancel this approval request" }];
+	}
+	choices.push({ id: "allow-session", decision: { decision: "allow-session" }, label: "Allow for session", description: "Permit this exact request for this session" });
 	const shell = view.requests?.length === 1 && view.requests[0]?.kind === "shell" ? view.requests[0] : undefined;
 	const prefixRule = shell === undefined ? undefined : exactExecPrefix(shell.command);
 	if (prefixRule !== undefined) choices.push({
@@ -73,9 +79,8 @@ export function approvalChoices(view: ApprovalReverseRequestView | undefined): r
 
 /** 只把 canonical permission DTO 中唯一的 shell request 当作命令展示 authority。 */
 export function approvalShellCommand(view: ApprovalReverseRequestView | undefined): string | undefined {
-	return view?.requests?.length === 1 && view.requests[0]?.kind === "shell"
-		? view.requests[0].command
-		: undefined;
+	const shells = view?.requests?.filter((request) => request.kind === "shell");
+	return shells?.length === 1 ? shells[0]?.command : undefined;
 }
 
 function isBoundedString(value: unknown, maxLength: number): value is string {

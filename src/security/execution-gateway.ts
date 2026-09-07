@@ -21,10 +21,12 @@ import { PolicyNetworkClient, type NetworkBrokerPort } from "./policy-network.ts
 import { normalizeNetworkApprovalKey, type NetworkApprovalReviewPort } from "./network/network-approval.ts";
 import {
 	ApprovalCoordinator,
+	AUTO_REVIEW_APPROVAL_PRINCIPAL_ID,
+	SYSTEM_APPROVAL_PRINCIPAL_ID,
 	sessionApprovalRequestDigest,
 	type ApprovalRevalidationPort,
 } from "./permission/approval-coordinator.ts";
-import { PermissionEngine } from "./permission/engine.ts";
+import { PermissionEngine, requiresExplicitConfirmation } from "./permission/engine.ts";
 import { autoApprovalReviewInputDigest, type AutoApprovalReviewInput } from "./permission/auto-approval-reviewer.ts";
 import type { MemoryPermissionGrantStore } from "./permission/grants.ts";
 import type {
@@ -52,6 +54,8 @@ export interface ExecutionGatewayOpenRequest {
 export type ExecutionGatewayAuthorizationRequest = Omit<ExecutionGatewayOpenRequest, "authorization" | "authorizationDigest">;
 
 export interface ExecutionGatewayContext {
+	/** 系统确认在最终副作用前复验，不能只在 prepare 时检查。 */
+	readonly validateAuthorization: () => Promise<SecurityResult<void>>;
 	readonly authorization: AuthorizationResult;
 	readonly authorizationDigest: RuntimeDigest;
 	readonly requestDigest: RuntimeDigest;
@@ -175,7 +179,8 @@ export class ExecutionGateway {
 	): Promise<SecurityResult<ExecutionGatewayContext>> {
 		const structural = this.#validateRequest(input.request, input.requestDigest, input.constraintInput, input.constraintSnapshot);
 		if (!structural.ok) return structural;
-		const grant = await this.#options.permissionGrantStore?.authorize({
+		const evaluation = this.#options.permissionEngine.evaluate(input.request.requests, input.request.snapshot);
+		const grant = evaluation.decision === "deny" || requiresExplicitConfirmation(evaluation) ? undefined : await this.#options.permissionGrantStore?.authorize({
 			sessionId: input.request.sessionId,
 			turnId: input.request.turnId,
 			policyDigest: input.request.snapshot.policyDigest,
@@ -191,7 +196,6 @@ export class ExecutionGateway {
 			};
 			return this.#finishAuthorization(input, authorization);
 		}
-		const evaluation = this.#options.permissionEngine.evaluate(input.request.requests, input.request.snapshot);
 		const revalidate: ApprovalRevalidationPort = () => ({
 			argumentsDigest: input.request.argumentsDigest,
 			cwd: input.request.cwd,
@@ -285,6 +289,14 @@ export class ExecutionGateway {
 		if (!sameDigest(input.authorization.policyDigest, this.#options.snapshot.policyDigest)) return invalid("authorization policy digest is stale");
 		if (runtimeDigest(input.authorization.requests).digest !== runtimeDigest(input.request.requests).digest) return invalid("authorization request set is stale");
 		if (!approvalReceiptIsBound(input.request, input.authorization)) return invalid("approval receipt digest or binding is invalid");
+		const evaluation = this.#options.permissionEngine.evaluate(input.request.requests, input.request.snapshot);
+		if (evaluation.decision === "deny") return denied(evaluation.reason);
+		if (requiresExplicitConfirmation(evaluation) && (
+			input.authorization.decisionSource !== "approval" || input.authorization.approval?.scope !== "once" ||
+			input.authorization.approval.principalId === AUTO_REVIEW_APPROVAL_PRINCIPAL_ID ||
+			input.authorization.approval.principalId === SYSTEM_APPROVAL_PRINCIPAL_ID
+		)) return denied("system circuit breaker requires an exact one-time user approval");
+		if (requiresExplicitConfirmation(evaluation) && input.constraintInput.modes.approval !== "required") return denied("system circuit breaker requires an approval constraint receipt");
 		if (input.request.snapshot.profile.sandbox === "off" && input.constraintInput.modes.sandbox !== "none") return invalid("constraint sandbox mode is weaker than the current off policy");
 		const requiresProcessSandbox = input.request.requests.some((request) => request.kind === "shell") || input.request.toolName === "bash";
 		if (requiresProcessSandbox && input.request.snapshot.profile.sandbox !== "off" && input.constraintInput.modes.sandbox === "none") return invalid("restrictive sandbox decision is missing");
@@ -295,6 +307,11 @@ export class ExecutionGateway {
 		return {
 			ok: true,
 			value: {
+				validateAuthorization: async () => {
+					if (!requiresExplicitConfirmation(evaluation)) return { ok: true, value: undefined };
+					const receipt = input.authorization.approval;
+					return receipt === undefined ? denied("system circuit breaker approval is missing") : this.#options.approvalCoordinator.validateAllowOnce(input.request, receipt);
+				},
 				authorization: input.authorization,
 				authorizationDigest: input.authorizationDigest,
 				requestDigest: input.requestDigest,

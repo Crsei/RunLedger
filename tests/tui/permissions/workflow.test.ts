@@ -90,6 +90,9 @@ describe("PermissionsWorkflow", () => {
 		const confirmation = stripAnsi(overlay?.render(120).join("\n") ?? "");
 		expect(confirmation).toContain("Confirm Full Access");
 		expect(confirmation).toContain("outside this workspace");
+		const narrowConfirmation = stripAnsi(overlay?.render(80).join("\n") ?? "");
+		expect(narrowConfirmation).toContain("System-destructive operations still require one-time confirmation.");
+		expect(narrowConfirmation).toContain("Deny rules and policy protections remain active.");
 		overlay?.handleInput?.("enter");
 		await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
 		expect(command).toHaveBeenCalledWith("security.settings.update", {

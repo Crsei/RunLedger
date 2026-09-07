@@ -142,6 +142,7 @@ export function createManagedProcessSecurity(input: {
 					requestDigest,
 					input.snapshot,
 					restrictive ? "profile" : "none",
+					requests,
 				);
 				const executionIdentityDigest = canonicalDigest({ commandId, requestDigest });
 				const constraintInput: ExecutionConstraintInput = {
@@ -179,6 +180,7 @@ export function createManagedProcessSecurity(input: {
 						...(input.options.toolchain === undefined ? {} : { toolchainSnapshotDigest: input.options.toolchain.snapshotDigest }),
 						...(input.options.processEnvironment === undefined ? {} : { environmentDigest: input.options.processEnvironment.environmentDigest }),
 						validateFinalLeaf: async () => {
+							if (signal?.aborted) return { ok: false, error: { code: "approval_cancelled", message: "process request was cancelled before execution", retryable: false } };
 							if (input.options.processEnvironment !== undefined) {
 								try {
 									await prepareLocalGovernedProcessDirectories(input.options.layout.tmp, input.options.processEnvironment);
@@ -214,7 +216,9 @@ export function createManagedProcessSecurity(input: {
 									decision.value,
 								);
 							}
-							return decision;
+							const validApproval = await opened.value.validateAuthorization();
+							if (signal?.aborted) return { ok: false, error: { code: "approval_cancelled", message: "process request was cancelled before execution", retryable: false } };
+							return validApproval.ok ? decision : validApproval;
 						},
 						complete: opened.value.complete,
 					},

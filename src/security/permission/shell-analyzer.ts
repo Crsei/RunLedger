@@ -93,6 +93,14 @@ function splitSegments(command: string): { readonly segments: readonly string[];
 			current += character;
 			continue;
 		}
+		// 只识别命令段末尾的 stderr 丢弃；引号内文本、追加写及其他目标仍按原语法处理。
+		if (quote === undefined && character === "2" && (index === 0 || /\s/u.test(command[index - 1]!))) {
+			const sink = /^2\s*>\s*\/dev\/null(?=\s*(?:$|;|&&|\|\||\||\n))/u.exec(command.slice(index));
+			if (sink !== null) {
+				index += sink[0].length - 1;
+				continue;
+			}
+		}
 		if (quote === undefined && character === "&" && next !== "&") unknown = true;
 		if (quote === undefined && (character === "<" || character === ">" || character === "`")) unknown = true;
 		if (quote === undefined && character === "$" && next === "(") unknown = true;
@@ -135,16 +143,10 @@ function normalizeSegment(raw: string): ShellSegment | undefined {
 	return { raw, executable: executableName(executable), arguments: words.slice(index + 1) };
 }
 
-/** LSP transport 将 stderr 与 stdout 汇入同一受治理输出流，只允许丢弃 stderr。 */
-function stripSafeStderrRedirect(command: string): string {
-	const match = /(?:^|\s)2\s*>\s*\/dev\/null\s*$/u.exec(command);
-	return match === null ? command : command.slice(0, match.index).trimEnd();
-}
-
 export function analyzeShellCommand(command: string): ShellAnalysis {
 	const reasons: string[] = [];
 	if (!command.trim() || command.length > 65_536 || command.includes("\0")) return { analysis: "unknown", segments: [], reasonCodes: ["invalid_command"] };
-	const split = splitSegments(stripSafeStderrRedirect(command));
+	const split = splitSegments(command);
 	if (split.unknown) reasons.push("unsupported_shell_syntax");
 	if (/<<-?\s*[A-Za-z_][A-Za-z0-9_]*/u.test(command)) reasons.push("heredoc");
 	const segments: ShellSegment[] = [];
@@ -164,64 +166,140 @@ export function analyzeShellCommand(command: string): ShellAnalysis {
 }
 
 function unwrapPrivilege(tokens: readonly string[]): readonly string[] {
-	if (!PRIVILEGE_WRAPPERS.has(executableName(tokens[0] ?? ""))) return tokens;
+	if (!PRIVILEGE_WRAPPERS.has(executableName(tokens[0] ?? "")) && !["command", "exec", "builtin", "nohup", "busybox"].includes(executableName(tokens[0] ?? ""))) return tokens;
 	let index = 1;
 	while (index < tokens.length) {
 		if (tokens[index] === "--") return tokens.slice(index + 1);
 		if (!tokens[index]!.startsWith("-")) return tokens.slice(index);
-		index += 1;
+		const option = tokens[index];
+		index += ["-u", "-g", "-h", "-p", "-C", "-T"].includes(option ?? "") ? 2 : 1;
 	}
 	return [];
 }
 
 function shellArgument(tokens: readonly string[]): string | undefined {
 	for (let index = 1; index + 1 < tokens.length; index += 1) {
-		if (tokens[index] === "-c" || tokens[index] === "--command") return tokens[index + 1];
+		if (/^-[^-]*c$/u.test(tokens[index]!) || tokens[index] === "--command") return tokens[index + 1];
 		if (tokens[index]!.startsWith("-c") && tokens[index]!.length > 2) return tokens[index]!.slice(2);
 	}
 	return undefined;
 }
 
-function recursiveRootDelete(argumentsValue: readonly string[]): boolean {
-	const recursive = argumentsValue.some((argument) => argument === "--recursive" || /^-[^-]*r/u.test(argument));
-	if (!recursive) return false;
-	return argumentsValue.filter((argument) => !argument.startsWith("-")).some((target) => posix.resolve(target) === "/" || target === "/*" || target === "/**");
+export interface ShellSafetyContext {
+	readonly cwd?: string;
+	readonly homeDirectories?: readonly string[];
 }
 
-function commandHardline(tokensValue: readonly string[], depth: number): string | undefined {
+function recursiveRootDelete(argumentsValue: readonly string[], context: ShellSafetyContext): string | undefined {
+	const recursive = argumentsValue.some((argument) => argument === "--recursive" || /^-[^-]*r/u.test(argument));
+	if (!recursive) return undefined;
+	for (const target of argumentsValue.filter((argument) => !argument.startsWith("-"))) {
+		const normalized = context.cwd === undefined ? posix.normalize(target) : posix.resolve(context.cwd, target);
+		if (normalized === "/" || normalized === "/*" || normalized === "/**") return "system_root_delete";
+		if (/^(?:\$HOME|\$\{HOME\}|~)(?:\/*|\/\*{1,2})$/u.test(posix.normalize(target))) return "system_home_delete";
+		if (context.homeDirectories?.some((home) => [posix.resolve(home), posix.resolve(home, "*"), posix.resolve(home, "**")].includes(normalized))) return "system_home_delete";
+	}
+	return undefined;
+}
+
+function commandHardline(tokensValue: readonly string[], depth: number, context: ShellSafetyContext): string | undefined {
 	if (depth > 4 || tokensValue.length === 0) return undefined;
-	const tokens = unwrapPrivilege(tokensValue);
+	const unwrapped = unwrapPrivilege(tokensValue);
+	if (unwrapped !== tokensValue) return commandHardline(unwrapped, depth + 1, context);
+	const tokens = tokensValue;
 	if (tokens.length === 0) return undefined;
 	const executable = executableName(tokens[0]!);
 	const args = tokens.slice(1);
+	if (executable === "eval") return hardlineShellDenialReason(args.join(" "), depth + 1, context);
+	if (executable === "xargs") {
+		let cursor = 0;
+		while (args[cursor]?.startsWith("-")) cursor += ["-I", "-L", "-n", "-P", "-s", "-d", "-E"].includes(args[cursor]!) ? 2 : 1;
+		return commandHardline(args.slice(cursor), depth + 1, context);
+	}
 	if (SHELLS.has(executable)) {
 		const nested = shellArgument(tokens);
-		if (nested) return hardlineShellDenialReason(nested, depth + 1);
+		if (nested) return hardlineShellDenialReason(nested, depth + 1, context);
 	}
-	if (executable === "rm" && recursiveRootDelete(args)) return "system_root_delete";
-	if (/^(?:mkfs(?:\..+)?|mke2fs)$/u.test(executable) || executable === "wipefs" && args.includes("-a")) return "filesystem_format";
+	if (executable === "rm") return recursiveRootDelete(args, context);
+	if (/^(?:mkfs(?:\..+)?|mke2fs)$/u.test(executable) || executable === "wipefs") return "filesystem_format";
+	if (["fdisk", "sfdisk", "cfdisk"].includes(executable)) {
+		const options = args.filter((arg) => arg.startsWith("-"));
+		if (options.length === 0 || !options.every((arg) => ["-l", "--list", "-h", "--help", "-v", "--version"].includes(arg))) return "partition_table_mutation";
+	}
 	if (executable === "kill" && args.includes("-1")) return "kill_all";
 	if (executable === "killall5" || executable === "pkill" && args.some((argument) => argument === "-1" || argument === ".*")) return "kill_all";
 	if (["halt", "poweroff", "reboot", "shutdown"].includes(executable)) return "system_shutdown";
+	if (executable === "systemctl" && args.some((argument) => ["halt", "poweroff", "reboot", "kexec"].includes(argument))) return "system_shutdown";
 	if (executable === "find") {
+		if (args.includes("-delete")) {
+			const root = args.find((argument) => !argument.startsWith("-"));
+			if (root !== undefined) {
+				const reason = recursiveRootDelete(["--recursive", root], context);
+				if (reason) return reason;
+			}
+		}
 		const execIndex = args.findIndex((argument) => argument === "-exec" || argument === "-execdir");
 		if (execIndex >= 0) {
 			const end = args.findIndex((argument, index) => index > execIndex && (argument === ";" || argument === "+"));
 			const nested = args.slice(execIndex + 1, end < 0 ? undefined : end);
-			return commandHardline(nested, depth + 1);
+			return commandHardline(nested, depth + 1, context);
 		}
 	}
 	return undefined;
 }
 
-export function hardlineShellDenialReason(command: string, depth = 0): string | undefined {
+export function hardlineShellDenialReason(command: string, depth = 0, context: ShellSafetyContext = {}): string | undefined {
 	if (depth > 4 || !command.trim() || command.includes("\0")) return undefined;
 	const compact = command.replaceAll(/\s+/gu, "");
 	if (compact.includes(":(){:|:&};:")) return "fork_bomb";
+	for (const nested of commandSubstitutions(command)) {
+		const reason = hardlineShellDenialReason(nested, depth + 1, context);
+		if (reason) return reason;
+	}
 	const analysis = analyzeShellCommand(command);
 	for (const segment of analysis.segments) {
-		const reason = commandHardline([segment.executable, ...segment.arguments], depth);
+		const tokens = [segment.executable, ...segment.arguments];
+		while (["then", "do", "else", "if", "!", "{"].includes(tokens[0] ?? "")) tokens.shift();
+		if (tokens[0]?.startsWith("(")) {
+			tokens[0] = tokens[0].replace(/^\(+/u, "");
+			const last = tokens.length - 1;
+			tokens[last] = tokens[last]!.replace(/\)+$/u, "");
+		}
+		const reason = commandHardline(tokens, depth, context);
 		if (reason) return reason;
 	}
 	return undefined;
+}
+
+/** 只提取会执行的命令替换，不展开变量或执行 shell；复杂动态脚本不构成已证明安全。 */
+function commandSubstitutions(command: string): readonly string[] {
+	const nested: string[] = [];
+	let single = false;
+	let double = false;
+	for (let index = 0; index < command.length; index += 1) {
+		const character = command[index];
+		if (character === "\\" && !single) { index += 1; continue; }
+		if (character === "'" && !double) { single = !single; continue; }
+		if (character === '"' && !single) { double = !double; continue; }
+		if (single) continue;
+		if (character === "`") {
+			const end = command.indexOf("`", index + 1);
+			if (end >= 0) { nested.push(command.slice(index + 1, end)); index = end; }
+			continue;
+		}
+		if (!["$", "<", ">"].includes(character ?? "") || command[index + 1] !== "(") continue;
+		const start = index + 2;
+		let nesting = 1;
+		let quote: string | undefined;
+		for (let cursor = start; cursor < command.length; cursor += 1) {
+			const value = command[cursor];
+			if (value === "\\" && quote !== "'") { cursor += 1; continue; }
+			if ((value === "'" || value === '"') && (quote === undefined || quote === value)) { quote = quote === undefined ? value : undefined; continue; }
+			if (quote !== undefined) continue;
+			if (value === "(") nesting += 1;
+			if (value === ")") nesting -= 1;
+			if (nesting === 0) { nested.push(command.slice(start, cursor)); index = cursor; break; }
+		}
+	}
+	return nested;
 }

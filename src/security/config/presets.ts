@@ -131,7 +131,7 @@ const PRESETS: readonly BuiltinPermissionPreset[] = Object.freeze([
 	Object.freeze({
 		id: "danger-full-access",
 		label: "full_access",
-		description: "Allow normal external writes and network access without routine approval.",
+		description: "Allow normal commands, external writes and network access. System-destructive operations still require confirmation.",
 		profile: FULL_ACCESS,
 		reviewer: "user",
 		requiresExplicitConfirmation: true,

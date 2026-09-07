@@ -2,6 +2,7 @@
 
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
+import { isPolicyControlMutation, POLICY_CONTROL_REASON } from "./permission/policy-control.ts";
 import type {
 	FilesystemAccessOperation,
 	PendingFilesystemEscalation,
@@ -117,6 +118,7 @@ export class FileAccessGuard {
 
 	public check(operation: FilesystemAccessOperation, path: CanonicalPathResolution): SecurityResult<void> {
 		const candidates = [path.lexicalPath, path.canonicalPath];
+		if (operation !== "read" && candidates.some((candidate) => isPolicyControlMutation(candidate, this.#snapshot))) return failure("protected_path", POLICY_CONTROL_REASON);
 		if (this.#snapshot.filesystem.protectedPaths.some((entry) => candidates.some((candidate) => wildcardPathMatch(entry, candidate)))) {
 			return failure("protected_path", "filesystem target is protected runtime metadata");
 		}

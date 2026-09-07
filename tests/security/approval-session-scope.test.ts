@@ -5,6 +5,7 @@ import {
 	MemoryApprovalStateStore,
 } from "../../src/security/permission/approval-coordinator.ts";
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
+import { builtinSecurityProfile } from "../../src/security/config/presets.ts";
 import type { AuthorizationRequest, PermissionPrompter, SecuritySnapshot } from "../../src/security/types.ts";
 
 const NOW = new Date("2026-08-11T00:00:00.000Z");
@@ -68,6 +69,63 @@ function revalidate(value: AuthorizationRequest) {
 }
 
 describe("session-scoped approvals", () => {
+	it("never delegates a circuit-breaker confirmation to the automatic reviewer", async () => {
+		const base = request("circuit-auto", "reboot");
+		const value = { ...base, snapshot: { ...base.snapshot, approvalReviewer: "auto-review" as const } };
+		const evaluated = evaluation(value);
+		let reviews = 0;
+		let prompts = 0;
+		const result = await new ApprovalCoordinator({
+			clock: () => NOW,
+			autoReviewer: { review: async () => { reviews += 1; return { decision: "allow-once", classificationVersion: "test", reason: "test" }; } },
+			prompter: { request: async () => { prompts += 1; return { decision: "deny", decidedBy: createRuntimeId("principal", "approver") }; } },
+		}).authorize(value, evaluated, () => revalidate(value), undefined, {
+			request: value, evaluation: evaluated, canonicalTarget: "/repo", sessionGeneration: 1, inputDigest: runtimeDigest("auto-input"),
+		});
+		expect(result).toMatchObject({ ok: true, value: { outcome: "deny" } });
+		expect(reviews).toBe(0);
+		expect(prompts).toBe(1);
+	});
+	it("requires a new exact confirmation for each circuit-breaker command under Full Access", async () => {
+		const first = request("circuit-first", "reboot");
+		const policy = { ...first.snapshot, profile: builtinSecurityProfile("danger-full-access")! };
+		const value = { ...first, snapshot: policy };
+		let prompts = 0;
+		const coordinator = new ApprovalCoordinator({
+			clock: () => NOW,
+			prompter: { request: async (prompt) => {
+				prompts += 1;
+				expect(prompt.requiresExplicitConfirmation).toBe(true);
+				expect(prompt.summary).toContain("system_shutdown");
+				return { decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") };
+			} },
+		});
+		const result = await coordinator.authorize(value, evaluation(value), () => revalidate(value));
+		expect(result).toMatchObject({ ok: true, value: { outcome: "allow", approval: { scope: "once" } } });
+		if (!result.ok || result.value.approval === undefined) throw new Error("expected exact receipt");
+		expect((await coordinator.consumeAllowOnce(value, result.value.approval)).ok).toBe(true);
+		const second = { ...request("circuit-second", "reboot"), snapshot: policy };
+		await coordinator.authorize(second, evaluation(second), () => revalidate(second));
+		expect(prompts).toBe(2);
+	});
+
+	it.each(["allow-session", "allow-with-prefix-rule"] as const)("rejects %s instead of silently accepting a persistent circuit approval", async (decision) => {
+		const value = request("circuit-persistent", "reboot");
+		const result = await new ApprovalCoordinator({
+			clock: () => NOW,
+			prompter: { request: async () => ({ decision, prefixRule: ["reboot"], decidedBy: createRuntimeId("principal", "approver") }) },
+		}).authorize(value, evaluation(value), () => revalidate(value));
+		expect(result).toMatchObject({ ok: true, value: { outcome: "deny" } });
+	});
+
+	it("rejects a circuit confirmation after the policy binding changes", async () => {
+		const value = request("circuit-stale", "reboot");
+		const result = await new ApprovalCoordinator({
+			clock: () => NOW,
+			prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") }) },
+		}).authorize(value, evaluation(value), () => ({ ...revalidate(value), policyDigest: runtimeDigest("changed-policy") }));
+		expect(result).toMatchObject({ ok: true, value: { outcome: "deny" } });
+	});
 	it("replays the exact normalized request across request and tool-call ids after coordinator restart", async () => {
 		const store = new MemoryApprovalStateStore();
 		let prompts = 0;

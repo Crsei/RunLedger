@@ -256,6 +256,7 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 						requestType: "permission",
 							toolName: prompt.toolName,
 							summary: prompt.summary,
+							...(prompt.requiresExplicitConfirmation === undefined ? {} : { requiresExplicitConfirmation: prompt.requiresExplicitConfirmation }),
 							requests: prompt.requests,
 						cwd: prompt.cwd,
 						expiresAt: prompt.expiresAt,

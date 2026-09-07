@@ -273,20 +273,21 @@ mode 强度 `legacy(0) < shadow(1) < ast(2)`；来源强度 `default(0) < user(1
 
 本仓库没有 YOLO 模式（已核实），approval policy 为 `on-request | never | untrusted | granular`，headless 表现为 `approvalPorts` 缺失。矩阵按参考 §5.7 适配：
 
-先应用 managed deny 与 catastrophic hardline block，它们始终不可覆盖。然后：
+2026-09-07 权限语义更新：先应用 managed/explicit deny、自身策略保护和系统安全门禁；可确认的根/HOME 删除、格式化、分区修改、关机重启按[三预设规则](../worktree-sandbox-permisson/07-three-permission-presets-and-tui-settings-plan.md)要求单次用户确认，fork bomb / kill-all 仍不可覆盖。然后：
 
 | 场景 | `simple` | `too-complex` / timeout | `parse-unavailable` |
 |---|---|---|---|
 | interactive + `on-request` | 继续 PermissionEngine | `ask`（正常 approval ticket/receipt） | `ask` |
 | interactive + `untrusted` | 继续（untrusted 已强制 ask） | `ask` | `ask` |
-| `approvalPolicy=never` | 继续 | `deny` | `deny` |
+| 内置 Full Access + `never`，无管理员强制 AST | 普通命令 allow | 普通命令 allow | 普通命令 allow |
+| 其他 `approvalPolicy=never` / 管理员强制 AST 分类 | 继续 | `deny` | `deny` |
 | `granular` | 继续 | 沿用 granular shell 类别（rules 启用则 ask，否则 deny） | 同左 |
-| headless（无 approvalPorts） | 继续 | `deny` | `deny` |
+| headless（无 approvalPorts） | 按 profile 继续 | 需要审批时 deny | 需要审批时 deny |
 
-补充约束（全部来自参考 §5.7，一字不改）：
+补充约束（按当前用户确认的权限语义适配参考 §5.7）：
 
 - managed deny 永远强于 allow/ask；
-- catastrophic hardline block 永远 unconditional deny；
+- 保留的 hardline block 永远 deny；可确认的系统危险操作只接受 exact user allow-once，不能缓存为 session/prefix rule；
 - approval requester 缺失、超时、取消或证据不完整都变成 deny；
 - AST 已经尝试后，无论 error kind 都不能调用 legacy analyzer 取得 allow；
 - `simple` 仍要经过完整 PermissionEngine/Gateway/sandbox，不等于 allow；
@@ -350,10 +351,11 @@ async function resolveToolAccessRequestsWithBashAnalyzer(
 
 `src/security/permission/engine.ts` 的 `builtinDecision` shell 分支改为：
 
-1. `hardlineShellDenialReason` 命中 → deny（顺序不变，先于一切）；
-2. mode 为 `legacy` → 现有 `analysis === "unknown"` → ask `builtin-shell-unknown` 逻辑不变；
-3. mode 为 `shadow` → 与 legacy 字节一致（决策只用 `analysis`，AST 结果忽略）；
-4. mode 为 `ast`：
+1. 保留的 hardline 禁令 deny；检查自身策略写入保护后，系统危险操作 exact user ask。显式 deny 仍优先；
+2. 内置 Full Access + `never` 对普通 shell 直接 allow；管理员强制 AST 分类不被覆盖，且不通过 legacy fallback 获取 allow。其他 profile 按以下分支执行；
+3. mode 为 `legacy` → 现有 `analysis === "unknown"` → ask `builtin-shell-unknown` 逻辑不变；
+4. mode 为 `shadow` → 与 legacy 字节一致（决策只用 `analysis`，AST 结果忽略）；
+5. mode 为 `ast`：
    - `bashAst.kind === "simple"` → 继续后续规则/权限引擎（不直接 allow）；
    - `too-complex`/`parse-unavailable` → 按 §4.7 矩阵返回 ask/deny（`applyApprovalPolicy` 现有 never/untrusted/granular 转换继续生效，headless deny 由 coordinator 缺失 prompter 保证，B4 测试固化）；
    - `bashAst` 缺失（AST attempted 后不应发生）→ deny。

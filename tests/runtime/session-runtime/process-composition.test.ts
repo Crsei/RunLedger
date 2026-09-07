@@ -135,7 +135,11 @@ describe("S4 Session managed process composition", () => {
 		}
 	});
 
-	it("preserves a typed approval expiry through foreground Bash", async () => {
+	it.each([
+		["approval_expired", "approval expired", "User confirmation expired"],
+		["policy_denied", "approval policy never converted ask to deny: shell syntax could not be safely classified", "Shell syntax could not be safely classified"],
+		["policy_denied", "agent policy configuration is write-protected", "Agent policy configuration is protected"],
+	] as const)("preserves a typed %s and safe rejection reason through foreground Bash", async (code, message, reason) => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		await mkdir(layout.home, { recursive: true });
 		const fence: OwnerFence = {
@@ -153,7 +157,7 @@ describe("S4 Session managed process composition", () => {
 			security: {
 				prepare: async () => ({
 					ok: false,
-					error: { code: "approval_expired", message: "approval expired", retryable: false },
+					error: { code, message, retryable: false },
 				}),
 			},
 		});
@@ -164,7 +168,8 @@ describe("S4 Session managed process composition", () => {
 			timeout: 5_000,
 		});
 
-		expect(result).toMatchObject({ isError: true, details: { errorCode: "approval_expired" } });
+		expect(result).toMatchObject({ isError: true, details: { errorCode: code } });
+		expect(JSON.stringify(result.content)).toContain(reason);
 	});
 
 	it("executes foreground Bash through the Session-owned process facade", async () => {

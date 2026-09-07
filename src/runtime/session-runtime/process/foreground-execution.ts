@@ -50,7 +50,7 @@ export async function executeForegroundProcess(input: ManagedForegroundBashInput
 		expectedRevision: port.revision(),
 		...(input.signal === undefined ? {} : { signal: input.signal }),
 	});
-	if (!started.ok) throw Object.assign(new Error(processStartRejection(started.code)), { code: started.code });
+	if (!started.ok) throw Object.assign(new Error(processStartRejection(started.code, started.reason)), { code: started.code });
 	const executionId = stringValue(started.value.executionId);
 	const handle = executionId === undefined ? undefined : port.findHandle(executionId);
 	if (handle === undefined) throw new Error("foreground process handle is unavailable");
@@ -159,7 +159,7 @@ function sameOutputCursor(left: OutputCursor, right: OutputCursor): boolean {
 	return left.sequence === right.sequence && left.byteOffset === right.byteOffset;
 }
 
-function processStartRejection(code: string): string {
+function processStartRejection(code: string, reason?: string): string {
 	const guidance: Readonly<Record<string, string>> = {
 		approval_expired: "Approval expired; the command was not run. Request fresh approval before retrying.",
 		approval_cancelled: "Approval was cancelled; the command was not run. Stop and wait for user direction.",
@@ -168,5 +168,5 @@ function processStartRejection(code: string): string {
 		domain_revision_conflict: "Session state changed before process start. Refresh session state before retrying.",
 		recovery_barrier_active: "Session recovery is required. Use /recovery assess and resolve pending attempts before continuing.",
 	};
-	return `Process start rejected (${code}). ${guidance[code] ?? "Inspect the session error before retrying; execution was not confirmed."}`;
+	return `Process start rejected (${code}). ${reason === undefined ? "" : `${reason} `}${guidance[code] ?? "Inspect the session error before retrying; execution was not confirmed."}`;
 }

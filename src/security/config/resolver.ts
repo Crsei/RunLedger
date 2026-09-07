@@ -134,6 +134,8 @@ function minimumSandboxSatisfied(requested: SandboxProfileName, minimum: Sandbox
 }
 
 export interface ResolveSecuritySnapshotOptions {
+	readonly policyControlPaths?: readonly string[];
+	readonly homeDirectories?: readonly string[];
 	readonly layers: readonly SecurityConfigLayer[];
 	readonly workspaceRoot: string;
 	readonly tempRoot: string;
@@ -200,6 +202,8 @@ function resolveSecuritySnapshotUnchecked(options: ResolveSecuritySnapshotOption
 		sandbox,
 	};
 	const body = {
+		...(options.policyControlPaths === undefined ? {} : { policyControlPaths: [...new Set(options.policyControlPaths.map((path) => resolve(path)))].sort() }),
+		...(options.homeDirectories === undefined ? {} : { homeDirectories: [...new Set(options.homeDirectories.map((path) => resolve(path)))].sort() }),
 		profile,
 		approvalReviewer,
 		filesystem,

@@ -6,9 +6,11 @@
  */
 
 import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { loadSecurityConfigLayers } from "../config/loader.ts";
 import { resolveSecuritySnapshot } from "../config/resolver.ts";
-import { readLocalUtf8File } from "../integration/session-local-leaves.ts";
+import { createLocalFileSystemBroker, readLocalUtf8File } from "../integration/session-local-leaves.ts";
+import { CanonicalPathResolver } from "../policy-filesystem.ts";
 import type { SecuritySnapshot } from "../types.ts";
 import type { SessionSecurityCompositionOptions, SessionSecurityConfigSource } from "./session-security.ts";
 
@@ -24,7 +26,12 @@ export async function loadSnapshot(
 		jsonFileSource("user", options.layout.settings, true),
 	]);
 	if (!loaded.ok) throw new Error(loaded.error.message);
+	const controlPaths = [options.layout.settings, join(options.layout.projects, storageKey, "settings.json"), "/etc/runledger/security.json"];
+	const paths = new CanonicalPathResolver(options.filesystemBroker ?? createLocalFileSystemBroker(), cwd);
+	const canonicalControls = await Promise.all(controlPaths.map((path) => paths.resolve(path)));
 	const resolved = resolveSecuritySnapshot({
+		policyControlPaths: [...controlPaths, ...canonicalControls.flatMap((result) => result.ok ? [result.value.canonicalPath] : [])],
+		homeDirectories: [homedir(), ...(options.processEnvironment?.environment.HOME === undefined ? [] : [options.processEnvironment.environment.HOME])],
 		layers: loaded.value,
 		workspaceRoot: cwd,
 		tempRoot: resolve(options.layout.tmp, options.fence.sessionId),
