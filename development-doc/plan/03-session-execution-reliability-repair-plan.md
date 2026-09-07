@@ -60,6 +60,8 @@ restrictive sandbox、联合 candidate、linked CLI/TTY、三平台或 R8 人工
 
 ### 1.2 2026-09-06 开发案例暴露的 Harness 修复
 
+2026-09-07 增量见 [Plan 14 §5.1–5.2](14-agent-harness-reliability-hardening-plan.md#51-2026-09-07-实施与确定性验证)：失败响应工具 admission、有界首尾输出、完整上下文依赖组、重复失败指纹和队列取消竞态已实现；本次构建后的 Linux TTY 10 checks 通过。前置修正 `f1aca0b` 纳入后，完整 check/test/build 已通过；下述两个基线断言阻塞保留为历史快照。DeepSeek Pro/high 的 fresh 六例 before/after 已实跑并独立核验，存在生成物错误、未完成交付和人工审批等待混杂，不代表效果提升。以下 2026-09-06 快照不替代新证据；旧“未验证模型”准入表述由 Context 主计划 §0.3 的目录路由覆盖。
+
 在独立 `fix/development-case-harness` 工作树修复以下生产接线问题；原六例生成代码中的业务缺陷不属于本次范围。
 
 | 问题与触发 | 修复后的行为 | 回归证据 |

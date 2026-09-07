@@ -24,6 +24,10 @@ COMMANDS = {
     "CANCEL": "printf forbidden > forbidden.txt",
     "EXPIRE": "printf expired > expired.txt",
     "RUNNING": "printf started > started.txt; sleep 30; printf late > late.txt",
+    "STREAM_ERROR": "printf forbidden > stream-error-forbidden.txt",
+    "TRANSPORT": "printf HEAD; printf '%0160000d' 0; printf '%0160000d' 0 >&2; exit 1",
+    "OVERFLOW": "printf HEAD; printf '%080000d' 0; printf TAIL_FAILURE >&2; exit 1",
+    "REPEAT": "printf stable-failure; exit 1",
     "RECOVER": "printf recovered-too-early > recovery-forbidden.txt",
 }
 
@@ -112,7 +116,7 @@ class Provider(BaseHTTPRequestHandler):
         marker = next((name for name in COMMANDS if "HARNESS_" + name in prompt), "AFTER")
         has_result = any(item.get("role") == "tool" for item in messages[index + 1:])
         self.server.requests.append({"marker": marker, "has_tool_result": has_result})
-        if marker in COMMANDS and not has_result:
+        if marker in COMMANDS and (not has_result or marker == "REPEAT"):
             delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_" + marker.lower(),
                      "type": "function", "function": {"name": "bash", "arguments": json.dumps({"command": COMMANDS[marker]})}}]}
             finish = "tool_calls"
@@ -123,6 +127,9 @@ class Provider(BaseHTTPRequestHandler):
                   {"id": "completion", "object": "chat.completion.chunk", "model": "claude-opus-4-8",
                    "choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
                    "usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}}]
+        if marker == "STREAM_ERROR" and not has_result:
+            chunks[1] = {"error": {"message": "injected stream failure after complete arguments", "type": "server_error"}}
+        self.server.wire_requests.append(body)
         payload = ("".join("data: " + json.dumps(chunk) + "\n\n" for chunk in chunks) + "data: [DONE]\n\n").encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -145,20 +152,9 @@ class Probe:
         self.settings = {"provider": "litellm", "model": "claude-opus-4-8", "thinkingLevel": "off",
                          "autoTitle": False, "idleRecap": {"enabled": False}, "recording": {"mode": "off"}}
         self.write_settings()
-        self.install_manifest("claude-opus-4-8")
 
     def write_settings(self):
         (self.root / "home/settings.json").write_text(json.dumps(self.settings))
-
-    def install_manifest(self, model):
-        profile = {"profileId": "litellm/" + model, "providerId": "litellm", "modelId": model,
-                   "manifestVersion": "synthetic-harness-fixture", "manifestDigest": digest("synthetic fixture"),
-                   "contextWindow": 200000, "maxOutputTokens": 32768, "reasoningProtocol": "native",
-                   "toolProtocol": "json", "imageInput": False, "compaction": "none", "status": "verified"}
-        body = {"version": 1, "profiles": [profile], "aliases": {}}
-        path = self.root / "home/state/model-compatibility/manifest.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({**body, "manifestDigest": digest(body)}))
 
     def tm(self, *args):
         return subprocess.run(["tmux", "-L", self.socket, "-f", "/dev/null", *args], env=self.env,
@@ -205,7 +201,7 @@ class Probe:
             return []
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
             return [json.loads(row[0]) for row in conn.execute(
-                "SELECT payload_json FROM session_events WHERE event_type='agent.event' ORDER BY sequence")]
+                "SELECT payload_json FROM session_events WHERE event_type='agent.event' ORDER BY created_at_ms, sequence")]
 
     def session_ids(self):
         with closing(sqlite3.connect((self.root / "home/state.db").as_uri() + "?mode=ro", uri=True)) as conn:
@@ -238,9 +234,12 @@ class Probe:
 
     def close(self):
         if self.exit_status() is None:
-            for _ in range(2):
-                self.tm("send-keys", "-t", "probe:0.0", "Escape")
-                time.sleep(0.15)
+            # durable agent_end 可能早于 TUI 消费完成；先等输入投影 idle 再发送退出键。
+            def idle_projection():
+                footer = "\n".join(self.tm("capture-pane", "-p", "-t", "probe:0.0").splitlines()[-5:])
+                return "Mode:" in footer and "Working" not in footer and "Waiting" not in footer
+            self.wait(idle_projection, "idle-before-exit", 60)
+            # 本夹具 idle 时没有弹窗；多发 Escape 会与退出键合成为 Alt+Ctrl+D。
             self.tm("send-keys", "-t", "probe:0.0", "C-d")
         code = self.wait(lambda: self.exit_status(), "exit")
         assert code == "0", code
@@ -254,6 +253,7 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="runledger-harness-repair-"))
     server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     server.requests = []
+    server.wire_requests = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     probe = Probe(args.executable, root, server.server_port)
@@ -270,6 +270,19 @@ def main():
         report["checks"]["allow"] = probe.end(before, "stop")
         assert (root / "workspace/approved.txt").read_text() == "approved"
         probe.save_frame("allow")
+        before = probe.submit("HARNESS_STREAM_ERROR")
+        report["checks"]["stream_error"] = probe.end(before, "error")
+        assert not (root / "workspace/stream-error-forbidden.txt").exists()
+        assert "not executed" in json.dumps(probe.events())
+        probe.save_frame("stream-error")
+        before = probe.submit("HARNESS_REPEAT")
+        for index in range(3):
+            probe.approval()
+            probe.tm("send-keys", "-t", "probe:0.0", "Enter")
+            probe.wait(lambda: sum(event.get("type") == "tool_execution_end" and event.get("toolCallId") == "call_repeat" for event in probe.events()) > index, "repeat-settlement", 60)
+        report["checks"]["repeat"] = probe.end(before, "length", 60)
+        assert report["checks"]["repeat"].get("terminationReason") == "repeated_tool_failure"
+        probe.save_frame("repeat")
         before = probe.submit("HARNESS_CANCEL")
         probe.approval()
         probe.tm("send-keys", "-t", "probe:0.0", "C-c")
@@ -323,15 +336,39 @@ def main():
         for name in ("forbidden.txt", "late.txt", "expired.txt", "recovery-forbidden.txt"):
             assert not (root / "workspace" / name).exists(), "late side effect: " + name
         (root / "events.json").write_text(json.dumps(probe.events(), ensure_ascii=False, indent=2))
-        # 已配置模型未准入时必须显式失败，不能调用另一个可用模型。
-        probe.install_manifest("alternate")
+        # 大输出在独立的新 Session 中验证，避免其渲染成本污染中断时限。
+        probe.tm("respawn-pane", "-k", "-t", "probe:0.0", "exec " + shlex.join([str(root / "bin/runledger"), "--permission-profile", "workspace-write", "--approval-policy", "on-request"]))
+        probe.wait(lambda: "Message RunLedger" in probe.frame(), "output-session-startup", 40)
+        probe.track_processes()
+        before = probe.submit("HARNESS_OVERFLOW")
+        probe.approval()
+        probe.tm("send-keys", "-t", "probe:0.0", "y")
+        report["checks"]["overflow"] = probe.end(before, "stop")
+        tool_messages = [item for item in server.wire_requests[-1]["messages"] if item.get("role") == "tool"]
+        output = str(tool_messages[-1]["content"])
+        assert "TAIL_FAILURE" in output and len(output) <= 32000, output[-200:]
+        probe.save_frame("overflow")
+        before = probe.submit("HARNESS_TRANSPORT")
+        probe.approval()
+        probe.tm("send-keys", "-t", "probe:0.0", "y")
+        report["checks"]["large_transport"] = probe.end(before, "stop", 40)
+        tool_messages = [item for item in server.wire_requests[-1]["messages"] if item.get("role") == "tool"]
+        output = str(tool_messages[-1]["content"])
+        assert "EXIT: 1" in output and "omitted" in output and len(output) <= 32000
+        probe.save_frame("large-transport")
+        report["output_exit_code"] = probe.close()
+        # 目录中不存在的显式配置必须失败；不恢复旧 manifest 准入。
+        probe.settings["model"] = "missing-hardening-fixture"
+        probe.write_settings()
         count = len(server.requests)
-        probe.tm("respawn-pane", "-k", "-t", "probe:0.0", "exec " + shlex.join([str(root / "bin/runledger"), "--continue"]))
-        mismatch_exit = probe.wait(lambda: probe.exit_status(), "model-mismatch", 40)
-        mismatch_frame = probe.save_frame("model-mismatch")
-        assert mismatch_exit != "0" and "model profile is not verified" in mismatch_frame
+        probe.tm("respawn-pane", "-k", "-t", "probe:0.0", "exec " + shlex.join([str(root / "bin/runledger")]))
+        probe.wait(lambda: "Message RunLedger" in probe.frame(), "model-mismatch-startup", 40)
+        probe.track_processes()
+        probe.submit("HARNESS_MISSING_MODEL")
+        probe.wait(lambda: "No model selected" in probe.frame() or "no model selected" in probe.frame(), "model-mismatch", 20)
+        probe.save_frame("model-mismatch")
         assert len(server.requests) == count, "model substitution emitted a request"
-        report["checks"]["model_mismatch"] = {"exit_code": int(mismatch_exit), "model_requests": 0}
+        report["checks"]["model_mismatch"] = {"exit_code": probe.close(), "model_requests": 0, "selection": "unselected"}
         report["passed"] = True
     except Exception as error:
         report["error"] = f"{type(error).__name__}: {error}"

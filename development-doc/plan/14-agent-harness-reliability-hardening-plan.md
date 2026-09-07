@@ -1,6 +1,6 @@
 # Agent Harness 既有执行闭环加固计划
 
-> 日期：2026-09-07。状态：**planned，尚未实施**。
+> 日期：2026-09-07。状态：**H1–H5 已实现，核心修复按 §6 验收通过；H6 确定性链路与六例独立验收已执行，真实模型开发结果未 accepted**。
 >
 > 范围：不增加产品功能面，修复现有响应执行边界、输出裁剪、上下文选择和重复失败判断，复验中断与恢复。
 >
@@ -8,7 +8,7 @@
 >
 > 落文复核：并发任务将 HEAD 推进到 `953f8e1`；本计划涉及的 agent-loop、context、domain composition 与 runtime controller 相对审查基线无差异。该安全修复不属于本文提交，后续 H0 仍须核对最新状态。
 >
-> 已有证据仅为源码审查与四组离线探针；未实施产品修复、运行完整测试、构建或真实 provider 故障注入。本文不构成任何阶段 implemented 的证据。
+> 实施基线为 `e0de411`。产品改动位于 sibling worktree `RunLedger-agent-harness-hardening` / `worktree/agent-harness-hardening`，未复制主树并发补丁。2026-09-07 的 RED→GREEN、生产 HTTP/Session Owner、Built CLI/TTY 与真实模型案例分别记录；不把模型试跑或本地 Linux 自动化当作 R8/R9、人工/跨平台验收。
 
 ## 1. 目标与权威边界
 
@@ -46,14 +46,14 @@ bin/runledger.js -> Bun dist/cli/cli.js -> CLI main
 
 | 能力 | 代码存在 | 标准 Session Owner 接线 | 本计划处置 |
 |---|---|---|---|
-| 失败响应处理 | [loop-runner](../../src/runtime/agent-loop/loop-runner.ts) 对 length 合成结果 | controller → Agent → loop 已接入；error/aborted 在执行分支后退出 | H1 修执行前置条件 |
-| 有界工具输出 | [applyToolResultBudget](../../src/runtime/agent-loop/tool-call-finalization.ts) 已在 execute 后调用 | 通用 inline 裁剪已接入 | H2 修全部文本块处理 |
+| 失败响应处理 | [loop-runner](../../src/runtime/agent-loop/loop-runner.ts) 在 admission 前拦截 error/aborted/length；缺少终态事件也按 error | controller → Agent → loop；合成结果明确 executed=false，不产生已执行 receipt | H1 已实现，HTTP/Owner 与 Built CLI 故障注入通过 |
+| 有界工具输出 | [applyToolResultBudget](../../src/runtime/agent-loop/tool-result-budget.ts) 对全部文本首尾裁剪 | finalization 在 post-tool hook 后裁剪一次；默认 32,000 字符，标记计入预算 | H2 已实现，off/events 生产无 store 与 fake store 分别验证 |
 | overflow 存储/读取 | [overflow adapter](../../src/runtime/trace/tool-result-overflow.ts) 和 controller 参数存在 | domain 未注入 `toolResultOverflowStore`；模型受治理读取闭环未证实 | 不自动上线新读取能力；分别验证有/无 store |
-| 请求上下文选择 | [model-request-adapter](../../src/runtime/context/model-request-adapter.ts) / ContextEngine 存在 | domain 注入 `modelContextAssembler`，loop 每次请求调用 | H3 修此生产投影边界 |
+| 请求上下文选择 | [model-request-adapter](../../src/runtime/context/model-request-adapter.ts) 按完整调用依赖组、数值最近优先选择 | domain 注入 `modelContextAssembler`，loop 每次请求调用；目标、纠正及 protected/required 优先，超限失败关闭 | H3 已实现；assembler 与本地 HTTP 窄窗口请求分别验证 |
 | Context receipt | assembler 返回 receipt，loop 可调 `contextAssemblySink` | domain 未注入 sink；不能宣称 receipt 已持久化或等于最终 wire payload | 测试捕获投影与请求；durable sink 留原专项 |
 | 安全 compaction cut/checkpoint | [cut planner](../../src/runtime/context/compaction/cut-planner.ts)、内存 store、legacy Host 实现存在 | domain 未装配完整 summarizer/compact operation 链路；Session replay checkpoint 是另一用途 | 复用纯配对 invariant，不新增 compact 接线 |
-| 重复失败预算 | [run-budget](../../src/runtime/agent-loop/run-budget.ts) 存在 | controller 注入预算，loop 统计并终止 | H4 修分类与批次计数 |
-| 中断/steering/recovery | 队列、interrupt、审批撤销、恢复 barrier 存在 | 已有 production 路径与 Plan 03 修复记录 | H5 先回归，仅修当前 RED 问题 |
+| 重复失败预算 | [run-budget](../../src/runtime/agent-loop/run-budget.ts) 按规范化请求和错误摘要计数，最多保留 256 个摘要 | controller 注入预算，loop 支持批次；成功/审批过期独立处理 | H4 已实现；真实 TTY 三次同失败收敛 |
+| 中断/steering/recovery | 已取消输入不消费；请求准备后再次检查取消；准备失败配对 turn 终态 | Agent/loop 修复；原审批撤销、stop/wait、recovery barrier 保留 | H5 新增竞态 RED→GREEN；既有取消/恢复链路 regression verified |
 
 ### 2.2 已有审查证据
 
@@ -62,7 +62,7 @@ bin/runledger.js -> Bun dist/cli/cli.js -> CLI main
 - **E3，输出丢失已离线复现：** maxChars=5，文本块 `ABCDEFGHIJ` 与 `FINAL_TEST_FAILURE`；inline 只留 `ABCDE`，fake store 只收到 `FGHIJ`，第二块完全丢失。
 - **E4，失败指纹已离线复现：** 不同错误文本、同 bash/exitCode=1 得到 count=2；两结果或无白名单 details 得到 count=0，分别存在误停和漏计。
 
-这些是审查会话的内存探针，不是已提交回归文件。实施时必须重建 RED 用例并保留输入、输出与执行命令。
+以上描述实施前的审查探针。实施阶段已重建 E1–E4 的 RED→GREEN 回归，见 §5.1；不再代表修复工作树的当前行为。
 
 ## 3. 实施不可突破的边界
 
@@ -80,13 +80,13 @@ bin/runledger.js -> Bun dist/cli/cli.js -> CLI main
 
 | 阶段 | 交付物 | 依赖 | 当前状态 |
 |---|---|---|---|
-| H0 | 实施快照、生产接线清单、RED fixtures | 无 | planned |
-| H1 | 失败响应不执行工具，结果/终态完整 | H0 | planned |
-| H2 | 输出裁剪处理全部文本块 | H1 | planned |
-| H3 | 最近工作上下文与调用配对保真 | H2 | planned |
-| H4 | 重复失败分类、计数与终止准确 | H1、H2；在 H3 后整合 | planned |
-| H5 | 中断、steering、恢复一致性回归 | H1–H4 | planned |
-| H6 | Built CLI 与开发结果联合验收 | H1–H5 | planned |
+| H0 | 实施快照、生产接线清单、RED fixtures | 无 | verified；前置测试修正 `f1aca0b` 已独立提交并纳入 |
+| H1 | 失败响应不执行工具，结果/终态完整 | H0 | `d846016` / deterministic verified |
+| H2 | 输出裁剪处理全部文本块 | H1 | `244f5ca` / deterministic verified |
+| H3 | 最近工作上下文与调用配对保真 | H2 | `c10eeee` / assembler + HTTP + CLI verified |
+| H4 | 重复失败分类、计数与终止准确 | H1、H2；在 H3 后整合 | `7ac0522` / deterministic verified |
+| H5 | 中断、steering、恢复一致性回归 | H1–H4 | `f67737b` / deterministic verified |
+| H6 | Built CLI 与开发结果联合验收 | H1–H5 | Built CLI/TTY verified；六例 before/after 已独立核验，整体功能验收未通过 |
 
 默认串行整合，每阶段形成可独立审阅的提交。开发助手委派不改变产品内 sequential child 边界。
 
@@ -167,7 +167,7 @@ bin/runledger.js -> Bun dist/cli/cli.js -> CLI main
 
 ## 5. 验证命令与证据记录
 
-本次仅文档：审阅差异、本地链接/规则一致性、`git diff --check`；不运行代码测试/build，也不启动 H0–H6。
+最初的计划提交 `e0de411` 仅含文档。随后按用户要求执行 H0–H6；下列是代码阶段的验证入口，当前证据与未闭合项按分层状态记录。
 
 后续代码阶段按当前 package.json 运行：
 
@@ -199,15 +199,63 @@ git diff --check
 
 每阶段在本文及对应领域原地回写：commit/dirty 摘要、路径、复现输入、命令/exit、证据位置、生产链路是否到达、未闭合门禁。不另建重复状态文档。证据脱敏；Trace 不等于远程 exporter，receipt 不等于完整 prompt 或独立验证。
 
+### 5.1 2026-09-07 实施与确定性验证
+
+实现起于 sibling worktree `RunLedger-agent-harness-hardening`，分支 `worktree/agent-harness-hardening`，实施基线 `e0de411`；前置修正 `f1aca0b` 纳入后，H1–H5 已分阶段提交。主工作树原有测试与文档修改未收走。未变更公共 DTO/schema、profile 工具集合、权限 authority 或 OS sandbox。
+
+H1 在 admission 前拒绝 error/aborted/length；流缺失终态也按 error 收尾。H2 默认 inline 文本上限为 32,000 字符，标记也计入上限，hook 后统一裁剪；fake store 保存全部原文，无 store 保留首尾且说明省略。此上限不等于图片/details 的统一传输帧上限，无法恢复 shell 捕获阶段已丢弃的内容。H3 使用完整依赖组、目标模型转换后的估算、实际工具 schema 和输出 reserve；receipt 仍未在 domain 持久化。H4 结合规范化请求与错误事实，支持批次，审批过期独立结算。H5 修复取消期间消费队列、trace 准备后继续 dispatch、assembler 失败漏 turn_end 等已复现竞态。
+
+本机原始日志均在 `/tmp/runledger-plan14-*`，属于本次验收产物，不是仓库内长期归档：
+
+| 验证 | 结果 / 日志 |
+|---|---|
+| E1–E4、队列竞态 | `h1-red/green.log` 至 `h5-red/green.log` 保留先失败后通过；后续缺失终态、trace 取消、组装失败分别见 `terminal-*`、`trace-cancel-red.log`、`assembly-terminal-*` |
+| 最终静态检查 | 纳入前置提交后 `integrated-check.log` exit 0；consumer 覆盖 586、未覆盖 0；Rust 12 tests 通过；此前 `check-final2.log` / `check-delivery.log` 也通过，完整输出保留 |
+| 最终相关回归 | `assembly-terminal-green.log`：queue 8、loop 23；`fingerprint-extra.log`：15；`owner-final.log`：9，均 exit 0 |
+| Session Owner / HTTP | off/events 各验证完整/部分参数错误不执行、成功恰好执行一次、80k 输出保留尾部且 ≤32k；另捕获真实 OpenAI adapter 的窄窗口请求，核对 14+ 历史、完整多调用组、纠正保留与原历史不变 |
+| 构建 | `integrated-build.log` exit 0；此前 `build-final.log` 也通过；全局 PATH 仍指向主仓库，fixture 独立 PATH 指向本修复树 launcher/dist，未混用全局旧 dist |
+| Built CLI / Linux TTY | `tty-sixth.log` 与 `/tmp/runledger-harness-repair-9lqdr6zy/result.json`：10 checks 通过，两个 CLI exit 0，remaining_owned_pids=[]；成功、stream error 零执行、重复失败三次、审批取消/过期、运行中取消、crash/resume、80k/320k 输出、未知模型零请求 |
+| 历史全量阻塞 | `test-first.log` exit 1：fast bucket 的两个既有 Plan Mode 断言失败；干净 `e0de411` 独立树 `baseline-adapters.log` 同样 2 failed / 17 passed。其余 bucket 补跑通过；integration 首次失败后独立 probe 与完整 bucket 复跑通过（`host-replacement-probe.log`、`integration-second.log`）。不记为全量通过 |
+| 纳入前置后的全量测试 | `integrated-tests.log`：完整 `npm test` exit 0；Vitest 495 files / 3235 tests 通过，macOS 专属 1 file / 3 tests 跳过；Bun 146 tests 通过。没有排除失败文件或绕过 runner |
+
+最终构建的全部 emitted JavaScript 与已通过的 TTY / CLI 历史 fixture 的 dist 摘要逐文件一致；验证记录没有混用旧运行时代码。
+
+H3 的精确窄窗口与多调用依赖组边界由真实 HTTP adapter 测试验证；额外 built CLI 长历史投影由 `tests/manual/harness-repair/context.py` 覆盖。`/tmp/runledger-plan14-cli-context-final.log` 和 `/tmp/runledger-harness-context-lsbukifb/result.json` 证明：16 轮较长输入后，实际 HTTP 请求保留最近 12 轮、省略最早输入，SQLite 原始 16 轮全部保留，退出 0、remaining_owned_pids=[]；请求体另存 wire-requests.json。该场景使用目录既有容量，未修改模型目录。原 TTY 失败产物保留：320k 输出曾超过 TCP 帧上限，默认文本 cap 修复后不再断连；回归脚本随后修正审批按键等待、跨 Session 事件排序和 idle 后退出的时序。最终成功不覆盖人工视觉/IME 或平台验收。
+
+额外 CLI 窄窗口尝试见 `/tmp/runledger-plan14-cli-context{,2,3}.log`：本地动态目录返回了测试模型，但自动化未成功选中，前两次未收到 prompt 终态，第三次在选择断言处停止。三个结果均 remaining_owned_pids=[]；未据此判定产品缺陷，也不记为预算选择通过。随后通过既有目录模型与更长历史的独立场景完成上述 CLI 投影验证，未扩展修改模型选择 UI。
+
+### 5.2 Fresh 六例与独立验收
+
+模型为 `deepseek/deepseek-v4-pro`、thinking `high`，每例 before/after 各一份样本；使用相同提示、工具链、profile、权限和 runner。真实模型探针 `/tmp/runledger-user-model-probe-v7hg3fcj/verification.json` 完成一次工具调用与回复；旧 helper 生成的 manifest 不作为生产准入证据。before 源码摘要 `970a55f47598459bf88ab43c65841b98ce92836694bb2e30f669269af1f50bca`，after `c5b7b18eaf6e62945c18d3744da9b13eec6be0577c33c4135c0f0d945bace30c`；各 root 的 `snapshot.json` 另存逐 dist 文件与 runner 摘要。
+
+before root `/tmp/runledger-plan14-before-fixed-i8409131`，after root `/tmp/runledger-plan14-after-2ooq9ui8`。独立验收 `/tmp/runledger-plan14-independent-rfgm7ln3/summary.json` 和各例 `verification.json` 保存实际 argv、退出码、输出、独立数据与事件指标；未修改生成代码来促成通过。源文件名和 CLI 参数按各生成物实际接口适配；下表检查数不能相加作为任务成功率。
+
+六例 runner 来自主工作树尚未提交的 `tests/manual/development-cases/`；本修复树没有复制或提交该目录，所以上述六例入口相对链接需该独立依赖进入基线后才在本树可用。其摘要已保存在 snapshot，独立验证结果可定位到实际执行版本。两个 Plan Mode 断言修正经用户明确授权，已独立提交为 `f1aca0b` 并纳入本修复树；提交前主树 `npm run check` 和该适配器 19 tests 通过（`/tmp/runledger-plan14-prerequisite-{check,test}.log`）。此前基线阻塞保留为历史证据，纳入后完整 check/test/build 均已通过。
+
+| 案例 | before 独立结果 | after 独立结果 |
+|---|---|---|
+| JSONL | 5/5 行为检查；全文件读取且保留所有记录 | 5/5；流读取但仍保留所有记录，未证明内存有界 |
+| tasks | 5/6；第一轮持久化/损坏拒绝与自带测试通过，第二轮未交付 | 4/5；相同行为通过，无自带测试文件，第二轮未交付 |
+| rename | 4/4 | 3/4；扩展名中空格未替换，且 run 报 Connection error |
+| readonly trace | 有完整答案；输入/command/事件/取消主链有源码依据，但误称 TUI 与 Runtime 不在同一进程；遗漏 assembler 边界 | 有完整答案，正确说明 embedded Runtime，主链与 HTTP 发出点有源码依据；仍遗漏 assembler 边界，部分行范围不精确 |
+| Markdown | 10/10，包括独立 fenced-code/中文路径/错误行检查 | 无实现 |
+| CSV interrupt/resume | 无实现；未到达部分源码中断点 | 无实现；未到达部分源码中断点 |
+
+readonly trace 的实际调用记录也已核对：before 66 次 read/grep/只读 bash，after 71 次 read/ls/grep；没有写工具调用。引用核对包括 `main.ts` embedded 装配、InputController、模型 streamFn、Anthropic HTTP 调用、事件持久化、审批 cancel 与退出 waitForIdle；两份答案均自述纯静态证据，不将“有答案”计为完整正确。
+
+除 trace 正常 stop 外，多例以 `approval_expiration_limit` 结束，after rename 为模型连接错误；任务第二轮与 CSV 恢复未到达，不能算通过。人工审批按实际命令逐项审阅，固定共享临时目录清理等命令未批准；30 秒审批期限与人工处理延迟构成混杂因素，没有放宽权限来追求全绿。
+
+按事件记录的 active / paused 秒（before→after）依次为：JSONL 74.421/60.164→83.338/60.467；tasks 120.013/60.712→89.064/60.179；rename 69.917/87.233→111.032/29.964；trace 545.226/0→400.940/0；Markdown 208.106/78.165→139.445/59.969；CSV 10.303/60→8.413/60.006。每例 Token、估算费用、终止原因与 CLI 退出分别保存在独立验收 metrics；费用是运行时 usage 汇总，不是账单。单样本、人工等待和未完成交付不支持效果提升结论。开发结果层保持未验收，不修生成业务代码来掩盖本轮结果。
+
 ## 6. 完成标准与提交
 
 | 层级 | 门禁 | 当前状态 |
 |---|---|---|
-| 算法/loop | E1–E4 RED→GREEN，故障路径覆盖 | pending |
-| Session Owner | 标准 domain 实际调用，治理/fence 不变 | pending |
-| Built CLI/Linux TTY | 本次 dist、隔离 home、本地 HTTP、退出/回收齐全 | pending |
-| 开发结果 | 六例独立验收，终态与功能结果分开记录 | pending |
-| 真实 provider | 当前模型实跑/故障注入证据 | pending |
+| 算法/loop | E1–E4 RED→GREEN，故障路径覆盖 | verified；前置修正纳入后完整 check/test/build 通过 |
+| Session Owner | 标准 domain 实际调用，治理/fence 不变 | verified，off/events 与 HTTP 9 tests |
+| Built CLI/Linux TTY | 本次 dist、隔离 home、本地 HTTP、退出/回收齐全 | 10 checks verified；另有长历史超预算 CLI 投影、原记录保留与退出验证 |
+| 开发结果 | 六例独立验收，终态与功能结果分开记录 | 已执行独立验收；存在失败与未完成，不 accepted |
+| 真实 provider | 当前模型实跑/故障注入证据 | DeepSeek Pro/high 已实跑；无能力提升结论，远端受控故障注入未验证 |
 | 人工/平台 | 视觉、键盘/中文 IME、macOS/Windows 分别验证 | pending |
 
 核心修复完成须 H1–H5、对应 check/test/build、确定性 Session Owner/built-CLI 验证通过；H6 剩余层逐项保留状态。只有对应证据齐全才能声称效果提升、live verified 或跨平台 accepted。不得用本计划自动化关闭 Runtime 06 R8/R9。

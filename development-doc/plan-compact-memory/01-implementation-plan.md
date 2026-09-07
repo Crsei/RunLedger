@@ -95,6 +95,14 @@ src/cli/main.ts
 
 构建后的真实 PATH `runledger` 在独立 tmux/隔离 `RUNLEDGER_DIR` 验证通过：无 manifest 的 DeepSeek Pro 启动；本地 HTTP fixture A 执行 governed bash 工具后，同一 Session 通过 `/model` 切换至 B，B 请求包含 A 的工具结果；SQLite 与 Trace 模型身份为 A、A、B，`/trajectory` 显示对应 provider/model，Ctrl+D 退出码 0 且无残留测试进程。测试进程使用假凭据并清除代理变量，首次继承代理的脚本未完成登录。未调用真实 DeepSeek/provider，未完成人工视觉/中文 IME 或 macOS/Windows 验收。
 
+### 0.4 2026-09-07 请求投影加固
+
+[Plan 14](../plan/14-agent-harness-reliability-hardening-plan.md#51-2026-09-07-实施与确定性验证) 在既有 domain assembler 入口修复请求选择：历史按完整工具调用/结果依赖组原子选择，以数值顺序优先保留最近工作；当前目标、纠正、required 与 protected policy 优先，必需部分超限时明确失败。估算包含目标模型转换后的历史、system、实际工具 schema、输出 reserve 和请求 envelope；原始 ledger 不变。
+
+`tests/runtime/context/model-request-adapter.test.ts` 与 `tests/runtime/session-runtime/harness-hardening.test.ts` 分别核对选择 receipt 和真实 HTTP 请求语义、配对及预算；标准 Session Owner 接线与构建后 CLI 另有隔离 home 证据。精确窄窗口和多调用组边界由 adapter HTTP 测试验证；`tests/manual/harness-repair/context.py` 另在 built CLI 连续提交 16 轮长输入，核对实际请求保留近期 12 轮、原始 SQLite 保留全部 16 轮、正常退出 0 且无残留进程。前置测试修正 `f1aca0b` 纳入后，完整 check/test/build 通过，证据见 Plan 14 §5.1。
+
+此切片不装配 summarizer、自动 compact、durable context receipt sink、Memory 或模型 Artifact 全量检索；这些能力的生产状态仍由本专题各阶段判定。
+
 ## 1. 目标、成功标准与非目标
 
 ### 1.1 目标
