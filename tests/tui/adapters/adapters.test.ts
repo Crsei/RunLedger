@@ -185,7 +185,7 @@ describe("B4 Session resource adapter", () => {
 		expect(result.value).toMatchObject({
 			reference: { repositoryId, planId: goalId, revision: 0, digestPrefix: { text: digest.digest.slice(0, 40) } },
 			title: { text: "Plan mode" },
-			status: "unknown",
+			status: "inactive",
 			summary: { text: "Plan mode is inactive." },
 			evidenceCount: { state: "unavailable", reason: "plan-mode-inactive" },
 		});
@@ -225,8 +225,8 @@ describe("B4 Session resource adapter", () => {
 			completeness: "complete",
 			updatedAt: "2026-08-11T00:00:00.000Z",
 		});
-		const expected: Readonly<Record<PlanModeStatus, "verified" | "in-progress" | "blocked" | "unknown">> = {
-			inactive: "unknown",
+		const expected: Readonly<Record<PlanModeStatus, "verified" | "in-progress" | "blocked" | "inactive" | "unknown">> = {
+			inactive: "inactive",
 			pending: "in-progress",
 			active: "in-progress",
 			awaiting_approval: "blocked",
