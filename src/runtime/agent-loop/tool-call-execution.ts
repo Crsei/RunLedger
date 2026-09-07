@@ -38,16 +38,23 @@ export async function executePreparedToolCall(
   // blocked / tool 未找到 → 立即合成 isError 内容,不调 execute
   if (p.blocked) {
     return {
-      content: [{ type: "text", text: p.blocked.reason ?? "blocked by beforeToolCall" }],
+      content: [{ type: "text", text: `${p.blocked.reason ?? "Tool admission denied"}${p.blocked.errorCode === "invalid_tool_arguments" ? ". Correct the arguments to match the tool schema before retrying." : ""}` }],
       isError: true,
-      details: undefined,
+      details: { errorCode: p.blocked.errorCode, executed: false },
     };
   }
   if (!p.tool) {
     return {
-      content: [{ type: "text", text: `Tool not found: ${p.toolCall.name}` }],
+      content: [{ type: "text", text: `Tool not found: ${p.toolCall.name}. Use a tool listed in the current session.` }],
       isError: true,
-      details: undefined,
+      details: { errorCode: "tool_not_found", executed: false },
+    };
+  }
+
+  if (signal.aborted) {
+    return {
+      content: [{ type: "text", text: "Tool call was not executed because the operation was aborted before execution." }],
+      isError: true, details: { errorCode: "tool_aborted", executed: false },
     };
   }
 
@@ -101,7 +108,7 @@ export async function executePreparedToolCall(
     return {
       content: [{ type: "text", text: (e as Error).message ?? String(e) }],
       isError: true,
-      details: errorCode === undefined ? undefined : { errorCode },
+      details: { errorCode: errorCode ?? "tool_execution_error" },
     };
   }
 }

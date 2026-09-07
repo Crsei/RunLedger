@@ -114,7 +114,7 @@ export async function runAgentLoop(
   let toolTurns = 0;
   let lastStopReason: StopReason = "stop";
   let terminationReason: AgentRunTerminationReason | undefined;
-  let lastFailureFingerprint: string | undefined;
+  let failureFingerprints: ReadonlyMap<string, number> = new Map();
   let repeatedFailureCount = 0;
   let approvalExpirations = 0;
   let loopModel = config.model;
@@ -399,8 +399,8 @@ export async function runAgentLoop(
           });
         }
       }
-	  const repeatedFailure = repeatedToolFailure(toolResults, lastFailureFingerprint, repeatedFailureCount);
-	  lastFailureFingerprint = repeatedFailure.fingerprint;
+	  const repeatedFailure = repeatedToolFailure(toolResults, toolCalls, failureFingerprints);
+	  failureFingerprints = repeatedFailure.fingerprints;
 	  repeatedFailureCount = repeatedFailure.count;
 	  approvalExpirations += toolResults.filter(isApprovalExpiration).length;
 	  toolTurns += 1;

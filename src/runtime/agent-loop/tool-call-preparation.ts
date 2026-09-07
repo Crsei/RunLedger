@@ -29,7 +29,7 @@ export interface PreparedToolCall {
   tool: AgentTool | undefined;
   args: unknown;
   /** beforeToolCall 已被调用且返回 block:true,直接合成 isError result */
-  blocked?: { reason?: string };
+  blocked?: { reason?: string; errorCode: string };
 }
 
 type ToolExecutionModeLike = "sequential" | "parallel";
@@ -144,7 +144,7 @@ export async function prepareToolCall(
 
   // signal 已取消时 immediately 终止
   if (signal?.aborted) {
-    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: "Operation aborted" } };
+    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: "Operation aborted", errorCode: "tool_aborted" } };
   }
 
   // schema 校验:先把 raw args 走 prepareArguments,再 validate
@@ -152,7 +152,7 @@ export async function prepareToolCall(
   try {
     preparedArgs = prepareToolArguments(tool, tc, tc.arguments);
   } catch (e) {
-    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: (e as Error).message ?? String(e) } };
+    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: (e as Error).message ?? String(e), errorCode: "invalid_tool_arguments" } };
   }
 
   // beforeToolCall hook
@@ -170,7 +170,7 @@ export async function prepareToolCall(
           toolCall: tc,
           tool,
           args: preparedArgs,
-          blocked: { reason: (before as BeforeToolCallResult).reason },
+          blocked: { reason: (before as BeforeToolCallResult).reason, errorCode: "tool_admission_denied" },
         };
       }
 			if (before !== undefined && Object.hasOwn(before, "updatedInput")) {
@@ -181,7 +181,7 @@ export async function prepareToolCall(
 						toolCall: tc,
 						tool,
 						args: preparedArgs,
-						blocked: { reason: `updated tool input failed schema validation: ${(e as Error).message ?? String(e)}` },
+						blocked: { reason: `updated tool input failed schema validation: ${(e as Error).message ?? String(e)}`, errorCode: "invalid_tool_arguments" },
 					};
 				}
 				const reauthorized = await config.beforeToolCall({
@@ -196,7 +196,7 @@ export async function prepareToolCall(
 						toolCall: tc,
 						tool,
 						args: preparedArgs,
-						blocked: { reason: reauthorized.reason },
+						blocked: { reason: reauthorized.reason, errorCode: "tool_admission_denied" },
 					};
 				}
 				if (reauthorized !== undefined && Object.hasOwn(reauthorized, "updatedInput")) {
@@ -204,7 +204,7 @@ export async function prepareToolCall(
 						toolCall: tc,
 						tool,
 						args: preparedArgs,
-						blocked: { reason: "tool input changed again during reauthorization" },
+						blocked: { reason: "tool input changed again during reauthorization", errorCode: "tool_input_changed" },
 					};
 				}
 			}
@@ -215,7 +215,7 @@ export async function prepareToolCall(
         toolCall: tc,
         tool,
         args: preparedArgs,
-        blocked: { reason: (e as Error).message ?? String(e) },
+        blocked: { reason: (e as Error).message ?? String(e), errorCode: "tool_admission_error" },
       };
     }
   }
