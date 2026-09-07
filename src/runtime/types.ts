@@ -119,8 +119,8 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
    */
   isDestructive?: () => boolean;
   /**
-   * 工具结果最大字符预算;超额部分由 Host 注入的 overflow store 托管。
-   * 缺省 = DEFAULT_MAX_BYTES。
+   * 工具最终文本字符预算；可选 overflow store 保存完整原文，否则保留有界首尾。
+   * 缺省为 32,000 字符，独立于 shell 捕获上限；截断标记计入预算。
    */
   maxResultSizeChars?: number;
   /** Host-readable Runtime effect claims; absence is unknown in restrictive modes. */

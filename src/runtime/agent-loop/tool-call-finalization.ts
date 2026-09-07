@@ -3,7 +3,8 @@
  * 与工具结果字符预算。
  */
 
-import { runtimeDigest } from "../protocol/foundation.ts";
+import { applyToolResultBudget, DEFAULT_TOOL_RESULT_MAX_CHARS } from "./tool-result-budget.ts";
+export { applyToolResultBudget } from "./tool-result-budget.ts";
 import { newId } from "../ledger/types.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
 import type { ImageContent, TextContent } from "../../types.ts";
@@ -16,7 +17,6 @@ import type {
   AgentEvent,
   AgentLoopConfig,
   ToolResultContent,
-  ToolResultOverflowStore,
 } from "../types.ts";
 
 /**
@@ -73,6 +73,11 @@ export async function finalizeExecutedToolCall(
     }
   }
 
+  // hook 也可能改变正文；只在最终边界裁剪一次，避免重复落盘和绕过预算。
+  finalContent = await applyToolResultBudget(
+    finalContent, p.tool?.maxResultSizeChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS,
+    p.toolCall.id, config.toolResultOverflowStore,
+  );
   const result: ToolResultContent = {
     type: "toolResult",
     toolCallId: p.toolCall.id,
@@ -109,63 +114,4 @@ export async function finalizeExecutedToolCall(
   );
 
   return result;
-}
-
-/**
- * 工具结果字符预算:超出 maxChars 的 text content 通过 Host 注入的
- * overflow store 保存,在 content 中只回灌 bounded artifact ref 摘要。
- *
- * 没有 Host overflow store 时只做 inline 截断。agent-loop 不直接持有
- * filesystem、ArtifactStore 路径或 process-local 临时目录。
- *
- * Host store 不可用时退化为「inline 截断 + 提示」,仍不抛错。
- */
-export async function applyToolResultBudget(
-  content: (TextContent | ImageContent)[],
-  maxChars: number,
-  toolCallId: string,
-  overflowStore?: ToolResultOverflowStore,
-): Promise<(TextContent | ImageContent)[]> {
-  const out: (TextContent | ImageContent)[] = [];
-  let totalChars = 0;
-  let overflowStarted = false;
-  for (const block of content) {
-    if (block.type !== "text") {
-      out.push(block);
-      continue;
-    }
-    const len = block.text.length;
-    if (totalChars + len <= maxChars) {
-      out.push(block);
-      totalChars += len;
-      continue;
-    }
-    // 第一次超预算:把"剩余配额"那一截留下用,剩余部分落盘
-    if (!overflowStarted) {
-      overflowStarted = true;
-      const remain = Math.max(0, maxChars - totalChars);
-      const inlineTail = remain > 0 ? block.text.slice(0, remain) : "";
-      const droppedTail = remain > 0 ? block.text.slice(remain) : block.text;
-      let hint = `\n\nOutput exceeds ${maxChars} chars; remaining content truncated by the Host boundary.`;
-      if (overflowStore !== undefined && droppedTail.length > 0) {
-        try {
-          const sourceDigest = runtimeDigest(droppedTail);
-          const stored = await overflowStore.put({
-            toolCallId,
-            bytes: new TextEncoder().encode(droppedTail),
-            mediaType: "text/plain; charset=utf-8",
-            sourceDigest,
-          });
-          hint = `\n\nOutput exceeds ${maxChars} chars; remaining content is available through governed artifact ${stored.ref.digest.digest} (${stored.ref.size ?? droppedTail.length} bytes).`;
-        } catch {
-          // Best effort only: the inline result remains usable and no local
-          // path is exposed when the Host store is unavailable.
-        }
-      }
-      out.push({ type: "text", text: `${inlineTail}${hint}` });
-      totalChars = maxChars;
-    }
-    // 后续 text block 全部丢弃(只在第一次溢出时落盘一次);不丢图像
-  }
-  return out;
 }

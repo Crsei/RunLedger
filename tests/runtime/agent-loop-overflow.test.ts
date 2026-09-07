@@ -10,6 +10,7 @@ import type {
 } from "../../src/runtime/types.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import type { Api, AssistantMessage, Model, ToolCall } from "../../src/types.ts";
+import { applyToolResultBudget } from "../../src/runtime/agent-loop/tool-call-finalization.ts";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 
 const MODEL: Model<Api> = {
@@ -104,17 +105,74 @@ describe("agent-loop tool result overflow boundary", () => {
 			oneToolThenStop(call),
 		);
 
-		expect(Buffer.from(stored[0] ?? []).toString("utf8")).toBe("efgh");
+		expect(Buffer.from(stored[0] ?? []).toString("utf8")).toBe("abcdefgh");
 		const result = context.messages.find((message) => message.role === "toolResult");
 		expect(result).toBeDefined();
 		if (result?.role === "toolResult") {
-			const text = result.content[0]?.content[0];
-			expect(text?.type).toBe("text");
-			if (text?.type === "text") {
-				expect(text.text).toContain("artifact");
-				expect(text.text).not.toContain("tmp/");
-				expect(text.text).not.toContain("tool-output-");
-			}
+			const text = result.content[0]?.content.filter((block) => block.type === "text").map((block) => block.text).join("") ?? "";
+			expect(text.length).toBeLessThanOrEqual(4);
+			expect(text).toContain("…");
+			expect(text).not.toContain("tmp/");
+			expect(text).not.toContain("tool-output-");
 		}
 	});
+});
+
+
+describe("Plan 14 complete output budgeting", () => {
+  it("preserves the tail across text blocks without a store", async () => {
+    const output = await applyToolResultBudget([
+      { type: "text", text: "START" + "a".repeat(500) },
+      { type: "text", text: "b".repeat(500) + "FINAL_TEST_FAILURE" },
+    ], 160, "tail");
+    const text = output.filter((block) => block.type === "text").map((block) => block.text).join("");
+    expect(text.length).toBeLessThanOrEqual(160);
+    expect(text).toContain("START");
+    expect(text).toContain("FINAL_TEST_FAILURE");
+    expect(text).toContain("omitted");
+    expect(text).not.toContain("available through");
+  });
+
+  it("stores all original text and retains images in their original sequence", async () => {
+    const stored: string[] = [];
+    const image = { type: "image" as const, mimeType: "image/png", data: "fixture" };
+    const output = await applyToolResultBudget([
+      { type: "text", text: "A".repeat(400) }, image,
+      { type: "text", text: "TAIL_FAILURE" },
+    ], 250, "store", { put: async (input) => {
+      stored.push(new TextDecoder().decode(input.bytes));
+      return { ref: { subjectKind: "artifact", digest: runtimeDigest(stored[0]), size: input.bytes.length } };
+    } });
+    expect(stored).toEqual(["A".repeat(400) + "TAIL_FAILURE"]);
+    expect(output.filter((block) => block.type === "image")).toEqual([image]);
+    expect(output.at(-1)).toMatchObject({ type: "text", text: expect.stringContaining("TAIL_FAILURE") });
+    expect(output.filter((block) => block.type === "text").map((block) => block.text).join("").length).toBeLessThanOrEqual(250);
+  });
+
+  it.each([0, 1, 4, 12, 64, 160])("bounds metadata and preserves Unicode at budget %i even when storage fails", async (limit) => {
+    const output = await applyToolResultBudget([{ type: "text", text: "中文😀".repeat(200) }], limit, "unicode", {
+      put: async () => { throw new Error("fixture unavailable"); },
+    });
+    const text = output.filter((block) => block.type === "text").map((block) => block.text).join("");
+    expect(text.length).toBeLessThanOrEqual(limit);
+    expect(text).toBe(new TextDecoder().decode(new TextEncoder().encode(text)));
+    expect(text).not.toContain("artifact");
+  });
+
+  it("bounds the final hook result while preserving its error state", async () => {
+    const call: ToolCall = { type: "toolCall", id: "hook-call", name: "hook", arguments: { value: "x" } };
+    const context: AgentContext = { messages: [], tools: [{
+      name: "hook", label: "hook", description: "fixture", parameters, maxResultSizeChars: 160,
+      execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+    }] };
+    await runAgentLoop([{ role: "user", content: [{ type: "text", text: "run" }] }], context, {
+      model: MODEL,
+      afterToolCall: async () => ({ content: [{ type: "text", text: "x".repeat(1000) + "HOOK_FAILURE" }], isError: true }),
+    }, async () => undefined, undefined, oneToolThenStop(call));
+    const result = context.messages.flatMap((message) => message.role === "toolResult" ? message.content : [])[0];
+    expect(result?.isError).toBe(true);
+    const text = result?.content.filter((block) => block.type === "text").map((block) => block.text).join("") ?? "";
+    expect(text.length).toBeLessThanOrEqual(160);
+    expect(text).toContain("HOOK_FAILURE");
+  });
 });

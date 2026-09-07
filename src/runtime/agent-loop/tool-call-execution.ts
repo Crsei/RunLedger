@@ -2,16 +2,13 @@
  * S4 拆分:阶段2 tool call execute —— 真正调用 tool.execute()。
  *
  * blocked / 不可达工具走 isError 兜底;onUpdate 回调把流式 partial 转发为
- * tool_execution_update 事件 + ledger entry;超预算结果文本经
- * `applyToolResultBudget` 落盘/截断。
+ * tool_execution_update 事件；最终结果在 hook 之后统一裁剪。
  */
 
 import type { ImageContent, TextContent } from "../../types.ts";
 import { localExecutionEnv } from "../execution-env.ts";
 import { makeToolContext } from "../tool-context.ts";
-import { DEFAULT_MAX_BYTES } from "../tools/tool-support.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
-import { applyToolResultBudget } from "./tool-call-finalization.ts";
 import type { PreparedToolCall } from "./tool-call-preparation.ts";
 import type {
   AgentEvent,
@@ -91,11 +88,8 @@ export async function executePreparedToolCall(
       toolContext,
     );
     await updateChain;
-    // 超 maxResultSizeChars 的 result content 文本溢出落盘 + 路径 hint
-    const maxChars = p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES;
-    const content = await applyToolResultBudget(result.content, maxChars, p.toolCall.id, config.toolResultOverflowStore);
     return {
-      content,
+      content: result.content,
       isError: result.isError === true,
       details: result.details,
       addedToolNames: result.addedToolNames,
