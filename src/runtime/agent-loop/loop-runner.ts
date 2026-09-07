@@ -7,6 +7,7 @@
  * 共享同一 `fire` 闭包与循环变量,拆分会破坏原子性(计划 §3 例外记录)。
  */
 
+import type { TraceModelHandle } from "../trace/recorder.ts";
 import { newId } from "../ledger/types.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
 import type { AssistantMessage, StopReason, ToolCall } from "../../types.ts";
@@ -110,6 +111,7 @@ export async function runAgentLoop(
     );
   }
 
+  context.messages = messages.slice();
   let turn = 0;
   let toolTurns = 0;
   let lastStopReason: StopReason = "stop";
@@ -119,7 +121,37 @@ export async function runAgentLoop(
   let approvalExpirations = 0;
   let loopModel = config.model;
   let loopReasoning = config.reasoning;
-  let pendingMessages: AgentMessage[] = await config.getSteeringMessages?.() ?? [];
+  let pendingMessages: AgentMessage[] = signal?.aborted ? [] : await config.getSteeringMessages?.() ?? [];
+
+  const appendPendingMessages = async (): Promise<void> => {
+
+    if (pendingMessages.length > 0) {
+      for (const pending of pendingMessages) {
+        if (pending.role !== "user") continue;
+        const pendingStart = Date.now();
+        await fire({ type: "message_start", timestamp: pendingStart, role: "user", message: pending });
+        messages.push(pending);
+        const pendingEnd = Date.now();
+        await fire(
+          { type: "message_end", timestamp: pendingEnd, role: "user", message: pending },
+          {
+            id: newId(),
+            parentId: sessionId,
+            timestamp: pendingEnd,
+            type: "message",
+            payload: {
+              role: "user",
+              content: pending.content.map((c) => c.text).join(""),
+              message: pending,
+            },
+          },
+        );
+      }
+      context.messages = messages.slice();
+      pendingMessages = [];
+    }
+
+  };
 
   // inner loop
   while (true) {
@@ -154,56 +186,50 @@ export async function runAgentLoop(
       },
     );
 
-    // steering/follow-up 进入下一次 LLM 请求前才成为正式会话消息。
-    if (pendingMessages.length > 0) {
-      for (const pending of pendingMessages) {
-        if (pending.role !== "user") continue;
-        const pendingStart = Date.now();
-        await fire({ type: "message_start", timestamp: pendingStart, role: "user", message: pending });
-        messages.push(pending);
-        const pendingEnd = Date.now();
-        await fire(
-          { type: "message_end", timestamp: pendingEnd, role: "user", message: pending },
-          {
-            id: newId(),
-            parentId: sessionId,
-            timestamp: pendingEnd,
-            type: "message",
-            payload: {
-              role: "user",
-              content: pending.content.map((c) => c.text).join(""),
-              message: pending,
-            },
-          },
-        );
+    const finishUnrequestedTurn = async (stopReason: "error" | "aborted"): Promise<void> => {
+      const timestamp = Date.now();
+      await fire({ type: "turn_end", timestamp, turn, stopReason }, {
+        id: newId(), parentId: sessionId, timestamp, type: "turn",
+        payload: { turn, phase: "end", stopReason },
+      });
+    };
+    let llmContext: LlmContext;
+    let traceModel: TraceModelHandle | undefined;
+    try {
+      await appendPendingMessages();
+      // 请求准备失败也要结算已开始的 turn；accepted 输入已保存在 context。
+      const convertFn = config.convertToLlm ?? defaultConvertToLlm;
+      llmContext = {
+        systemPrompt: context.systemPrompt,
+        messages: await convertFn(messages),
+        tools: context.tools,
+      };
+      if (config.modelContextAssembler !== undefined) {
+        const assembled = await config.modelContextAssembler({ model: loopModel, context: llmContext, sessionId, turn });
+        llmContext = assembled.context;
+        await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
       }
-      pendingMessages = [];
+      if (!signal?.aborted && config.traceRecorder) {
+        traceModel = await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext });
+      }
+    } catch (error) {
+      await finishUnrequestedTurn(signal?.aborted ? "aborted" : "error");
+      throw error;
     }
 
-    // 1. AgentMessage → LLM Message[],在边界处做了角色译码
-    const convertFn = config.convertToLlm ?? defaultConvertToLlm;
-    const llmMessages = await convertFn(messages);
-
-    let llmContext: LlmContext = {
-      systemPrompt: context.systemPrompt,
-      messages: llmMessages,
-      tools: context.tools,
-    };
-
-    if (config.modelContextAssembler !== undefined) {
-		const assembled = await config.modelContextAssembler({
-			model: loopModel,
-			context: llmContext,
-			sessionId,
-			turn,
-		});
-		llmContext = assembled.context;
-		await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
-	}
-
-    const traceModel = config.traceRecorder
-      ? await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext })
-      : undefined;
+    if (signal?.aborted) {
+      lastStopReason = "aborted";
+      const timestamp = Date.now();
+      if (traceModel && config.traceRecorder) await config.traceRecorder.finishModel(traceModel, {
+        role: "assistant", content: [], stopReason: "aborted", timestamp,
+        api: loopModel.api, provider: loopModel.provider, model: loopModel.id,
+        errorMessage: "Cancelled before provider dispatch.",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      });
+      await finishUnrequestedTurn("aborted");
+      break;
+    }
 
     // 2. 取 streamFn
     const fn = streamFn;
@@ -418,6 +444,12 @@ export async function runAgentLoop(
       },
     );
 
+    if (signal?.aborted) {
+      lastStopReason = "aborted";
+      break;
+    }
+    if (assistantStopReason === "error" || assistantStopReason === "aborted") break;
+
     // apply prepareNextTurn
     const update = await config.prepareNextTurn?.({ messages, turn });
     if (update) {
@@ -468,8 +500,6 @@ export async function runAgentLoop(
 	  break;
 	}
 
-    if (assistantStopReason === "error" || assistantStopReason === "aborted") break;
-
     // steering 优先于 follow-up,且只在当前工具批次完成后注入。
     pendingMessages = await config.getSteeringMessages?.() ?? [];
     const hasMoreToolCalls = toolCalls.length > 0 && assistantStopReason === "toolUse";
@@ -480,6 +510,8 @@ export async function runAgentLoop(
     break;
   }
 
+  // dequeue 后取消时输入已转交 loop；写入历史供下一次继续，不能静默丢弃。
+  await appendPendingMessages();
   const agentEnd = Date.now();
   await fire(
     {

@@ -320,11 +320,13 @@ export class Agent {
       ledger: this._ledger,
       traceRecorder,
       getSteeringMessages: async () => {
+        if (this._abortController?.signal.aborted) return [];
         const drained = this.steeringQueue.drain();
         await this.emitQueueUpdate();
         return drained;
       },
       getFollowUpMessages: async () => {
+        if (this._abortController?.signal.aborted) return [];
         const drained = this.followUpQueue.drain();
         await this.emitQueueUpdate();
         return drained;
@@ -372,6 +374,8 @@ export class Agent {
       // 给 ledger 追加 sessionId 占位的最终 custom entry(可选)
       return finalMessages;
     } catch (error) {
+      // 请求组装失败也必须保留 loop 已结算的输入，下一次继续与 ledger 一致。
+      this._state.messages = context.messages.slice();
       if (startedRun !== undefined && !completionSeen) {
         const timestamp = Date.now();
         const elapsedMs = Math.max(0, timestamp - startedRun.timestamp);
