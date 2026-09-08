@@ -30,8 +30,9 @@ export function validateRunBudget(budget: AgentLoopConfig["runBudget"]): void {
 }
 
 export function activeDurationExhausted(config: AgentLoopConfig): boolean {
-  if (config.runBudget === undefined || config.runBudgetUsage === undefined) return false;
-  return config.runBudgetUsage.activeDurationMs() >= config.runBudget.maxActiveDurationMs;
+  const limit = config.runBudget?.maxActiveDurationMs;
+  if (limit === undefined || config.runBudgetUsage === undefined) return false;
+  return config.runBudgetUsage.activeDurationMs() >= limit;
 }
 
 /** 仅保存上一批的摘要；成功重置同请求，重复失败跨批累计，批内也逐调用计数。 */

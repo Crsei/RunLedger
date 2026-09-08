@@ -460,7 +460,8 @@ export interface AgentLoopConfig {
 export interface AgentRunBudget {
   readonly maxModelTurns: number;
   readonly maxToolTurns: number;
-  readonly maxActiveDurationMs: number;
+  /** 仅显式限时的调用方（如 bounded child）设置；标准运行不设总时限。 */
+  readonly maxActiveDurationMs?: number;
   readonly maxRepeatedFailureFingerprint: number;
   readonly maxApprovalExpirations: number;
 }
@@ -472,7 +473,6 @@ export interface AgentRunBudgetUsage {
 export const DEFAULT_AGENT_RUN_BUDGET: AgentRunBudget = Object.freeze({
   maxModelTurns: 256,
   maxToolTurns: 128,
-  maxActiveDurationMs: 900_000,
   maxRepeatedFailureFingerprint: 3,
   maxApprovalExpirations: 2,
 });

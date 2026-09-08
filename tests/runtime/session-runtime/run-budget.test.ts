@@ -32,7 +32,7 @@ const USAGE: AssistantMessage["usage"] = {
 const parameters = Type.Object({ value: Type.String() });
 
 describe("production Agent run budget", () => {
-	it("completes a productive task beyond the former sixteen tool turns", async () => {
+	it.each([0, 899_999, 900_000, 86_400_000])("completes productive work with %i ms of active time under the default budget", async (activeDurationMs) => {
 		let calls = 0;
 		const tool: AgentTool<typeof parameters> = {
 			name: "budget", label: "budget", description: "fixture", parameters,
@@ -53,7 +53,7 @@ describe("production Agent run budget", () => {
 		};
 		const events: AgentEvent[] = [];
 		await runAgentLoop([{ role: "user", content: [{ type: "text", text: "work" }] }], { messages: [], tools: [tool], systemPrompt: "" },
-			{ model: MODEL, runBudget: DEFAULT_AGENT_RUN_BUDGET },
+			{ model: MODEL, runBudget: DEFAULT_AGENT_RUN_BUDGET, runBudgetUsage: { activeDurationMs: () => activeDurationMs + calls } },
 			async (event) => { events.push(event); }, undefined, streamFn);
 		expect(calls).toBe(21);
 		expect(events.at(-1)).toMatchObject({ type: "agent_end", stopReason: "stop" });

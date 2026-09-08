@@ -1,5 +1,7 @@
 # Agent Harness 既有执行闭环加固计划
 
+> 2026-09-08：按用户要求移除标准运行默认 15 分钟 active-duration 上限，长任务不再仅因累计执行时间停止；运行时长统计保留。显式 bounded child 时间预算仍生效。标准运行其余上限仍为 256 个模型轮次、128 个工具轮次、同请求同失败指纹累计 3 次、审批过期累计 2 次；以下历史验收不代表已取消这些限制。
+
 > 日期：2026-09-07。状态：**H1–H5 已实现，核心修复按 §6 验收通过；H6 确定性链路与六例独立验收已执行，真实模型开发结果未 accepted**。
 >
 > 范围：不增加产品功能面，修复现有响应执行边界、输出裁剪、上下文选择和重复失败判断，复验中断与恢复。
@@ -280,3 +282,25 @@ readonly trace 的实际调用记录也已核对：before 66 次 read/grep/只�
 | `packages/ai/src/utils/tool-call-loop-guard.ts` | 重复调用纠偏；同参不等于无进展 | H4 不照搬仅参数计数器 |
 
 标准 Session 完整 compaction/summarizer、durable context receipt、模型 Artifact 全量检索、Memory 与其他新功能保持延后，回归原 Context/Trace/Runtime 专项。本计划完成不改变其 production unavailable/partial 状态。
+
+
+## 2026-09-08 标准运行时限调整
+
+移除 `DEFAULT_AGENT_RUN_BUDGET` 的 `maxActiveDurationMs` 默认值；该字段改为可选，未设置时不以累计运行时长停止。显式配置仍校验正安全整数并按原检查点执行，保留 bounded child 的时间预算及历史 `active_duration_limit` 事件读取能力。时长统计、人工等待暂停与恢复不变。
+
+本次同时核对但未修改的限制：
+
+| 范围 | 默认限制 | 触发效果 / 入口 |
+|---|---|---|
+| 标准运行 | 模型 256 轮、工具 128 轮 | 停止当前 run；[`types.ts`](../../src/runtime/types.ts) |
+| 重复失败 | 同请求同失败指纹累计 3 次 | 停止当前 run；成功重置对应请求，审批过期另计；[`run-budget.ts`](../../src/runtime/agent-loop/run-budget.ts) |
+| 审批过期 | 当前 run 累计 2 次 | 停止当前 run；[`types.ts`](../../src/runtime/types.ts) |
+| 单次审批 | 默认 30 秒 | 该请求过期；[`approval-coordinator.ts`](../../src/security/permission/approval-coordinator.ts) |
+| 单次 bash | 默认 60 秒 | 命令超时，可由工具 `timeout` 参数调整；[`bash.ts`](../../src/runtime/tools/bash.ts) |
+| bounded child | 5 分钟、模型 12 轮、工具 32 次 | 独立预算上界；[`limits.ts`](../../src/runtime/agents/limits.ts) |
+
+回归测试以 0、899999、900000、86400000 ms 的计时输入验证默认运行能完成 20 个工具轮次，覆盖跨越旧阈值的检查点；显式限时、其他停止条件和时长统计的既有回归仍保留。构建后真实 PATH CLI 在隔离 HOME/RUNLEDGER_DIR、独立 tmux server 与本地 HTTP fixture 下完成请求，保存 `activeDurationMs`，退出码 0，无残留测试进程。该证据不表示实际运行了 24 小时，也不替代外部 provider 或人工验收。
+
+验证：定向 4 文件 / 60 项通过，`npm run check`、`npm run build` 与上述 CLI/TTY 检查通过；`npm test` 在任务开始前已存在的未跟踪 `tests/runtime/session-runtime/model-selection-policy.test.ts:75` 失败，初始化显式选择 `fixture/unverified` 与 `isModelSelectable` 冲突，报 `Model selection is unavailable`，未进入 run budget。该次全量后续分组未执行，未提交。随后用户明确授权修复模型选择测试，更新为拒绝被禁止的配置模型、允许模型成功初始化两条集成路径；当前定向 22 项通过，运行时选择策略不变。
+
+2026-09-08 最终复验：模型选择集成测试已按当前策略修复，拒绝被禁止的已配置模型并验证允许模型成功初始化。`npm run check` 与完整 `npm test` 均 exit 0，原全量阻塞解除；此前构建和真实 CLI/TTY 证据仍适用（后续仅修改测试及文档）。相关修复按任务分别本地提交，未推送。
