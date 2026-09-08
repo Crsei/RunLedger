@@ -217,6 +217,25 @@ export function normalizeProviderCatalogs(allModels: Model<any>[]): Record<strin
 			maxTokens: 384000,
 			compat: deepseekCompat,
 		},
+		// 临时 ID 沿用 V4 Flash 的文本协议与预算，独立规格确认后再更新。
+		{
+			id: "deepseek-v4.1-flash-expires-on-0910",
+			name: "DeepSeek V4.1 Flash (expires on 0910)",
+			api: "openai-completions",
+			baseUrl: "https://api.deepseek.com",
+			provider: "deepseek",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.14,
+				output: 0.28,
+				cacheRead: 0.0028,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 384000,
+			compat: deepseekCompat,
+		},
 		{
 			id: "deepseek-v4-pro",
 			name: "DeepSeek V4 Pro",

@@ -17,6 +17,7 @@ import { detectOpenAICompletionsCompat } from "../../scripts/model-generation/co
 import { applyThinkingLevelMetadata } from "../../scripts/model-generation/thinking-metadata.ts";
 import { normalizeModelsDevData } from "../../scripts/model-generation/models-dev-source.ts";
 import { emitProviderData } from "../../scripts/model-generation/emit-provider-data.ts";
+import { normalizeProviderCatalogs } from "../../scripts/model-generation/provider-normalization.ts";
 import { emitModelTypes } from "../../scripts/model-generation/emit-model-types.ts";
 
 function completionsModel(id: string, provider: string, baseUrl: string): Model<"openai-completions"> {
@@ -399,5 +400,20 @@ describe("S9 emitters", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+
+describe("DeepSeek temporary model catalog", () => {
+	it("registers the requested ID even when upstream sources omit it", () => {
+		const model = normalizeProviderCatalogs([]).deepseek?.["deepseek-v4.1-flash-expires-on-0910"];
+		expect(model).toMatchObject({
+			id: "deepseek-v4.1-flash-expires-on-0910",
+			provider: "deepseek",
+			api: "openai-completions",
+			baseUrl: "https://api.deepseek.com",
+			compat: { thinkingFormat: "deepseek", requiresReasoningContentOnAssistantMessages: true },
+			thinkingLevelMap: { high: "high", max: "max" },
+		});
 	});
 });

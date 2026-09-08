@@ -17,4 +17,8 @@ export const DEEPSEEK_MODELS = values as {
 		id: "deepseek-v4-pro";
 		provider: "deepseek";
 	};
+	"deepseek-v4.1-flash-expires-on-0910": Model<"openai-completions"> & {
+		id: "deepseek-v4.1-flash-expires-on-0910";
+		provider: "deepseek";
+	};
 };
