@@ -275,8 +275,7 @@ function statusText(snapshot: FooterSnapshot): string | undefined {
 			? `Working ${formatActiveDuration(activeDurationMs)}`
 			: `Waiting for input · ${formatActiveDuration(activeDurationMs)}`;
 	}
-	if (snapshot.isStreaming) return "...";
-	return snapshot.stopReason === undefined ? undefined : `done:${snapshot.stopReason}`;
+	return snapshot.isStreaming ? "..." : undefined;
 }
 
 function modelText(snapshot: FooterSnapshot): string {
