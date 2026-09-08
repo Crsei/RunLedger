@@ -750,3 +750,17 @@ OpenTUI 0.4.5：
 - `/docs/components/scrollbar`
 - `/docs/core-concepts/testing`
 - `/docs/core-concepts/keyboard`
+
+### 2026-09-08 分隔线按实测正文宽度绘制
+
+复现：横线按整个终端的 80/143 列预生成，打开内部滚动条后正文仅有 78/141 列，普通 TextRenderable 把末尾两个横线字符折到第二行。关闭滚动条后恢复单行，问题属于布局宽度不一致。
+
+修复：新增 `SeparatorRenderable`，按节点布局后的实际宽度重建一行分隔线；布局 resize、滚动条显隐和 capturing overlay 切换时自动更新。标签和指标保留，中文按显示列数截断和填充，不硬编码扣除滚动条列数，也不改变滚动位置 authority。
+
+回归：原生 OpenTUI 在 60/80/143 列覆盖空标签、运行时标签、中文标签及 hidden/visible/overlay/visible/hidden 转换，断言节点高度始终为 1、画面没有第二行短横线；修复前以高度 2 失败，修复后相关 45 项通过。
+
+构建后 PATH `runledger` 实测：隔离 HOME/RUNLEDGER_DIR 与独立 tmux server，通过本地 HTTP fixture 完成真实 governed bash → 下一轮响应，80 列 hidden/visible/hidden 横线长度为 80/78/80，143 列为 143/141/143，均无第二行短横线；两次退出码为 0，残留测试进程为空。`npm run check` 与 `npm run build` 通过。该验证不依赖外部付费 provider，也不宣称人工视觉或跨平台验收。
+
+全量门禁：`npm test` 再次被既有未跟踪 `tests/runtime/session-runtime/model-selection-policy.test.ts:75` 的 `fixture/unverified` 模型初始化拒绝阻塞，尚未进入本次渲染逻辑；该次后续分组未执行，未提交。随后用户明确授权修复该测试的旧自动替换预期，定向 22 项通过；不通过改变生产模型选择策略让测试通过。
+
+2026-09-08 最终复验：模型选择集成测试已按当前策略修复，拒绝被禁止的已配置模型并验证允许模型成功初始化。`npm run check` 与完整 `npm test` 均 exit 0，原全量阻塞解除；此前构建和真实 CLI/TTY 证据仍适用（后续仅修改测试及文档）。相关修复按任务分别本地提交，未推送。

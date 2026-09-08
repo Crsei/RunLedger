@@ -1,6 +1,7 @@
 /** Transcript body renderable 的唯一 create/update/destroy owner。 */
 
 import { MarkdownRenderable, TextRenderable, type CliRenderer, type ScrollBoxRenderable, type OptimizedBuffer } from "@opentui/core";
+import { SeparatorRenderable } from "../separator-renderable.ts";
 import { ExecRenderable } from "../exec-renderable.ts";
 import { DiffRenderable } from "../diff-renderable.ts";
 import { PlanUpdateRenderable } from "../plan-update-renderable.ts";
@@ -207,6 +208,8 @@ export class RenderableRegistry {
         current.contentKey = contentKey;
       }
       if (!block.streaming) finalizeMarkdownChildren(current.renderable);
+    } else if (block.kind === "separator" && current.renderable instanceof SeparatorRenderable) {
+      if (current.contentKey !== contentKey) current.renderable.updateBlock(block);
     } else if (block.kind === "exec" && current.renderable instanceof ExecRenderable) {
       if (current.contentKey !== contentKey) current.renderable.updateBlock(block);
     } else if (block.kind === "diff" && current.renderable instanceof DiffRenderable) {
@@ -244,7 +247,9 @@ export class RenderableRegistry {
   private createNode(block: PresentationBlock, key: string, contentKey: string): KeyedRenderable<BodyRenderable> {
     const renderer = this.port.renderer;
     const common = { id: renderableId("runledger-block", key), width: "100%" as const, flexShrink: 0, fg: this.blockForeground(block) };
-    const renderable = block.kind === "markdown"
+    const renderable = block.kind === "separator"
+      ? new SeparatorRenderable(renderer, { ...common, block })
+      : block.kind === "markdown"
       ? new MarkdownRenderable(renderer, { ...common, fg: block.variant === "thinking" ? this.uiTheme.colors.thinkingText : this.uiTheme.colors.assistantMessage, content: contentKey, streaming: true, syntaxStyle: block.variant === "thinking" ? this.thinkingStyle : this.syntaxStyle, internalBlockMode: "top-level", renderNode: this.port.codeBlockRenderNode })
       : block.kind === "exec"
       ? new ExecRenderable(renderer, { ...common, block, highlightService: this.port.syntaxHighlightService, themeController: this.port.syntaxThemeController })

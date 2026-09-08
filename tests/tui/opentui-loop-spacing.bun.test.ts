@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { TextRenderable } from "@opentui/core";
+import { requireNode } from "./fixtures/opentui-nodes.ts";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createOpenTuiComponentRuntimeFromRenderer } from "../../src/tui/opentui/component-runtime.ts";
 import { transcriptBlockLines } from "../../src/tui/transcript-view.ts";
@@ -52,4 +54,35 @@ describe("agent loop spacing", () => {
       }
     } finally { runtime.destroy(); setup.renderer.destroy(); }
   });
+  test("keeps separators on one measured row across scrollbar, overlay, label and resize transitions", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 20 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });
+    const chat = new ChatContainer();
+    try {
+      for (const width of [80, 143, 60]) {
+        setup.resize(width, 20);
+        for (const label of ["", "stop · Worked for 12s", "已完成思考和行动"]) {
+          chat.setTimelineBlocks([{ id: "rule", kind: "separator", label }], label.length + width);
+          for (const state of ["hidden", "visible", "overlay", "visible", "hidden"]) {
+            runtime.update({
+              body: chat.present(width), editorText: "", footer: [],
+              transcriptScrollPresentation: { visible: state !== "hidden", trackColor: "#112233", thumbColor: "#445566" },
+              ...(state === "overlay" ? { overlay: [{ kind: "text" as const, content: "modal" }] } : {}),
+            });
+            await setup.renderOnce();
+            await setup.renderOnce();
+            const node = requireNode(setup.renderer.root, "runledger-block-rule", TextRenderable);
+            expect(node.height).toBe(1);
+            expect(node.width).toBe(state === "visible" ? width - 2 : width);
+            expect(node.plainText).toContain(label);
+            if (state !== "overlay") {
+              const rules = setup.captureCharFrame().split("\n").filter((line) => line.includes("─"));
+              expect(rules).toHaveLength(1);
+            }
+          }
+        }
+      }
+    } finally { runtime.destroy(); }
+  });
+
 });
