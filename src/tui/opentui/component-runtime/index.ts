@@ -225,6 +225,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
 
   return {
     update: (frame) => frameRuntime.update(frame),
+    updateStatusFrame: (frame) => frameRuntime.updateStatusFrame(frame),
     getLastDirtyPartIds: () => frameRuntime.getLastDirtyPartIds(),
     destroy: () => {
       renderer.off("frame", onFrame);

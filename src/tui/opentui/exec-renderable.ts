@@ -154,8 +154,17 @@ export function execTranscriptLines(block: ExecDisplayBlock, width = 80): readon
 	return lines;
 }
 
+const plainExecCache = new WeakMap<ExecDisplayBlock, { readonly width: number; readonly content: string; readonly text: string }>();
+
 export function plainExecText(block: ExecDisplayBlock, width = 80): string {
-	return execDisplayLines(block, width).join("\n");
+	const boundedWidth = boundedWidthValue(width);
+	// 先比较原始字段，避免为缓存比较重复执行全量 Unicode 换行；兼容原地更新的调用方。
+	const content = JSON.stringify(block);
+	const cached = plainExecCache.get(block);
+	if (cached?.width === boundedWidth && cached.content === content) return cached.text;
+	const text = execDisplayLines(block, boundedWidth).join("\n");
+	plainExecCache.set(block, { width: boundedWidth, content, text });
+	return text;
 }
 
 function commandDisplayLines(command: string, width: number, continuationPrefix = EXEC_CONTINUATION_PREFIX, continuationMaxLines = EXEC_CONTINUATION_MAX_LINES): string[] {

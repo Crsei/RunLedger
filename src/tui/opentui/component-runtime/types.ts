@@ -73,6 +73,8 @@ export interface OpenTuiComponentRuntimeOptions {
 
 export interface OpenTuiComponentRuntime {
   update(frame: OpenTuiComponentFrame): void;
+  /** 仅更新时间驱动的状态行与页脚；布局变化时返回 false，由调用方补完整帧。 */
+  updateStatusFrame?(frame: Pick<OpenTuiComponentFrame, "statusIndicator" | "statusIndicatorShimmer" | "footer">): boolean;
   getLastDirtyPartIds(): readonly string[];
   destroy(): void;
 }

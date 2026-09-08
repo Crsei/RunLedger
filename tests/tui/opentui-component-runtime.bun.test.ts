@@ -19,8 +19,41 @@ import { SlashCommandPopup } from "../../src/tui/components/slash-command-popup.
 import { builtinCommandDescriptors } from "../../src/tui/commands/registry.ts";
 import { PermissionRequestView } from "../../src/tui/components/permission-request-view.ts";
 import { approvalChoices, parseApprovalReverseRequest } from "../../src/tui/approval.ts";
+import { RenderableRegistry } from "../../src/tui/opentui/component-runtime/renderable-registry.ts";
 
 describe("OpenTUI component projection", () => {
+  test("animates status and footer without historical projection and falls back on layout changes", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 18 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });
+    const status = { indicator: "•", header: "Working", elapsed: "1s" };
+    const frame = { body: [{ id: "historical", kind: "text" as const, content: "historical output" }], editorText: "draft", footer: ["footer"], statusIndicator: status };
+    const reconcile = spyOn(RenderableRegistry.prototype, "reconcile");
+    try {
+      runtime.update(frame);
+      await setup.renderOnce();
+      const body = requireNode(setup.renderer.root, "runledger-block-historical", TextRenderable);
+      const bodyId = body.num;
+      reconcile.mockClear();
+      for (let tick = 2; tick <= 20; tick++) {
+        expect(runtime.updateStatusFrame?.({ statusIndicator: { ...status, elapsed: `${tick}s` }, footer: [`footer ${tick}s`] })).toBe(true);
+      }
+      await setup.renderOnce();
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(runtime.getLastDirtyPartIds()).toEqual([]);
+      expect(requireNode(setup.renderer.root, "runledger-block-historical", TextRenderable).num).toBe(bodyId);
+      expect(setup.captureCharFrame()).toContain("historical output");
+      expect(setup.captureCharFrame()).toContain("20s");
+      expect(setup.captureCharFrame()).toContain("draft");
+      expect(setup.captureCharFrame()).toContain("footer 20s");
+      expect(runtime.updateStatusFrame?.({ statusIndicator: status, footer: ["footer", "second row"] })).toBe(false);
+      expect(runtime.updateStatusFrame?.({ statusIndicator: undefined, footer: frame.footer })).toBe(false);
+      runtime.update({ ...frame, statusIndicator: undefined });
+      await setup.renderOnce();
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(setup.captureCharFrame()).not.toContain("Working");
+    } finally { reconcile.mockRestore(); runtime.destroy(); }
+  });
+
   test("renders submitted user background and cyan inline commands and file links", async () => {
     const setup = await createTestRenderer({ width: 80, height: 18 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });

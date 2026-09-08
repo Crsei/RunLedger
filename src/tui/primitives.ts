@@ -389,6 +389,7 @@ export class TUI extends Container {
   private focusedComponent: Component | null = null;
   private readonly inputListeners: InputListener[] = [];
   private readonly renderPreparationListeners: RenderPreparationListener[] = [];
+  private renderRevision = 0;
   private readonly themeModeListeners: Array<(mode: "dark" | "light") => void> = [];
   private readonly actionListeners: Array<(actions: readonly TuiAction[]) => void> = [];
   private readonly terminalBackgroundListeners: Array<(rgb: RgbColor) => void> = [];
@@ -509,8 +510,8 @@ export class TUI extends Container {
         maxQueuedBytes: 256 * 1024,
         maxOldestAgeMs: 100,
       },
-      onFrame: () => {
-        if (this.started) this.renderFrame();
+      onFrame: (reason) => {
+        if (this.started) this.renderFrame(reason === "scheduled");
       },
     });
     if (this.terminal instanceof ProcessTerminal) {
@@ -551,6 +552,7 @@ export class TUI extends Container {
   }
   requestRender(force = false, backlog?: FrameBacklogSnapshot): void {
     if (!this.started || !this.frameScheduler) return;
+    this.renderRevision += 1;
     if (force) {
       this.frameScheduler.markDirty();
       this.frameScheduler.flush("force");
@@ -606,16 +608,13 @@ export class TUI extends Container {
     if (actions.length === 0) return;
     for (const listener of this.actionListeners) listener(actions);
   }
-  private renderFrame(): void {
+  private renderFrame(statusOnly = false): void {
+    const revision = this.renderRevision;
     for (const listener of this.renderPreparationListeners) listener();
     const width = Math.max(1, this.terminal.columns);
     const focusIndex = this.focusedComponent ? this.children.indexOf(this.focusedComponent) : -1;
     const bodyComponents = focusIndex >= 0 ? this.children.slice(0, focusIndex) : this.children;
     const footerComponents = focusIndex >= 0 ? this.children.slice(focusIndex + 1) : [];
-    const body = bodyComponents.flatMap((component): PresentationBlock[] => component.present?.(width) ?? [{
-      kind: "text",
-      content: component.render(width).join("\n"),
-    }]);
     const footerWidth = Math.max(1, width - (this.runtime === undefined ? 0 : FOOTER_INDENT.length));
     const footer = footerComponents.flatMap((component): Array<OpenTuiComponentFrame["footer"][number]> => {
       const presented = component.present?.(footerWidth);
@@ -625,6 +624,16 @@ export class TUI extends Container {
       }
       return component.render(footerWidth);
     });
+    // 页脚也包含计时；准备阶段有新数据或状态区高度变化时仍补完整帧。
+    if (statusOnly && revision === this.renderRevision && this.runtime?.updateStatusFrame?.({
+      statusIndicator: this.statusIndicator,
+      statusIndicatorShimmer: this.statusIndicatorShimmer,
+      footer,
+    })) return;
+    const body = bodyComponents.flatMap((component): PresentationBlock[] => component.present?.(width) ?? [{
+      kind: "text",
+      content: component.render(width).join("\n"),
+    }]);
     const editorText = this.focusedComponent && "getText" in this.focusedComponent
       ? (this.focusedComponent as Component & { getText(): string }).getText()
       : "";

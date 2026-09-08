@@ -19,6 +19,7 @@ import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
 import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
 import type { AssistantMessage } from "../../src/types.ts";
 import type { TuiEvent } from "../../src/tui/types.ts";
+import type { OpenTuiComponentRuntime } from "../../src/tui/opentui/component-runtime.ts";
 
 class TestTerminal implements Terminal {
   readonly columns = 80;
@@ -306,6 +307,76 @@ describe("Plan 18 streaming state", () => {
     scheduler.markDirty({ queuedEvents: 1, queuedBytes: 1, oldestAgeMs: 60 });
     expect(reasons).toEqual(["force", "force"]);
     scheduler.destroy();
+  });
+
+  test("an animation deadline includes pending data instead of treating it as a status-only frame", () => {
+    const clock = new TestClock();
+    const reasons: string[] = [];
+    const scheduler = new FrameScheduler({ clock, frameWindowMs: 20, onFrame: (reason) => reasons.push(reason) });
+    scheduler.scheduleFrameIn(32);
+    clock.advance(20);
+    scheduler.markDirty();
+    clock.advance(12);
+    expect(reasons).toEqual(["window"]);
+    clock.advance(20);
+    expect(reasons).toEqual(["window"]);
+    scheduler.destroy();
+  });
+
+  test("status animation skips body projection but includes changes flushed during frame preparation", async () => {
+    vi.useFakeTimers();
+    const tui = new TUI(new TestTerminal());
+    const update = vi.fn();
+    const updateStatusFrame = vi.fn<NonNullable<OpenTuiComponentRuntime["updateStatusFrame"]>>(() => true);
+    (tui as unknown as { runtime: OpenTuiComponentRuntime }).runtime = {
+      update, updateStatusFrame, getLastDirtyPartIds: () => [], destroy: () => {},
+    };
+    let content = "old output";
+    const render = vi.fn(() => [content]);
+    tui.addChild({ render, invalidate: () => {} });
+    const editor = { render: () => ["draft"], invalidate: () => {} };
+    tui.addChild(editor);
+    let footerText = "footer before";
+    tui.addChild({ render: () => [footerText], invalidate: () => {} });
+    tui.setFocus(editor);
+    let flushPending = false;
+    tui.addBeforeRenderListener(() => {
+      if (!flushPending) return;
+      flushPending = false;
+      content = "new output";
+      tui.requestRender();
+    });
+    try {
+      await tui.start();
+      footerText = "footer after";
+      for (let tick = 0; tick < 20; tick++) {
+        tui.scheduleFrameIn(32);
+        vi.advanceTimersByTime(32);
+      }
+      expect(render).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(updateStatusFrame).toHaveBeenCalledTimes(20);
+      expect(updateStatusFrame.mock.lastCall?.[0].footer).toEqual(["footer after"]);
+
+      flushPending = true;
+      tui.scheduleFrameIn(32);
+      vi.advanceTimersByTime(32);
+      expect(update.mock.lastCall?.[0].body).toEqual([{ kind: "text", content: "new output" }]);
+      expect(updateStatusFrame).toHaveBeenCalledTimes(20);
+      vi.advanceTimersByTime(16);
+
+      content = "terminal output";
+      tui.scheduleFrameIn(8);
+      tui.requestRender();
+      vi.advanceTimersByTime(8);
+      expect(update.mock.lastCall?.[0].body).toEqual([{ kind: "text", content: "terminal output" }]);
+
+      updateStatusFrame.mockReturnValue(false);
+      const before = render.mock.calls.length;
+      tui.scheduleFrameIn(32);
+      vi.advanceTimersByTime(32);
+      expect(render).toHaveBeenCalledTimes(before + 1);
+    } finally { tui.stop(); vi.useRealTimers(); }
   });
 
   test("TUI ordinary render requests share one application frame window", async () => {

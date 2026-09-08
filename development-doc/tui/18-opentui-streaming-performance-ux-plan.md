@@ -347,6 +347,31 @@ src/tui/opentui/
 
 全量 `npm test` 当前结果为 147 files / 779 tests 与 native 14 tests / 88 assertions 全绿；它证明没有当前工作树回归，但仍不等于 Plan 18 的完整 PTY selection/theme/focus 或性能预算闭合。
 
+### 8.2 长历史工具收尾延迟修复（2026-09-08）
+
+本轮定位的是同进程 Session Owner 与 TUI 共享事件循环时，状态动画反复投影历史而延迟工具结果返回的问题。实际会话回放的 CPU profile 中，约 86% 采样位于 `plainExecText` 调用链；历史工具输出先全量执行 Unicode 显示宽度换行，再裁剪展示行数。32 ms 动画持续触发该路径，50 条消息时单次未变正文投影仍耗时约 180–230 ms。
+
+修复范围：
+
+- `FrameScheduler` 区分纯定时动画与待处理数据；动画截止时若已有正文更新，仍发送完整帧，避免吞掉流式或终态内容。
+- `TUI` 在准备阶段没有新 render 请求时，仅提交状态行和含计时的页脚；component runtime 遇到状态区或页脚高度变化则回退完整布局。纯动画不再投影历史正文、editor 或 overlay。
+- `plainExecText` 按 block 弱引用、宽度和原始字段缓存文本；普通完整帧也复用未变工具输出的 Unicode 换行结果，原地输出更新及 resize 会失效。
+
+同一会话 50 条消息的内存回放中，动画开启时连续 30 次小文件读取由约 5.2–5.5 秒降为 1.3–13.3 ms。该测量隔离了事件循环争用，不是外部模型或完整工具执行耗时。
+
+构建后通过 PATH 链接的真实 `runledger`，在独立 HOME、RUNLEDGER_DIR、工作区及 tmux 中执行 32 次受治理工具调用，累积中文和 emoji 输出。模型响应来自本地确定性 HTTP fixture；SQLite 记录的“进程终态 → 工具结果”如下：
+
+| 终端宽度 | 首五次中位数 | 末五次中位数 | 最大值 |
+|---|---:|---:|---:|
+| 80 列 | 131 ms | 80 ms | 136 ms |
+| 143 列 | 59 ms | 85 ms | 98 ms |
+
+两次均核对 32 次成功、最终 `LATENCY_DONE`、退出码 0 与无残留所属进程。复现入口为 [`tests/manual/harness-repair/latency.py`](../../tests/manual/harness-repair/latency.py)，命令和预算见[说明](../../tests/manual/harness-repair/README.md)。回归覆盖动画与数据帧竞争、准备阶段正文更新、状态与页脚布局回退、native 正文与草稿保持、页脚计时更新，以及工具文本缓存失效。
+
+验证：`npm run check`、`npm run build` 通过。仅包含本任务修改的隔离工作树中，完整 `npm test` 通过（Vitest 495 文件 / 3239 用例、Bun 22 文件 / 147 用例）；首轮迁移 CLI 用例触发 15 秒超时，未改测试或预算，重跑全套通过。最后补齐页脚计时后，重新 check/build 并复测全部 TUI（Vitest 102 文件 / 741 用例、Bun 21 文件 / 145 用例）及两种宽度真实 CLI。
+
+此证据仅关闭上述热点；不关闭 S0–S8 整阶段、10,000 entries、硬内存预算、人工视觉/中文 IME、macOS/Windows 或真实外部 provider 门禁。普通完整数据帧和持久化重放仍有随历史增长的成本，后续需分别测量。
+
 ## 9. 风险与回退策略
 
 - OpenTUI 0.4.5 的 `MarkdownRenderable.streaming` 和 `CodeRenderable.streaming` 可以使用；实验性 `internalBlockMode` / `_stableBlockCount` 只允许封装在可替换 adapter 内评估，不进入 RunLedger 稳定契约。

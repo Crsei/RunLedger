@@ -104,6 +104,17 @@ export class OpenTuiFrameRuntime {
     this.port.renderer.requestRender();
   }
 
+  public updateStatusFrame(frame: Pick<OpenTuiComponentFrame, "statusIndicator" | "statusIndicatorShimmer" | "footer">): boolean {
+    const plainStatus = frame.statusIndicator === undefined ? "" : statusIndicatorPlainText(frame.statusIndicator, this.port.renderer.width);
+    const height = plainStatus.length > 0 ? plainStatus.split("\n").length : 0;
+    if (height !== this.port.statusIndicator.height || Math.max(1, frame.footer.length) !== this.port.footer.height) return false;
+    this.lastDirtyPartIds = [];
+    this.applyStatusIndicator(frame, plainStatus);
+    this.port.footer.content = styledFooter(frame.footer, this.port.syntaxHighlightService, this.port.syntaxThemeController);
+    this.port.renderer.requestRender();
+    return true;
+  }
+
   private applyScrollPresentation(frame: OpenTuiComponentFrame): void {
     const requested = frame.transcriptScrollPresentation ?? { visible: false, trackColor: "", thumbColor: "" };
     const presentation = {
@@ -134,12 +145,7 @@ export class OpenTuiFrameRuntime {
     if (editor.cursorOffset !== cursorOffset) editor.cursorOffset = cursorOffset;
     if (frame.editorHeight !== undefined) this.requestedEditorHeight = frame.editorHeight;
     const plainStatus = frame.statusIndicator === undefined ? "" : statusIndicatorPlainText(frame.statusIndicator, renderer.width);
-    const projectedStatus = plainStatus.length > 0 && frame.statusIndicator !== undefined && frame.statusIndicatorShimmer !== undefined
-      ? shimmerStatusLine(plainStatus, frame.statusIndicator, frame.statusIndicatorShimmer)
-      : plainStatus;
-    statusIndicator.visible = projectedStatus.length > 0;
-    statusIndicator.content = projectedStatus.length > 0 ? ansiToStyledText(projectedStatus) : "";
-    statusIndicator.height = plainStatus.length > 0 ? plainStatus.split("\n").length : 0;
+    this.applyStatusIndicator(frame, plainStatus);
     const measuredLines = editor.editorView.measureForDimensions(Math.max(1, renderer.width - 3), 0x7fff)?.lineCount ?? 1;
     const desiredEditorHeight = Math.max(3, this.requestedEditorHeight, measuredLines + 2);
     const footerHeight = Math.max(1, frame.footer.length);
@@ -153,6 +159,16 @@ export class OpenTuiFrameRuntime {
     this.port.footer.content = styledFooter(frame.footer, this.port.syntaxHighlightService, this.port.syntaxThemeController);
     this.port.footer.height = footerHeight;
     return { footerHeight, editorHeight: boundedEditorHeight };
+  }
+
+  private applyStatusIndicator(frame: Pick<OpenTuiComponentFrame, "statusIndicator" | "statusIndicatorShimmer">, plainStatus: string): void {
+    const projectedStatus = plainStatus.length > 0 && frame.statusIndicator !== undefined && frame.statusIndicatorShimmer !== undefined
+      ? shimmerStatusLine(plainStatus, frame.statusIndicator, frame.statusIndicatorShimmer)
+      : plainStatus;
+    const { statusIndicator } = this.port;
+    statusIndicator.visible = projectedStatus.length > 0;
+    statusIndicator.content = projectedStatus.length > 0 ? ansiToStyledText(projectedStatus) : "";
+    statusIndicator.height = plainStatus.length > 0 ? plainStatus.split("\n").length : 0;
   }
 
   private applyEditorAppearance(appearance: EditorAppearance | undefined): void {

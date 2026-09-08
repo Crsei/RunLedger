@@ -99,9 +99,11 @@ export class FrameScheduler {
     this.scheduledTimer = this.clock.setTimeout(() => {
       this.scheduledTimer = undefined;
       if (this.destroyed) return;
+      // 动画不能吞掉尚未展示的数据帧；有正文更新时仍走完整投影。
+      const reason = this.dirty ? "window" : "scheduled";
       this.cancelTimer();
       this.dirty = false;
-      this.onFrame("scheduled", this.scheduledFrameAt);
+      this.onFrame(reason, this.scheduledFrameAt);
     }, delay);
   }
 
