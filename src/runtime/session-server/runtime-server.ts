@@ -323,8 +323,13 @@ export class SessionRuntimeServer implements OwnerTransport {
 				this.destroy(connection);
 				return;
 			}
-			// prompt 等待整个 run；中断必须即时进入同一鉴权和 driver 校验路径。
-			if (connection.initialized && frame.kind === "command_request" && frame.body.kind === "interrupt") {
+			// prompt 等待整个 run；中断与权限管理不能排在其后的审批等待中。
+			// 仍调用同一 route，保留协议 capability、driver 与 generation 校验。
+			const operation = objectValue(frame.body.body)?.operation;
+			const permissionQuery = frame.kind === "query_request" && frame.body.kind === "domain_query" &&
+				(operation === "security.settings.inspect" || operation === "session.security.inspect");
+			const permissionApply = frame.kind === "command_request" && frame.body.kind === "domain_command" && operation === "session.security.apply";
+			if (connection.initialized && (permissionQuery || permissionApply || (frame.kind === "command_request" && frame.body.kind === "interrupt"))) {
 				void this.route(connection, frame)
 					.catch(() => this.destroy(connection))
 					.finally(() => { connection.pendingFrames = Math.max(0, connection.pendingFrames - 1); });

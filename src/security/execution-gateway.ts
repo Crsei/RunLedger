@@ -29,6 +29,8 @@ import {
 import { PermissionEngine, requiresExplicitConfirmation } from "./permission/engine.ts";
 import { autoApprovalReviewInputDigest, type AutoApprovalReviewInput } from "./permission/auto-approval-reviewer.ts";
 import type { MemoryPermissionGrantStore } from "./permission/grants.ts";
+import { authorizationSignal } from "./policy-revision.ts";
+import type { SecurityPolicyRevisionPort } from "./policy-revision.ts";
 import type {
 	AccessRequest,
 	AuthorizationRequest,
@@ -69,6 +71,7 @@ export interface ExecutionGatewayContext {
 }
 
 export interface ExecutionGatewayOptions {
+	readonly revision?: SecurityPolicyRevisionPort;
 	readonly snapshot: SecuritySnapshot;
 	readonly workspace: HostWorkspaceExecutionContext;
 	readonly filesystemBroker: FileSystemBrokerPort;
@@ -177,6 +180,8 @@ export class ExecutionGateway {
 		input: ExecutionGatewayAuthorizationRequest,
 		signal?: AbortSignal,
 	): Promise<SecurityResult<ExecutionGatewayContext>> {
+		const current = this.#options.revision?.check();
+		if (current !== undefined && !current.ok) return current;
 		const structural = this.#validateRequest(input.request, input.requestDigest, input.constraintInput, input.constraintSnapshot);
 		if (!structural.ok) return structural;
 		const evaluation = this.#options.permissionEngine.evaluate(input.request.requests, input.request.snapshot);
@@ -202,7 +207,7 @@ export class ExecutionGateway {
 			policyDigest: input.request.snapshot.policyDigest,
 		});
 		const autoReview = await this.#autoReviewInput(input.request, evaluation);
-		const authorized = await this.#options.approvalCoordinator.authorize(input.request, evaluation, revalidate, signal, autoReview);
+		const authorized = await this.#options.approvalCoordinator.authorize(input.request, evaluation, revalidate, authorizationSignal(this.#options.revision, signal), autoReview);
 		if (!authorized.ok) return authorized;
 		return this.#finishAuthorization(input, authorized.value);
 	}
@@ -282,6 +287,8 @@ export class ExecutionGateway {
 	}
 
 	public async open(input: ExecutionGatewayOpenRequest): Promise<SecurityResult<ExecutionGatewayContext>> {
+		const current = this.#options.revision?.check();
+		if (current !== undefined && !current.ok) return current;
 		const structural = this.#validateRequest(input.request, input.requestDigest, input.constraintInput, input.constraintSnapshot);
 		if (!structural.ok) return structural;
 		if (!validDigest(input.authorizationDigest) || !sameDigest(input.authorizationDigest, runtimeDigest(input.authorization))) return invalid("authorization receipt digest is stale or invalid");
@@ -302,12 +309,15 @@ export class ExecutionGateway {
 		if (requiresProcessSandbox && input.request.snapshot.profile.sandbox !== "off" && input.constraintInput.modes.sandbox === "none") return invalid("restrictive sandbox decision is missing");
 		const escalations = await this.#filesystemEscalations(input.request, input.authorization);
 		if (!escalations.ok) return escalations;
-		const filesystem = new PolicyFileSystem(this.#options.filesystemBroker, this.#options.workspace.cwd, this.#options.snapshot, escalations.value);
+		const beforeEffect = this.#options.revision?.checkAdmission;
+		const filesystem = new PolicyFileSystem(this.#options.filesystemBroker, this.#options.workspace.cwd, this.#options.snapshot, escalations.value, beforeEffect);
 		const complete = this.#completion(input.request, input.authorization);
 		return {
 			ok: true,
 			value: {
 				validateAuthorization: async () => {
+					const valid = this.#options.revision?.check();
+					if (valid !== undefined && !valid.ok) return valid;
 					if (!requiresExplicitConfirmation(evaluation)) return { ok: true, value: undefined };
 					const receipt = input.authorization.approval;
 					return receipt === undefined ? denied("system circuit breaker approval is missing") : this.#options.approvalCoordinator.validateAllowOnce(input.request, receipt);
@@ -322,6 +332,7 @@ export class ExecutionGateway {
 					this.#options.networkBroker,
 					this.#options.snapshot.profile.network,
 					exactAuthorizedNetworkReview(input.request.requests),
+					beforeEffect,
 				),
 				finalLeaf: this.#options.finalLeaf,
 				complete,

@@ -132,6 +132,7 @@ export interface InteractiveSessionControllerPort {
 	readonly subscribeWarnings?: (listener: (warning: string) => void) => () => void;
 	/** Optional durable title-event subscription; absent on legacy/local controllers. */
 	readonly subscribeSessionTitleChanged?: (listener: SessionTitleChangedSink) => () => void;
+	readonly subscribePermissionProfile?: (listener: (profile: string) => void) => () => void;
 	/** Optional transient idle recap subscription; never part of AgentEvent/replay. */
 	readonly subscribeIdleRecap?: (listener: SessionIdleRecapSink) => () => void;
   /** Session Owner 客户端握手冻结的精确 operation 判断；legacy/local controller 缺省为不可协商。 */

@@ -31,6 +31,7 @@ import {
 } from "./exec-prefix-rule.ts";
 import { normalizeNetworkApprovalKey, type NetworkApprovalKey } from "../network/network-approval.ts";
 import { requiresExplicitConfirmation } from "./engine.ts";
+import { isPolicyChanged, policyChanged } from "../policy-revision.ts";
 import type {
 	AutoApprovalReviewAuditPort,
 	AutoApprovalReviewInput,
@@ -69,6 +70,7 @@ export interface ApprovalAmendmentStateStorePort extends ApprovalStateStorePort 
 }
 
 export interface ApprovalAuditPort {
+	superseded?(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket; readonly receipt: ApprovalReceiptRef }): Promise<void>;
 	requested(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket }): Promise<void>;
 	decided(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket; readonly receipt: ApprovalReceiptRef }): Promise<void>;
 	revoked(input: { readonly request: AuthorizationRequest; readonly receipt: ApprovalReceiptRef }): Promise<void>;
@@ -480,6 +482,7 @@ export class ApprovalCoordinator {
 		let raced = automatic === undefined
 			? await this.#racePrompt(prompt, signal)
 			: { kind: "response" as const, response: automatic };
+		if (isPolicyChanged(signal?.reason) && (raced.kind === "channel" || (raced.kind === "response" && isAllowResponse(raced.response)))) raced = { kind: "abort" };
 		let response: PermissionPromptResponse = raced.kind === "response"
 			? raced.response
 			: { decision: raced.kind === "timeout" ? "cancel" : "cancel", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID };
@@ -554,6 +557,11 @@ export class ApprovalCoordinator {
 			await this.#audit?.decided({ request, ticket: selectedTicket, receipt: committedReceipt });
 		} catch {
 			return failure("approval decision audit is uncertain", "approval_stale");
+		}
+		if (raced.kind === "abort" && isPolicyChanged(signal?.reason) && committedReceipt.decision === "cancelled") {
+			try { await this.#audit?.superseded?.({ request, ticket, receipt: committedReceipt }); }
+			catch { return failure("approval supersession audit is unavailable", "approval_stale"); }
+			return policyChanged();
 		}
 		const outcome = committedReceipt.decision === "allowed" ? "allow" : "deny";
 		return {

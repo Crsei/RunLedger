@@ -17,6 +17,16 @@
 
 > 2026-09-05 Agent Mode 接线：见 [Runtime 10](10-agent-mode-entry-implementation-plan.md)。schema 4 → 5 为零 active owner 的 structural migration；边界检查只为 `schema.ts` 中该固定列复制 SQL 增加精确豁免，不开放任意无 fence 写入。CLI 切换时保留源 Session，避免目标准入失败后无法返回；正常退出仍回收无用户消息的普通会话，但 plan@1 工件与审批状态不按此规则回收。Plan mutation 使用 owner-fenced events 与 Attempt Gateway。该增量不提升 R8/R9 或跨平台验收状态。
 
+## 2026-09-09 当前权限更新接线
+
+Session Domain 在创建/接管时装配权限版本容器、owner-fenced update journal 与显式 `session.security.apply` 协调器。每次更新先准备配置和短暂 admission 屏障，记录 intent，通过 SecuritySettingsPort CAS 保存、核对完整配置层语义并持久提交 applied 后，同步发布新 immutable snapshot。版本变化仅取消授权等待；已经开始的副作用保留原 receipt，不重放、不主动终止已有进程。
+
+稳定 filesystem/network/shell/request_permissions 端口按操作 pin revision；最终 broker dispatch 再核对版本。managed process 在 prepare 后获取短生命周期 spawn admission，Owner 发布等待该 admission 释放，不等待进程结束。child 在创建时捕获权限 revision，已有 child 不能随 root 提权；extension trust ceiling 保持冻结。assembled harness 的下次请求加入当前权限说明，minimal 固定 prompt 合同保持原样。
+
+RuntimeServer 允许同一连接在 prompt 尚未结束时处理 `security.settings.inspect`、`session.security.inspect` 和 `session.security.apply`，仍经过同一个 route 的 capability/driver/generation 校验。其他 mutation 不因该例外并行化。旧审批取消通过精确反向请求 ID 传播；新请求重新评估。TUI `/permissions` 显示有效状态并保存默认值，审批弹窗的 `/` 可以进入选择器，Esc 返回原审批；只关闭属于本次更新的 overlay。
+
+本增量的失败表、自动化与构建后 TTY 证据见[权限专题 §0](../worktree-sandbox-permisson/07-three-permission-presets-and-tui-settings-plan.md)。不提升 R8/R9、真实外部 provider、人工或跨平台验收状态。
+
 ## 0. 决策摘要
 
 RunLedger 从机器或 workspace 级 resident Host 改为 session-scoped embedded runtime：

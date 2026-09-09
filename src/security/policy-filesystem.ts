@@ -145,6 +145,7 @@ export class FileAccessGuard {
 }
 
 export class PolicyFileSystem {
+	readonly #beforeEffect?: () => SecurityResult<void>;
 	readonly #broker: FileSystemBrokerPort;
 	readonly #resolver: CanonicalPathResolver;
 	readonly #guard: FileAccessGuard;
@@ -154,7 +155,9 @@ export class PolicyFileSystem {
 		cwd: string,
 		snapshot: SecuritySnapshot,
 		escalations: readonly PendingFilesystemEscalation[] = [],
+		beforeEffect?: () => SecurityResult<void>,
 	) {
+		this.#beforeEffect = beforeEffect;
 		this.#broker = broker;
 		this.#resolver = new CanonicalPathResolver(broker, cwd);
 		this.#guard = new FileAccessGuard(snapshot, escalations);
@@ -174,6 +177,8 @@ export class PolicyFileSystem {
 	): Promise<SecurityResult<CanonicalPathResolution>> {
 		const repeated = await this.#path(operation, requestedPath);
 		if (!repeated.ok) return repeated;
+		const current = this.#beforeEffect?.();
+		if (current !== undefined && !current.ok) return current;
 		if (repeated.value.canonicalPath !== previous.canonicalPath) return failure("path_escape", "filesystem target changed before execution");
 		const consumed = this.#guard.consumeEscalation(operation, repeated.value);
 		if (!consumed.ok) return consumed;
@@ -186,6 +191,8 @@ export class PolicyFileSystem {
 		try {
 			const repeated = await this.#revalidate("read", path, checked.value);
 			if (!repeated.ok) return repeated;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			return { ok: true, value: await this.#broker.readFile(repeated.value.canonicalPath) };
 		} catch {
 			return failure("invalid_request", "filesystem read failed");
@@ -198,6 +205,8 @@ export class PolicyFileSystem {
 		try {
 			const repeated = await this.#revalidate("read", path, checked.value);
 			if (!repeated.ok) return repeated;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			await this.#broker.stat(repeated.value.canonicalPath);
 			return { ok: true, value: undefined };
 		} catch {
@@ -211,6 +220,8 @@ export class PolicyFileSystem {
 		try {
 			const repeated = await this.#revalidate("write", path, checked.value);
 			if (!repeated.ok) return repeated;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			await this.#broker.writeFile(repeated.value.canonicalPath, data);
 			return { ok: true, value: undefined };
 		} catch {
@@ -224,6 +235,8 @@ export class PolicyFileSystem {
 		try {
 			const repeated = await this.#revalidate("read", path, checked.value);
 			if (!repeated.ok) return repeated;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			return { ok: true, value: await this.#broker.stat(repeated.value.canonicalPath) };
 		} catch {
 			return failure("invalid_request", "filesystem stat failed");
@@ -236,6 +249,8 @@ export class PolicyFileSystem {
 		try {
 			const repeated = await this.#revalidate("read", path, checked.value);
 			if (!repeated.ok) return repeated;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			return { ok: true, value: await this.#broker.lstat(repeated.value.lexicalPath) };
 		} catch {
 			return failure("invalid_request", "filesystem lstat failed");
@@ -253,6 +268,8 @@ export class PolicyFileSystem {
 		try {
 			const repeated = await this.#revalidate("read", path, checked.value);
 			if (!repeated.ok) return repeated;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			return { ok: true, value: await this.#broker.readdir(repeated.value.canonicalPath) };
 		} catch {
 			return failure("invalid_request", "filesystem readdir failed");
@@ -265,6 +282,8 @@ export class PolicyFileSystem {
 		try {
 			const repeated = await this.#revalidate("write", path, checked.value);
 			if (!repeated.ok) return repeated;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			await this.#broker.mkdir(repeated.value.canonicalPath, options);
 			return { ok: true, value: undefined };
 		} catch {
@@ -278,6 +297,8 @@ export class PolicyFileSystem {
 		try {
 			const repeated = await this.#revalidate("delete", path, checked.value);
 			if (!repeated.ok) return repeated;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			await this.#broker.rm(repeated.value.canonicalPath, options);
 			return { ok: true, value: undefined };
 		} catch {
@@ -295,6 +316,8 @@ export class PolicyFileSystem {
 			if (!repeatedSource.ok) return repeatedSource;
 			const repeatedTarget = await this.#revalidate("write", to, target.value);
 			if (!repeatedTarget.ok) return repeatedTarget;
+			const current = this.#beforeEffect?.();
+			if (current !== undefined && !current.ok) return current;
 			await this.#broker.rename(repeatedSource.value.canonicalPath, repeatedTarget.value.canonicalPath);
 			return { ok: true, value: undefined };
 		} catch {

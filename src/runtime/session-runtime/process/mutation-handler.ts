@@ -8,6 +8,7 @@
  */
 
 import { isAbsolute } from "node:path";
+import type { PreparedSessionManagedProcessSecurity } from "../../../security/session-composition.ts";
 import { securityRejectionSummary } from "../../../security/rejection-summary.ts";
 import { createRuntimeId } from "../../protocol/ids.ts";
 import { runtimeDigest } from "../../protocol/foundation.ts";
@@ -97,73 +98,83 @@ export class ProcessMutationHandler {
 		}).digest.slice(0, 64));
 		const requestDigest = runtimeDigest({ command, cwd, timeoutMs, backend, executionMode });
 		if (context.signal?.aborted) return this.port.domainFailure(operation, "denied", "approval_cancelled");
-		const prepared = await this.port.options.security.prepare({
-			commandId: correlationId,
-			command,
-			cwd,
-			timeoutMs,
-			backend,
-			executionMode,
-			requestDigest,
-		}, context.signal);
-		if (!prepared.ok) return { ...this.port.domainFailure(operation, "denied", prepared.error.code), reason: securityRejectionSummary(prepared.error) };
-		if (context.signal?.aborted) {
-			const completed = await prepared.value.complete();
-			return this.port.domainFailure(operation, "denied", completed.ok ? "approval_cancelled" : completed.error.code);
+		let prepared: PreparedSessionManagedProcessSecurity | undefined;
+		let releaseAdmission: (() => void) | undefined;
+		for (let retry = 0; retry < 32; retry += 1) {
+			const candidate = await this.port.options.security.prepare({
+				commandId: correlationId, command, cwd, timeoutMs, backend, executionMode, requestDigest,
+			}, context.signal);
+			if (!candidate.ok) return { ...this.port.domainFailure(operation, "denied", candidate.error.code), reason: securityRejectionSummary(candidate.error) };
+			const admission = candidate.value.acquireAdmission?.();
+			if (admission !== undefined && !admission.ok) {
+				if (admission.error.code === "security_policy_changed") continue;
+				return this.port.domainFailure(operation, "denied", admission.error.code);
+			}
+			prepared = candidate.value;
+			releaseAdmission = admission?.value;
+			break;
 		}
-		const attemptPort = this.port.attemptPort();
-		const begun = attemptPort?.beginAttempt("process_spawn", requestDigest);
-		if (begun !== undefined && "error" in begun) {
-			return this.port.domainFailure(operation, "recovery_required", begun.error);
-		}
-		this.port.commands.set(correlationId, { command, cwd });
-		const request: ManagedProcessRequest = {
-			authorityId: createRuntimeId("authority", "session-owner-runtime"),
-			tenantId: createRuntimeId("tenant", "local-user"),
-			workspaceId: this.port.options.workspaceId,
-			sessionId: this.port.options.fence.sessionId,
-			hostGeneration: this.port.options.fence.generation,
-			sessionGeneration: this.port.options.fence.generation,
-			requestDigest: prepared.value.requestDigest,
-			commandRef: { subjectKind: "content", digest: runtimeDigest(command), mediaType: "text/plain", size: Buffer.byteLength(command) },
-			cwdRef: { subjectKind: "content", digest: runtimeDigest(cwd), mediaType: "text/plain", size: Buffer.byteLength(cwd) },
-			backend,
-			executionMode,
-			timeoutMs,
-			correlationId,
-		};
-		const launchPlan = prepared.value.launchPlan === undefined
-			? undefined
-			: {
-				program: prepared.value.launchPlan.program,
-				arguments: prepared.value.launchPlan.arguments,
-				cwd: prepared.value.launchPlan.cwd,
-				environment: prepared.value.launchPlan.environment,
+		if (prepared === undefined) return this.port.domainFailure(operation, "stale", "security_update_in_progress");
+		try {
+			if (context.signal?.aborted) {
+				const completed = await prepared.complete();
+				return this.port.domainFailure(operation, "denied", completed.ok ? "approval_cancelled" : completed.error.code);
+			}
+			const attemptPort = this.port.attemptPort();
+			const begun = attemptPort?.beginAttempt("process_spawn", requestDigest);
+			if (begun !== undefined && "error" in begun) {
+				return this.port.domainFailure(operation, "recovery_required", begun.error);
+			}
+			this.port.commands.set(correlationId, { command, cwd });
+			const request: ManagedProcessRequest = {
+				authorityId: createRuntimeId("authority", "session-owner-runtime"),
+				tenantId: createRuntimeId("tenant", "local-user"),
+				workspaceId: this.port.options.workspaceId,
+				sessionId: this.port.options.fence.sessionId,
+				hostGeneration: this.port.options.fence.generation,
+				sessionGeneration: this.port.options.fence.generation,
+				requestDigest: prepared.requestDigest,
+				commandRef: { subjectKind: "content", digest: runtimeDigest(command), mediaType: "text/plain", size: Buffer.byteLength(command) },
+				cwdRef: { subjectKind: "content", digest: runtimeDigest(cwd), mediaType: "text/plain", size: Buffer.byteLength(cwd) },
+				backend,
+				executionMode,
+				timeoutMs,
+				correlationId,
 			};
-		const created = await this.port.plane.create(request, prepared.value.constraintInput, {
-			constraintSnapshot: prepared.value.constraintSnapshot,
-			commandDisplayReceipt: prepared.value.commandDisplayReceipt,
-			...(launchPlan === undefined ? {} : { launchPlan }),
-			beforeSpawn: async () => {
-				const finalLeaf = await prepared.value.validateFinalLeaf();
-				if (!finalLeaf.ok) throw new Error(`${finalLeaf.error.code}: ${finalLeaf.error.message}`);
-				if (context.signal?.aborted) throw new Error("process start cancelled before spawn");
-			},
-		});
-		if (!created.ok) {
-			if (begun !== undefined && created.code !== "uncertain_outcome") {
-				const settled = attemptPort?.settleAttempt(begun.attemptId, "rejected", runtimeDigest({ code: created.code }));
-				if (settled !== undefined && !settled.ok) return this.port.domainFailure(operation, "failed", settled.code);
+			const launchPlan = prepared.launchPlan === undefined
+				? undefined
+				: {
+					program: prepared.launchPlan.program,
+					arguments: prepared.launchPlan.arguments,
+					cwd: prepared.launchPlan.cwd,
+					environment: prepared.launchPlan.environment,
+				};
+			const admitted = prepared;
+			const created = await this.port.plane.create(request, prepared.constraintInput, {
+				constraintSnapshot: prepared.constraintSnapshot,
+				commandDisplayReceipt: prepared.commandDisplayReceipt,
+				...(launchPlan === undefined ? {} : { launchPlan }),
+				beforeSpawn: async () => {
+					const finalLeaf = await admitted.validateFinalLeaf();
+					if (!finalLeaf.ok) throw new Error(`${finalLeaf.error.code}: ${finalLeaf.error.message}`);
+					if (context.signal?.aborted) throw new Error("process start cancelled before spawn");
+				},
+			});
+			if (!created.ok) {
+				if (begun !== undefined && created.code !== "uncertain_outcome") {
+					const settled = attemptPort?.settleAttempt(begun.attemptId, "rejected", runtimeDigest({ code: created.code }));
+					if (settled !== undefined && !settled.ok) return this.port.domainFailure(operation, "failed", settled.code);
+				}
+				if (created.code !== "uncertain_outcome") {
+					const completed = await prepared.complete();
+					if (!completed.ok) return this.port.domainFailure(operation, "failed", completed.error.code);
+				}
+				return this.port.domainFailure(operation, created.code.includes("denied") ? "denied" : "failed", created.code);
 			}
-			if (created.code !== "uncertain_outcome") {
-				const completed = await prepared.value.complete();
-				if (!completed.ok) return this.port.domainFailure(operation, "failed", completed.error.code);
-			}
-			return this.port.domainFailure(operation, created.code.includes("denied") ? "denied" : "failed", created.code);
-		}
-		if (begun !== undefined) this.port.settlement.registerAttempt(created.handle.executionId, begun.attemptId);
-		this.port.settlement.registerAuthorization(created.handle.executionId, prepared.value.complete);
-		return this.commitMutation(operation, context.effectId, this.port.safeSummary(created.summary));
+			if (begun !== undefined) this.port.settlement.registerAttempt(created.handle.executionId, begun.attemptId);
+			this.port.settlement.registerAuthorization(created.handle.executionId, prepared.complete);
+			return this.commitMutation(operation, context.effectId, this.port.safeSummary(created.summary));
+		} finally { releaseAdmission?.(); }
 	}
 
 	private findHandle(executionId: string): ExecutionHandleRef | undefined {

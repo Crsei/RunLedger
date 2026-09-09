@@ -214,6 +214,16 @@ class SessionApprovalAudit implements ApprovalAuditPort {
 			toolName: input.request.toolName,
 			argumentsDigest: input.request.argumentsDigest,
 			policyDigest: input.request.snapshot.policyDigest,
+			...(input.request.snapshot.securityRevision === undefined ? {} : { securityRevision: input.request.snapshot.securityRevision }),
+		});
+	}
+
+	public async superseded(input: Parameters<NonNullable<ApprovalAuditPort["superseded"]>>[0]): Promise<void> {
+		appendApprovalEvent(this.#store, this.#fence, "approval.superseded", `superseded-${input.ticket.approvalId}`, {
+			approvalId: input.ticket.approvalId, receiptId: input.receipt.receiptId,
+			policyDigest: input.request.snapshot.policyDigest,
+			securityRevision: input.request.snapshot.securityRevision,
+			reason: "session_permissions_changed",
 		});
 	}
 
@@ -291,7 +301,7 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 function appendApprovalEvent(
 	store: SessionStore,
 	fence: OwnerFence,
-	eventType: "approval.requested" | "approval.decided" | "approval.revoked" | "approval.auto_reviewed",
+	eventType: "approval.requested" | "approval.decided" | "approval.revoked" | "approval.auto_reviewed" | "approval.superseded",
 	seed: string,
 	payload: Record<string, unknown>,
 ): void {

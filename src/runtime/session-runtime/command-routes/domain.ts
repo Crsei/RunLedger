@@ -37,7 +37,16 @@ export function createDomainCommandRoutes(port: SessionCommandPort): Pick<Sessio
 				if (port.state() === "recovery_required") return recoveryBlocked(operation);
 				const validated = port.domainRouter.mutate(request.body, meta.isDriver);
 				if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") return success(validated);
-				return success(await resources.mutate(operation, objectValue(request.body.payload) ?? {}, mutationContext(request.body)));
+				const result = await resources.mutate(operation, objectValue(request.body.payload) ?? {}, mutationContext(request.body));
+				if (operation === "session.security.apply" && result.ok) {
+					const event = [...port.store.replaySessionEvents(port.sessionId)].reverse().find((entry) => {
+						if (entry.eventType !== "session.security.update") return false;
+						const record = safeJson(entry.payloadJson);
+						return record.stage === "applied" && record.toRevision === result.value.appliedRevision;
+					});
+					if (event !== undefined) port.emit({ eventType: event.eventType, payload: safeJson(event.payloadJson), sequence: event.sequence });
+				}
+				return success(result);
 			}
 			const result = port.domainRouter.mutate(request.body, meta.isDriver);
 			emitCommittedTitleMutation(port, request.body, result);

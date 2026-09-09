@@ -11,19 +11,23 @@ import { loadSecurityConfigLayers } from "../config/loader.ts";
 import { resolveSecuritySnapshot } from "../config/resolver.ts";
 import { createLocalFileSystemBroker, readLocalUtf8File } from "../integration/session-local-leaves.ts";
 import { CanonicalPathResolver } from "../policy-filesystem.ts";
-import type { SecuritySnapshot } from "../types.ts";
+import type { SecurityConfigDocument, SecuritySnapshot } from "../types.ts";
 import type { SessionSecurityCompositionOptions, SessionSecurityConfigSource } from "./session-security.ts";
 
 export async function loadSnapshot(
 	options: SessionSecurityCompositionOptions,
 	storageKey: string,
 	cwd: string,
+	userDocument?: SecurityConfigDocument,
 ): Promise<SecuritySnapshot> {
 	const loaded = await loadSecurityConfigLayers([
 		...(options.securitySources ?? []),
 		jsonFileSource("managed", "/etc/runledger/security.json", false),
 		jsonFileSource("project", join(options.layout.projects, storageKey, "settings.json"), true),
-		jsonFileSource("user", options.layout.settings, true),
+		userDocument === undefined ? jsonFileSource("user", options.layout.settings, true) : {
+			source: "user",
+			read: async () => ({ status: "available", text: JSON.stringify(userDocument) }),
+		},
 	]);
 	if (!loaded.ok) throw new Error(loaded.error.message);
 	const controlPaths = [options.layout.settings, join(options.layout.projects, storageKey, "settings.json"), "/etc/runledger/security.json"];

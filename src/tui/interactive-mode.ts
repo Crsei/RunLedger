@@ -259,7 +259,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly logoLetters?: string;
 	private readonly harnessProfile?: InteractiveModeOptions["harnessProfile"];
 	private readonly harnessToolNames?: readonly string[];
-	private readonly permissionProfile?: string;
+	private permissionProfile?: string;
+	private unsubscribePermissionProfile?: () => void;
 	private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
@@ -373,9 +374,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.processWorkflow = new ProcessWorkflow(port);
     this.approvalWorkflow = new ApprovalWorkflow(port);
     this.permissionsWorkflow = new PermissionsWorkflow({
+      onApplied: (profile) => { this.permissionProfile = profile; this.ui.requestRender(); },
       controller: this.controller,
       theme: this.theme,
       showOverlay: (component) => this.showOverlayModal(component, { anchor: "bottom-left" }),
+      getOverlay: () => this.ui.getOverlay(),
       closeOverlay: () => this.closeOverlay(),
       showNotice: (message, kind) => this.showNotice(message, kind),
       requestRender: () => this.ui.requestRender(),
@@ -479,6 +482,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       sessionPort: this.ports.session,
       showNotice: (text, kind) => this.showNotice(text, kind),
       showOverlayModal: (component, options, kind) => this.showOverlayModal(component, options, kind),
+      openPermissions: (onCancel) => { void this.permissionsWorkflow.open(onCancel); },
       closeOverlay: () => this.closeOverlay(),
       createEffect: (type, extra) => this.createEffect(type, extra),
       waitForWorkflow: (key, requestId) => this.waitForWorkflow(key, requestId),
@@ -612,9 +616,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private assembleTree(): void {
     const header = new Container();
 	if (this.harnessProfile !== undefined) {
+		const permissionProfile = () => this.permissionProfile ?? "unknown";
 		header.addChild(new SessionProfileHeaderComponent({
 			harnessProfile: this.harnessProfile,
-			permissionProfile: this.permissionProfile ?? "unknown",
+			get permissionProfile() { return permissionProfile(); },
 			thinkingLevel: () => this.controller?.currentSelection.thinkingLevel ?? this.getThinkingLevel(),
 		}));
 	}
@@ -808,6 +813,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       ? this.controller.subscribe((ev) => this.eventController.handleAgentEvent(ev))
       : this.agent?.subscribe((ev) => this.eventController.handleAgentEvent(ev));
     this.unsubscribeSessionTitle = this.controller?.subscribeSessionTitleChanged?.((event) => this.eventController.handleSessionTitleChanged(event));
+    this.unsubscribePermissionProfile = this.controller?.subscribePermissionProfile?.((profile) => { this.permissionProfile = profile; this.ui.requestRender(); });
     this.unsubscribeWarnings = this.controller?.subscribeWarnings?.((warning) => {
       if (!this.quitting) this.showNotice(warning, "error");
     });
@@ -841,6 +847,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.unsubscribeWarnings = undefined;
       this.unsubscribeSessionTitle?.();
       this.unsubscribeSessionTitle = undefined;
+      this.unsubscribePermissionProfile?.();
+      this.unsubscribePermissionProfile = undefined;
       this.unsubscribeIdleRecap?.();
       this.unsubscribeIdleRecap = undefined;
       this.unsubscribeThemeMode?.();
@@ -965,6 +973,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.unsubscribeSessionTitle?.();
     this.unsubscribeSessionTitle = undefined;
+    this.unsubscribePermissionProfile?.();
+    this.unsubscribePermissionProfile = undefined;
     this.unsubscribeWarnings?.();
     this.unsubscribeWarnings = undefined;
     this.unsubscribeIdleRecap?.();

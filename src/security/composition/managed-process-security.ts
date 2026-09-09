@@ -26,6 +26,7 @@ import { linkBashClassificationAudit, unwrapSecurityResult } from "./audit-settl
 import { executionConstraintInput, sandboxRequest, type ProcessBinding } from "./constraint-providers.ts";
 import { authorizationRequest } from "./permission-requester.ts";
 import type { SessionIdentity, SessionSecurityCompositionOptions } from "./session-security.ts";
+import type { SecurityPolicyRevisionPort } from "../policy-revision.ts";
 
 export interface SessionManagedProcessSecurityRequest {
 	readonly commandId: string;
@@ -39,6 +40,8 @@ export interface SessionManagedProcessSecurityRequest {
 }
 
 export interface PreparedSessionManagedProcessSecurity {
+	/** 仅覆盖 admission 到 spawn receipt；不持有到进程退出。 */
+	readonly acquireAdmission?: () => SecurityResult<() => void>;
 	readonly constraintInput: ExecutionConstraintInput;
 	readonly constraintSnapshot: ExecutionConstraintSnapshot;
 	readonly requestDigest: RuntimeDigest;
@@ -60,6 +63,7 @@ function securityError(code: "invalid_request" | "policy_denied", message: strin
 }
 
 export function createManagedProcessSecurity(input: {
+	readonly revision?: SecurityPolicyRevisionPort;
 	readonly options: SessionSecurityCompositionOptions;
 	readonly identity: SessionIdentity;
 	readonly snapshot: SecuritySnapshot;
@@ -167,6 +171,7 @@ export function createManagedProcessSecurity(input: {
 				return {
 					ok: true,
 					value: {
+						...(input.revision === undefined ? {} : { acquireAdmission: input.revision.acquireAdmission }),
 						constraintInput,
 						constraintSnapshot: constraints.snapshot,
 						requestDigest,

@@ -28,8 +28,10 @@ import { linkBashClassificationAudit, settleGatewayEffect, unwrapSandboxResult, 
 import { executionConstraintInput, sandboxRequest, type ProcessBinding } from "./constraint-providers.ts";
 import { authorizationRequest } from "./permission-requester.ts";
 import type { SessionIdentity, SessionSecurityCompositionOptions } from "./session-security.ts";
+import { throwPolicyFailure, type SecurityPolicyRevisionPort } from "../policy-revision.ts";
 
 export function createGovernedShell(input: {
+	readonly revision?: SecurityPolicyRevisionPort;
 	readonly options: SessionSecurityCompositionOptions;
 	readonly identity: SessionIdentity;
 	readonly snapshot: SecuritySnapshot;
@@ -126,14 +128,20 @@ export function createGovernedShell(input: {
 					leafDecision,
 				);
 				if (plan === undefined) {
-					return settleGatewayEffect(context, () => input.unrestrictedShell.exec(command, opts));
+					return settleGatewayEffect(context, () => {
+						if (input.revision !== undefined) throwPolicyFailure(input.revision.checkAdmission());
+						return input.unrestrictedShell.exec(command, opts);
+					});
 				}
-				return settleGatewayEffect(context, () => input.processLeaf.execute(plan, {
-					...(opts?.signal === undefined ? {} : { signal: opts.signal }),
-					...(opts?.maxOutputChars === undefined ? {} : { maxOutputChars: opts.maxOutputChars }),
-					...(opts?.onStdout === undefined ? {} : { onStdout: opts.onStdout }),
-					...(opts?.onStderr === undefined ? {} : { onStderr: opts.onStderr }),
-				}));
+				return settleGatewayEffect(context, () => {
+					if (input.revision !== undefined) throwPolicyFailure(input.revision.checkAdmission());
+					return input.processLeaf.execute(plan, {
+						...(opts?.signal === undefined ? {} : { signal: opts.signal }),
+						...(opts?.maxOutputChars === undefined ? {} : { maxOutputChars: opts.maxOutputChars }),
+						...(opts?.onStdout === undefined ? {} : { onStdout: opts.onStdout }),
+						...(opts?.onStderr === undefined ? {} : { onStderr: opts.onStderr }),
+					});
+				});
 			} finally {
 				input.bindings.delete(requestDigest.digest);
 			}

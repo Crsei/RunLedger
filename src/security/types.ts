@@ -144,6 +144,8 @@ export interface SecurityConfigLayer {
 }
 
 export interface SecuritySnapshot {
+	/** Owner 显式发布的会话权限版本；旧静态组合可不携带。 */
+	readonly securityRevision?: number;
 	/** Composition root 注入的控制文件；配置文档和模型不能自行缩减。 */
 	readonly policyControlPaths?: readonly string[];
 	/** 实际宿主及受治理进程 HOME，用于整目录删除确认。 */
@@ -252,6 +254,9 @@ export interface AuthorizationResult {
 }
 
 export type SecurityErrorCode =
+	| "security_policy_changed"
+	| "security_update_in_progress"
+	| "security_update_failed"
 	| "invalid_config"
 	| "invalid_request"
 	| "policy_denied"

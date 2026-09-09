@@ -42,7 +42,9 @@ import type { NetworkBrokerPort } from "../policy-network.ts";
 import { createSandboxBackend } from "../sandbox/factory.ts";
 import type { SandboxBackend, SandboxCapability } from "../sandbox/types.ts";
 import type { GovernedProcessEnvironment, SessionToolchainProbe, SessionToolchainSnapshot } from "../toolchain.ts";
-import type { PermissionPrompter, SecuritySnapshot } from "../types.ts";
+import type { PermissionPrompter, SecurityConfigDocument, SecurityResult, SecuritySnapshot } from "../types.ts";
+import type { SecurityPolicyRevisionPort } from "../policy-revision.ts";
+import { createPermissionVersions, type PreparedPermissionUpdate } from "./permission-versions.ts";
 import { createConstraintProviders, createWorkspaceEnvelope, type ProcessBinding } from "./constraint-providers.ts";
 import { createAuthorizer, createPermissionRequester } from "./permission-requester.ts";
 import { createManagedProcessSecurity, type SessionManagedProcessSecurity } from "./managed-process-security.ts";
@@ -56,6 +58,7 @@ export interface SessionSecurityConfigSource extends SecurityConfigSourcePort {
 }
 
 export interface SessionSecurityCompositionOptions {
+	readonly initialSecurityRevision?: number;
 	readonly layout: RunledgerLayout;
 	readonly cwd: string;
 	readonly fence: OwnerFence;
@@ -87,7 +90,7 @@ export interface SessionSecurityCompositionOptions {
 	readonly approvalTimeoutMs?: number;
 }
 
-export interface SessionSecurityComposition {
+export interface SessionSecurityRevisionComposition {
 	readonly snapshot: SecuritySnapshot;
 	/** 与 snapshot loader 完全相同的 canonical workspace settings locator key。 */
 	readonly workspaceStorageKey: string;
@@ -99,6 +102,13 @@ export interface SessionSecurityComposition {
 	readonly permissionRequester: RequestPermissionsPort;
 	readonly bashAnalyzer: BashSecurityAnalyzerPort;
 	close(): Promise<void>;
+}
+
+export interface SessionSecurityComposition extends SessionSecurityRevisionComposition {
+	readonly applicationState: "applied" | "updating" | "recovery_required";
+	/** Child 在派生工具子集时冻结权限版本；root 后续更新不能隐式扩张它。 */
+	capturePermissionScope(): <T>(operation: () => Promise<T>) => Promise<T>;
+	prepareUpdate(document: SecurityConfigDocument, expectedRevision: number): Promise<SecurityResult<PreparedPermissionUpdate>>;
 }
 
 export interface SessionIdentity {
@@ -124,6 +134,22 @@ export async function createSessionSecurity(
 	const identity = sessionIdentity(options.workspaceId, options.repositoryId);
 	const storageKey = workspaceStorageKey(identity);
 	const snapshot = await loadSnapshot(options, storageKey, cwd);
+	return createPermissionVersions({
+		initial: snapshot,
+		initialRevision: options.initialSecurityRevision ?? 1,
+		load: (document) => loadSnapshot(options, storageKey, cwd, document),
+		assemble: (candidate, revision) => assembleSecurityRevision(options, storageKey, cwd, identity, candidate, revision),
+	});
+}
+
+async function assembleSecurityRevision(
+	options: SessionSecurityCompositionOptions,
+	storageKey: string,
+	cwd: string,
+	identity: SessionIdentity,
+	snapshot: SecuritySnapshot,
+	revision: SecurityPolicyRevisionPort,
+): Promise<SessionSecurityRevisionComposition> {
 	const ownedBashAnalyzer = options.bashAnalyzer === undefined
 		? new BashSecurityAnalyzer({
 				...(options.bashShadowTelemetry === undefined ? {} : { telemetry: options.bashShadowTelemetry }),
@@ -173,6 +199,7 @@ export async function createSessionSecurity(
 		});
 	const permissionGrantStore = new MemoryPermissionGrantStore(options.now ?? (() => new Date()));
 	const gateway = new ExecutionGateway({
+		revision,
 		snapshot,
 		workspace: workspace("toolCall_session-security"),
 		filesystemBroker,
@@ -185,6 +212,7 @@ export async function createSessionSecurity(
 	});
 	const authorize = createAuthorizer({ options, identity, snapshot, gateway, providers, workspace });
 	const managedProcess = createManagedProcessSecurity({
+		revision,
 		options,
 		identity,
 		snapshot,
@@ -201,6 +229,7 @@ export async function createSessionSecurity(
 		fs: createGovernedFileSystem(authorize, cwd),
 		network: createGovernedNetwork(authorize, cwd),
 		shell: createGovernedShell({
+			revision,
 			options,
 			identity,
 			snapshot,
@@ -223,7 +252,7 @@ export async function createSessionSecurity(
 		executionEnv,
 		authorizationPolicy: new GovernedToolAuthorizationPolicy(),
 		managedProcess,
-		permissionRequester: createPermissionRequester({ options, snapshot, workspace, permissionEngine, approvalCoordinator, permissionGrantStore, cwd }),
+		permissionRequester: createPermissionRequester({ options, snapshot, workspace, permissionEngine, approvalCoordinator, permissionGrantStore, cwd, revision }),
 		bashAnalyzer,
 		close: async () => {
 			await ownedBashAnalyzer?.close();

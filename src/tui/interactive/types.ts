@@ -83,6 +83,7 @@ export interface InteractiveModePorts {
 
 	showNotice(text: string, kind?: "note" | "error"): void;
 	showOverlayModal(component: Component, options?: OverlayOptions, kind?: Exclude<TuiOverlayState["state"], "closed">): void;
+	readonly openPermissions?: (onCancel?: () => void) => void;
 	closeOverlay(): void;
 	createEffect(type: TuiEffect["type"], extra?: Record<string, unknown>): TuiEffect;
 	waitForWorkflow(key: WorkflowKey, requestId: string): Promise<WorkflowResult>;

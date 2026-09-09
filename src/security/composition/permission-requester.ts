@@ -26,8 +26,10 @@ import type {
 	SecuritySnapshot,
 } from "../types.ts";
 import type { SessionIdentity, SessionSecurityCompositionOptions } from "./session-security.ts";
+import { authorizationSignal, type SecurityPolicyRevisionPort } from "../policy-revision.ts";
 
 export function createPermissionRequester(input: {
+	readonly revision?: SecurityPolicyRevisionPort;
 	readonly options: SessionSecurityCompositionOptions;
 	readonly snapshot: SecuritySnapshot;
 	readonly workspace: (toolCallId: string, cwd?: string) => HostWorkspaceExecutionContext;
@@ -49,9 +51,11 @@ export function createPermissionRequester(input: {
 				argumentsDigest: authorization.argumentsDigest,
 				cwd: authorization.cwd,
 				policyDigest: authorization.snapshot.policyDigest,
-			}), signal);
+			}), authorizationSignal(input.revision, signal));
 			if (!approved.ok) return approved;
 			if (approved.value.outcome !== "allow") return { ok: false, error: { code: "policy_denied", message: approved.value.reason, retryable: false } };
+			const current = input.revision?.checkAdmission();
+			if (current !== undefined && !current.ok) return current;
 			return { ok: true, value: await input.permissionGrantStore.issue({
 				scope: request.scope,
 				sessionId: authorization.sessionId,

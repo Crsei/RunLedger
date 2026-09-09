@@ -6,7 +6,9 @@
 >
 > 用户目标：在 TUI 中首先提供三个可理解、可审计的系统预设：**Ask for approval**、**Approve for me**、**Full Access**；完整的命名 profile、filesystem/network/rules/bash 设置随后才进入 Advanced。
 
-## 实施状态（更新于 2026-09-04）
+## 实施状态（历史基线 2026-09-04；即时更新增量见 §0）
+
+2026-09-09 增量已完成当前会话 apply、pending 重新授权和 Linux TTY 验证；以下条目是先前保存默认值实现的历史记录。
 
 - 已落地（P1/P4/P5 的可验证切片）：三项 builtin preset、`approvalReviewer`、managed constraints、`SecuritySettingsPort` 的原子 CAS 保存、Session Owner 的 `security.settings.inspect/update`、workspace deny-only 收紧校验，以及唯一的 `/permissions` 三卡选择器和 Full Access 二次确认。
 - Host inspection 会投影 reviewer、managed constraint digest、sandbox capability 与三项 preset availability；TUI 对 Host 标记 unavailable 的预设禁用选择。保存只作用于后续 Session，当前 immutable snapshot 不会被改写。
@@ -19,7 +21,7 @@
 
 ### 2026-09-09 当前会话权限即时生效修复计划
 
-**状态：planned，尚未实现。** 本节取代本文旧 P4/P5 中“保存只影响新 Session”的目标语义；旧实施记录仍如实描述当前代码。本轮只交付计划，不将设计写成已生效行为。实现前后同步维护 Runtime 04 contract、Runtime 06 生产接线及本专题状态，不另建重复计划。
+**状态：implemented，Linux 自动化与构建后 TTY 已验证。** 本节取代旧 P4/P5 的“保存只影响新 Session”语义：显式 `/permissions` 已更新为当前会话 apply；通用配置 update 仍只保存默认值。Runtime 04 与 Runtime 06 已同步合同及生产接线，以下旧诊断是修复前证据。
 
 #### 问题与证据
 
@@ -83,7 +85,28 @@
 - 定向测试覆盖版本容器、resolver、审批竞态、final-leaf admission、Owner 接管和 TUI 状态；对 fs/network 使用隔离 broker 计数证明“未授权不触达、成功仅一次”，不调用真实付费 provider。
 - 代码交付按 `npm run check`（完整输出）、受影响测试及 `npm test`、`npm run build` 执行；既有失败记录归因，不算通过。
 - build 后核对 `command -v runledger`、`readlink -f`、`npm ls -g --depth=0`；以隔离 RUNLEDGER_DIR、受控本地 provider fixture 和真实 tmux/TTY 复现同一对话内切换，检查弹框、输出、session ID、事件及执行次数。Esc/Ctrl+D 退出并验证本任务进程清理。
-- 人工视觉/中文 IME、macOS/Windows、真实外部 provider 分开标注，未执行不关闭门禁。本计划本轮仅检查文档 diff、链接和规则一致性，不运行代码测试。
+- 人工视觉/中文 IME、macOS/Windows、真实外部 provider 分开标注，未执行不关闭门禁。实际已执行的验证见下方交付记录，未执行的门禁仍保留。
+
+#### 已实现的失败恢复表
+
+| 失败位置 | 当前执行状态 | 保存与恢复处理 |
+|---|---|---|
+| generation/revision/source CAS、预设可用性或 resolver 校验失败 | 旧版本继续有效 | 不写配置；返回 stale/denied/failed |
+| Attempt begin 明确拒绝 | 撤销候选、解除本次屏障 | 无配置保存，报告 recovery_required；保留原 Attempt authority |
+| Attempt begin 抛错、intent/audit 写入不可判定 | admission 封闭 | 无假成功；接管仍受通用 Attempt recovery barrier 约束 |
+| Settings update 失败且读取确认来源仍是旧 digest | 旧版本继续有效，旧等待票据不主动撤销 | 写 rejected，结算 attempt 后撤销候选；不覆盖并发配置 |
+| 保存已改变来源后失败/抛错、语义复核不匹配、applied 或 attempt settlement 失败 | admission 封闭，查询显示 recovery_required | 返回 permissions_saved_not_applied；保留 prepared 与旧新 digest，不静默回滚 |
+| 接管遇到 prepared，来源仍为旧 digest | 按当前 baseline 建立更高 revision | 记录 abandoned；不重放工具 |
+| 接管遇到 prepared，来源与候选 digest、全部配置语义一致 | 按当前 baseline 建立更高 revision | 记录 recovered；通用未结算 attempt 仍需既有 recovery 流程处理 |
+| 接管配置与 intent 不符或 journal 非法 | 拒绝创建执行组合 | 不猜测、不覆盖用户配置 |
+
+#### 2026-09-09 交付记录
+
+- 版本容器覆盖稳定 fs/network/shell、managed process 与 request_permissions；最终 dispatch 复核版本，managed spawn 用短 admission lease。旧 pending 只在提交切换后被 superseded，精确 reverse request 取消后原操作重评估；已取消/过期请求不会复活。已有 child 捕获原权限 revision，不随 root 放宽；minimal 固定 prompt 不变，assembled harness 的下一次上下文读取有效权限。
+- 增加 `session-permission-updates.integration`、`security-update`、`active-permissions-owner` 及 TUI workflow 回归，包含 CAS、幂等、并发更新、partial rename、audit 故障、恢复冲突、workspace 收紧、child scope、pending managed prepare、迟到 allow 与 exact execution count。Owner 测试经过真实 TCP、driver、pending prompt、反向取消、持久 journal、订阅与重新接管，不调用外部模型。
+- 构建后 `python3 tests/manual/active-permissions/run.py` 已在标准 PATH、143×42 真 tmux TTY 通过。同一 session（后缀 `mtttvbdd`）从 workspace-write → danger-full-access → workspace-write，审批弹框 `/` 进入、Esc 返回、Full Access 二次确认均走真实 UI；原 loop 仅写入一次，后续 loop 无普通审批，收紧后拒绝不落文件。持久事件为 2 次 approval.requested、1 次 superseded、revision 1→2→3；本地 provider 收到的后续 system 上下文反映 revision 2/3；Esc/Ctrl+D 退出码 0、无存活测试进程。证据根为 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/runledger-active-permissions-ggc5qp8h`。
+- 最终验证：`npm run check`、`npm run build` exit 0；`npm test` 的全部 Vitest 分组 504 files / 3305 passed / 3 skipped，补充 `session-permission-events` 1 passed。原生阶段发现权限字段强制显示挤掉 80 列 thinking；恢复既有窄屏降级规则后，`npm run test:tui-native` 全部分组 24 files / 154 passed / 0 failed。早先 `npm test` 进程因原生失败返回 1，本轮以受影响原生分组的完整复验闭合该失败，不将该进程记为 exit 0。首轮 MCP list 30 秒超时也在后续完整 Vitest 运行中通过。
+- 验证日志根：`/tmp/runledger-permission-validation-sYWFyp`。真实外部 provider、人工视觉/键盘/中文 IME 与 macOS/Windows 未执行；本轮不修改 `src/security/sandbox/**`，也不关闭 Advanced 或 Runtime R8/R9 的门禁。
 
 #### 交付顺序与完成标准
 

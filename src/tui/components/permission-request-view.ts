@@ -11,6 +11,7 @@ export interface PermissionRequestViewProps {
 	readonly onSelect: (choice: ApprovalChoice) => void;
 	readonly onCancel: () => void;
 	readonly onChange?: () => void;
+	readonly onPermissions?: () => void;
 }
 
 const PLAIN_SELECT_THEME = {
@@ -25,6 +26,7 @@ const PLAIN_SELECT_THEME = {
 export class PermissionRequestView extends SecondarySelectionView {
 	readonly #request: ApprovalReverseRequestView;
 	readonly #choices: readonly ApprovalChoice[];
+	readonly #onPermissions?: () => void;
 
 	public constructor(props: PermissionRequestViewProps) {
 		const choices = codexPermissionChoices(props.choices);
@@ -45,7 +47,7 @@ export class PermissionRequestView extends SecondarySelectionView {
 				description: choice.description,
 			})),
 			selectListTheme: PLAIN_SELECT_THEME,
-			footerHint: "Press Enter to confirm; Esc denies the request",
+			footerHint: props.onPermissions === undefined ? "Press Enter to confirm; Esc denies the request" : "Enter confirms; Esc denies; / changes Session permissions",
 			onSelect: (item) => {
 				const choice = choices.find((candidate) => candidate.id === item.value);
 				if (choice !== undefined) props.onSelect(choice);
@@ -56,6 +58,12 @@ export class PermissionRequestView extends SecondarySelectionView {
 		});
 		this.#request = props.request;
 		this.#choices = choices;
+		this.#onPermissions = props.onPermissions;
+	}
+
+	public override handleInput(data: string): void {
+		if (data === "/" && this.#onPermissions !== undefined) { this.#onPermissions(); return; }
+		super.handleInput(data);
 	}
 
 	public present(width: number): PresentationBlock[] {
@@ -82,6 +90,7 @@ export class PermissionRequestView extends SecondarySelectionView {
 				})),
 				selectedIndex: this.selectedIndex,
 			},
+			...(this.#onPermissions === undefined ? [] : [{ kind: "text" as const, content: "Enter confirms; Esc denies; / changes Session permissions" }]),
 		];
 	}
 }

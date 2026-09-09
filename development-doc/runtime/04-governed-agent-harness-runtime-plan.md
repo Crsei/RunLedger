@@ -7,6 +7,22 @@
 > 历史实现计划:[`01-minimum-runtime-scaffold-plan.md`](01-minimum-runtime-scaffold-plan.md)、[`02-agent-loop-resurrection-plan.md`](02-agent-loop-resurrection-plan.md)、[`03-tool-system-plan.md`](03-tool-system-plan.md)
 > 行为专项:[Plugin/MCP/Skill/Hooks](../plugin-mcp-skill-hooks/01-implementation-plan.md)、[Plan/Context/Compaction/Memory](../plan-compact-memory/01-implementation-plan.md)、[Worktree/Sandbox/Permission](../worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[Storage/CLI 用户级迁移](../storage-cli/02-user-home-migration-handoff.md)
 
+## 当前 Session 权限更新合同（2026-09-09）
+
+`session.security.inspect` 返回实际 `profile`、`securityRevision`、`policyDigest` 与 `applicationState: applied | updating | recovery_required`；通用 `security.settings.inspect` 返回已保存的 `document`、`sourceDigest`、editable 与配置来源。二者不能相互替代，native path 不进入权限变更事件。
+
+`session.security.apply` 是显式 driver mutation，使用现有 `domain_command` envelope 的 sessionId、generation、correlationId、effectId、expectedRevision（Owner generation）。payload 为 `scope: user`、`expectedSecurityRevision`（正安全整数）、`expectedSourceDigest`（SHA-256 digest）、`document`（经现有 SecurityConfigDocument parser 校验，profile 必须是三项系统预设之一）。CAS 与幂等绑定按完整 payload digest 校验；其他 scope、未协商 operation、observer、旧 generation、旧 revision 或来源冲突均不应用。
+
+成功结果包含 `appliesTo: current_and_new_sessions`、`appliedRevision`（本请求应用的版本）、`securityRevision` / `effectiveProfile` / `policyDigest`（当前版本）及保存 inspection。重放旧成功请求不会重复保存或推进版本，当前版本可能已由后续请求更新。`security.settings.update` 保留只保存后续 create/resume baseline 的语义，不触发当前提权。
+
+Owner 使用现有 Session hash-chain event store 保存以下有界记录：
+
+- `session.security.initialized`：`securityRevision`、`policyDigest`，接管时 revision 大于所有历史 initialized/update revision。
+- `session.security.update`：stage 为 `prepared | applied | rejected | recovered | abandoned`；包含 updateId/inputDigest、fromRevision/toRevision、previousPolicyDigest/policyDigest、configurationDigest、previousSourceDigest/sourceDigest、profile。toRevision 必须为 fromRevision + 1；记录验证拒绝非法 digest/revision。
+- `approval.superseded`：旧 ticket 的取消 receipt、原 policy digest/securityRevision 等脱敏绑定。复用精确 `reverse_request_cancel`，不能把旧允许响应作用到新 revision。
+
+部分保存返回 `permissions_saved_not_applied` / `recovery_required`；不可判定状态关闭 admission。下次 Owner 只在来源 digest 与候选语义 digest 匹配时记录 recovered；来源仍等于旧值时记录 abandoned；其他情况拒绝接管，不覆盖配置。恢复不会重放工具副作用，也不绕过既有 unresolved Attempt recovery barrier。完整失败表与行为证据见[权限专题 §0](../worktree-sandbox-permisson/07-three-permission-presets-and-tui-settings-plan.md)。
+
 ## 0. 文档职责
 
 本文件只回答五类问题:

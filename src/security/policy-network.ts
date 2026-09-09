@@ -90,11 +90,13 @@ export class PolicyNetworkClient {
 	readonly #broker: NetworkBrokerPort;
 	readonly #policy: NetworkPolicy;
 	readonly #review?: NetworkApprovalReviewPort;
+	readonly #beforeEffect?: () => SecurityResult<void>;
 
-	public constructor(broker: NetworkBrokerPort, policy: NetworkPolicy, review?: NetworkApprovalReviewPort) {
+	public constructor(broker: NetworkBrokerPort, policy: NetworkPolicy, review?: NetworkApprovalReviewPort, beforeEffect?: () => SecurityResult<void>) {
 		this.#broker = broker;
 		this.#policy = policy;
 		this.#review = review;
+		this.#beforeEffect = beforeEffect;
 	}
 
 	public async request(request: NetworkBrokerRequest, signal?: AbortSignal): Promise<SecurityResult<NetworkBrokerResponse>> {
@@ -120,6 +122,8 @@ export class PolicyNetworkClient {
 		}
 
 		let response: NetworkBrokerResponse;
+		const current = this.#beforeEffect?.();
+		if (current !== undefined && !current.ok) return current;
 		try {
 			response = await this.#broker.request({ ...request, method }, signal);
 		} catch {

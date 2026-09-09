@@ -48,6 +48,8 @@ describe("S2 InteractiveMode session workflows", () => {
 		const sourceDigest = runtimeDigest({ profile: "workspace-write" });
 		const querySessionDomain = vi.fn(async (): Promise<Record<string, unknown>> => ({
 			domainRevision: 6,
+			profile: "workspace-write",
+			securityRevision: 1,
 			scope: "user",
 			document: { profile: "workspace-write" },
 			sourceDigest,
@@ -55,7 +57,7 @@ describe("S2 InteractiveMode session workflows", () => {
 			editable: true,
 		}));
 		const controller = new ContractController({
-			supportedOperations: ["security.settings.inspect", "security.settings.update"],
+			supportedOperations: ["security.settings.inspect", "session.security.inspect", "session.security.apply"],
 			querySessionDomain,
 			commandSessionDomain: async () => ({ domainRevision: 6 }),
 		});

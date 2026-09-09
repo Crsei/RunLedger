@@ -11,6 +11,7 @@ import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import type { AttemptPort } from "./attempt-gateway.ts";
 import type { SessionDomainMutationContext, SessionDomainResult } from "./domain-router.ts";
 import type { SessionResourceDomainPort } from "./session-runtime.ts";
+import type { SessionPermissionUpdater } from "./security-update.ts";
 
 export interface SecuritySettingsPort {
 	inspect(input: { readonly scope: SecuritySettingsScope }): Promise<SecurityResult<SecuritySettingsInspection>>;
@@ -18,6 +19,7 @@ export interface SecuritySettingsPort {
 }
 
 export interface SecuritySettingsResourceDomainOptions {
+	readonly permissionUpdater?: SessionPermissionUpdater;
 	readonly generation: number;
 	readonly settings: SecuritySettingsPort;
 	/** 由 SessionRuntime 在 active owner 上绑定；缺失时仅限低层测试接缝。 */
@@ -30,12 +32,15 @@ const OPERATION_MANIFEST = Object.freeze([
 ]);
 
 /**
- * Settings 均为下一次 create/resume 的 baseline；此域不重建或替换当前
- * immutable SecuritySnapshot。路径、layout 和 raw fs 永远留在 storage adapter。
+ * 通用 update 只保存 create/resume baseline；显式 apply 交给 Owner 权限协调器。
+ * 路径、layout 和 raw fs 永远留在 storage adapter。
  */
 export function createSecuritySettingsResourceDomain(options: SecuritySettingsResourceDomainOptions): SessionResourceDomainPort {
 	return {
-		operationManifest: OPERATION_MANIFEST,
+		operationManifest: options.permissionUpdater === undefined ? OPERATION_MANIFEST : [
+			...OPERATION_MANIFEST,
+			{ operation: "session.security.apply", capability: "session.security.inspect", access: "mutate" },
+		],
 		query: async (operation, payload) => {
 			if (operation !== "security.settings.inspect") return unavailable(operation);
 			const scope = scopeOf(payload.scope);
@@ -46,6 +51,7 @@ export function createSecuritySettingsResourceDomain(options: SecuritySettingsRe
 				: settingsFailure(operation, inspected.error.code);
 		},
 		mutate: async (operation, payload, context) => {
+			if (operation === "session.security.apply" && options.permissionUpdater !== undefined) return options.permissionUpdater.apply(payload, context);
 			if (operation !== "security.settings.update") return unavailable(operation);
 			if (context.expectedRevision !== options.generation) {
 				return { ok: false, status: "stale", code: "domain_revision_conflict", operation, currentRevision: options.generation };

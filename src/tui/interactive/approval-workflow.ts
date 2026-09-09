@@ -71,9 +71,11 @@ export class ApprovalWorkflow {
 				settled = true;
 				if (expiryTimeout !== undefined) clearTimeout(expiryTimeout);
 				signal.removeEventListener("abort", onAbort);
-				if (port.ui.getOverlay() === permissionView) port.closeOverlay();
+				if (port.ui.getOverlay() === permissionView) {
+					port.closeOverlay();
+					port.ui.setFocus(port.refs.editor);
+				}
 				if (this.activePermissionView === permissionView) this.activePermissionView = undefined;
-				port.ui.setFocus(port.refs.editor);
 				port.uiRequestRender();
 				resolve(responseBody);
 			};
@@ -112,6 +114,11 @@ export class ApprovalWorkflow {
 				onSelect: (choice) => choose(choice.decision),
 				onCancel: () => choose({ decision: "cancel" }),
 				onChange: () => port.uiRequestRender(),
+				...(port.openPermissions === undefined || port.controller?.supports?.("session.security.apply") !== true ? {} : {
+					onPermissions: () => port.openPermissions!(() => {
+						if (!settled && !signal.aborted) port.showOverlayModal(permissionView, { anchor: "bottom-left" });
+					}),
+				}),
 			});
 			signal.addEventListener("abort", onAbort, { once: true });
 			if (port.ui.hasOverlay()) port.closeOverlay();

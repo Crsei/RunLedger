@@ -59,6 +59,8 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	public readonly trajectory: TrajectoryClientPort;
 	private readonly warningListeners = new Set<(warning: string) => void>();
 	private readonly titleListeners = new Set<SessionTitleChangedSink>();
+	private readonly permissionListeners = new Set<(profile: string) => void>();
+	private permissionProfile: string;
 	private readonly idleRecapListeners = new Set<SessionIdleRecapSink>();
 	private readonly pendingTitleEvents: SessionTitleChangedEvent[] = [];
 	private readonly session: string;
@@ -84,6 +86,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.transport = handle.transport;
 		this.supportsOperation = typeof handle.supports === "function" ? (operation) => handle.supports(operation) : () => false;
 		this.session = snapshot.sessionId;
+		this.permissionProfile = snapshot.permissionProfile;
 		this.sessionGeneration = handle.generation;
 		this.messageState = [...snapshot.messages];
 		this.warningState = [...snapshot.warnings];
@@ -119,6 +122,12 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 
 	public supports(operation: string): boolean {
 		return this.supportsOperation(operation);
+	}
+
+	public subscribePermissionProfile(listener: (profile: string) => void): () => void {
+		this.permissionListeners.add(listener);
+		listener(this.permissionProfile);
+		return () => this.permissionListeners.delete(listener);
 	}
 
 	public setConnectionRole(role: "driver" | "observer"): void {
@@ -353,6 +362,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.trajectoryListeners.clear();
 		this.warningListeners.clear();
 		this.titleListeners.clear();
+		this.permissionListeners.clear();
 		this.idleRecapListeners.clear();
 		this.pendingTitleEvents.splice(0);
 		for (const resolve of this.idleWaiters.splice(0)) resolve();
@@ -413,6 +423,15 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		if (sequence !== undefined && sequence <= this.eventCursor) return;
 		if (sequence !== undefined) this.eventCursor = sequence;
 		const event = frame.body.payload;
+		if (frame.body.eventType === "session.security.update" && isRecord(event) && event.stage === "applied" && typeof event.profile === "string") {
+			this.permissionProfile = event.profile;
+			for (const listener of this.permissionListeners) {
+				try { listener(event.profile); }
+				catch { /* 单个视图失败不能阻断权限事件的游标确认。 */ }
+			}
+			this.ackCursor();
+			return;
+		}
 		if (frame.body.eventType === "session.title_changed") {
 			const titleEvent = parseSessionTitleChangedEvent(event, this.session, sequence);
 			if (titleEvent !== undefined) {

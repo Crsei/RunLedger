@@ -20,6 +20,7 @@ export const CHILD_CAPABILITY_TOOL_NAMES: Readonly<Record<SubagentCapability, re
 });
 
 export interface SessionProductionToolSource {
+	readonly capturePermissionScope?: () => <T>(operation: () => Promise<T>) => Promise<T>;
 	readonly origin: "session-production";
 	readonly sessionId: SessionId;
 	readonly cwd: string;
@@ -60,6 +61,7 @@ export async function deriveGovernedChildCapabilitySubset(
 	if (!capabilities.ok) return capabilities;
 
 	const tools: AgentTool[] = [];
+	const permissionScope = source.capturePermissionScope?.();
 	for (const capability of capabilities.value) {
 		for (const name of CHILD_CAPABILITY_TOOL_NAMES[capability]) {
 			const tool = source.tools.find((candidate) => candidate.name === name);
@@ -69,7 +71,13 @@ export async function deriveGovernedChildCapabilitySubset(
 			if (!hasRepositoryReadClaim(tool)) return failure("runtime_unavailable", `child tool has no compatible repository_read claim: ${name}`);
 			const authorization = await authorizeForSubset(source.authorizationPolicy, source.sessionId, tool);
 			if (!authorization.ok) return authorization;
-			tools.push(tool);
+			tools.push(permissionScope === undefined ? tool : {
+				...tool,
+				execute: async (...args) => {
+					try { return await permissionScope(() => tool.execute(...args)); }
+					catch { return { content: [{ type: "text", text: "Child tool execution was denied or failed; inspect the current Session permissions before retrying." }], details: {}, isError: true }; }
+				},
+			});
 		}
 	}
 

@@ -71,6 +71,8 @@ import type { ChildRuntimeProviderPort } from "../agents/child-runtime.ts";
 import type { PreviousOwnerLiveness } from "../agents/supervisor.ts";
 import { composeSessionResourceDomains } from "./resource-domain-composition.ts";
 import { createSecuritySettingsResourceDomain } from "./security-settings-domain.ts";
+import { createSessionPermissionUpdater, recoverPermissionUpdates } from "./security-update.ts";
+import { createPermissionUpdateJournal, nextPermissionRevision } from "./security-update-journal.ts";
 import {
 	HarnessCompositionError,
 	MINIMAL_HARNESS_SYSTEM_PROMPT,
@@ -148,7 +150,9 @@ export async function assembleSessionDomain(
 		inherited: globalThis.process.env,
 	});
 	if (!environmentResult.ok) throw new Error(`${environmentResult.error.code}: ${environmentResult.error.message}`);
+	const permissionJournal = createPermissionUpdateJournal(store, fence);
 	const security = await createSessionSecurity({
+		initialSecurityRevision: nextPermissionRevision(permissionJournal),
 		layout: options.layout,
 		cwd: options.cwd,
 		fence,
@@ -161,6 +165,17 @@ export async function assembleSessionDomain(
 		...(options.approvalPorts === undefined ? {} : { approvalPorts: options.approvalPorts }),
 		bashClassificationAudit: options.bashClassificationAudit ?? createSessionBashClassificationAudit({ store, fence }),
 	});
+	const securitySettingsPort = new SecuritySettingsPort({
+		layout: options.layout,
+		workspaceKey: security.workspaceStorageKey,
+		workspaceRoot: options.cwd,
+		tempRoot: options.layout.tmp,
+		...(security.snapshot.managedConstraints === undefined ? {} : { managedConstraints: security.snapshot.managedConstraints }),
+	});
+	try {
+		await recoverPermissionUpdates({ security, settings: securitySettingsPort, journal: permissionJournal });
+		permissionJournal.initialize?.(security.snapshot.securityRevision!, security.snapshot.policyDigest);
+	} catch (error) { await security.close(); throw error; }
 	const recording = resolveRecordingConfig(options.settings);
 	const trajectory = new TrajectoryService({ layout: options.layout, store, sessionId, generation: fence.generation, config: recording });
 	const observedTraceFactory: TraceRecorderFactory | undefined = options.traceRecorderFactory === undefined ? undefined : {
@@ -219,12 +234,10 @@ export async function assembleSessionDomain(
 	}
 	const securitySettings = createSecuritySettingsResourceDomain({
 		generation: fence.generation,
-		settings: new SecuritySettingsPort({
-			layout: options.layout,
-			workspaceKey: security.workspaceStorageKey,
-			workspaceRoot: options.cwd,
-			tempRoot: options.layout.tmp,
-			...(security.snapshot.managedConstraints === undefined ? {} : { managedConstraints: security.snapshot.managedConstraints }),
+		settings: securitySettingsPort,
+		permissionUpdater: createSessionPermissionUpdater({
+			generation: fence.generation, security, settings: securitySettingsPort,
+			journal: permissionJournal, attemptPort: () => attemptPort.get(),
 		}),
 		attemptPort: () => attemptPort.get(),
 	});
@@ -295,15 +308,26 @@ export async function assembleSessionDomain(
 		onAcceptedUserPrompt: (text) => titleLifecycle?.handleAcceptedInput(text),
 		modelContextAssembler: async (input) => assembleAgentModelContext({
 			...input,
-			sources: extensions === undefined || !harnessProfile.descriptor.extensions.context
-				? []
-				: extensions.contextSources(input.model.contextWindow),
+			sources: [
+				...(harnessProfile.descriptor.prompt.mode !== "assembled" ? [] : [{
+					fragmentId: "session-effective-permissions", key: "session-effective-permissions",
+					layer: "policy" as const, trust: "trusted" as const, taint: "none" as const, priority: "required" as const,
+					content: [
+						"Current Session permissions (runtime authority):",
+						`profile: ${security.snapshot.profile.name}; revision: ${security.snapshot.securityRevision}`,
+						`approval_policy: ${security.snapshot.profile.approvalPolicy}; filesystem: ${security.snapshot.profile.filesystemMode}; network: ${security.snapshot.profile.network.mode}`,
+						"The runtime governs every operation. Only the user can change this Session's permission preset. System-destructive operations still require explicit one-time confirmation.",
+					].join("\n"),
+				}]),
+				...(extensions === undefined || !harnessProfile.descriptor.extensions.context ? [] : extensions.contextSources(input.model.contextWindow)),
+			],
 		}),
 	});
 	const childRuntime = !harnessProfile.descriptor.multiAgent
 		? undefined
 		: {
 			productionToolSource: createSessionProductionToolSource({
+				capturePermissionScope: () => security.capturePermissionScope(),
 				sessionId,
 				cwd: options.cwd,
 				executionEnv,
@@ -419,6 +443,8 @@ export async function assembleSessionDomain(
 		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan", "session.trajectory"],
 		securityInspection: () => ({
 			ownerGeneration: fence.generation,
+			securityRevision: security.snapshot.securityRevision,
+			applicationState: security.applicationState,
 			profile: security.snapshot.profile.name,
 			approvalPolicy: security.snapshot.profile.approvalPolicy,
 			filesystemMode: security.snapshot.profile.filesystemMode,

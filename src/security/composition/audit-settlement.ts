@@ -11,6 +11,7 @@ import type { ProcessFinalLeafDecision } from "../integration/runtime-gateway-ad
 import type { BashClassificationAuditPort } from "../permission/bash-ast/types.ts";
 import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import type { SecurityResult } from "../types.ts";
+import { isPolicyChanged } from "../policy-revision.ts";
 
 export async function settleGatewayEffect<T>(context: ExecutionGatewayContext, effect: () => Promise<T>): Promise<T> {
 	try {
@@ -19,6 +20,8 @@ export async function settleGatewayEffect<T>(context: ExecutionGatewayContext, e
 		unwrapSecurityResult(await context.complete());
 		return value;
 	} catch (error) {
+		// 版本检查拒绝意味着 effect 尚未 dispatch；保留同版本重试所需的单次票据。
+		if (isPolicyChanged(error)) throw error;
 		unwrapSecurityResult(await context.complete());
 		throw error;
 	}

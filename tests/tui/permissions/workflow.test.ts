@@ -11,7 +11,7 @@ describe("PermissionsWorkflow", () => {
 		let overlay: Component | undefined;
 		const workflow = new PermissionsWorkflow({
 			controller: {
-				supports: (operation) => operation === "security.settings.inspect" || operation === "security.settings.update" || operation === "session.security.inspect",
+				supports: (operation) => operation === "security.settings.inspect" || operation === "session.security.apply" || operation === "session.security.inspect",
 				querySessionDomain: async (operation) => operation === "session.security.inspect"
 					? {
 						ok: true as const,
@@ -19,6 +19,7 @@ describe("PermissionsWorkflow", () => {
 						operation,
 						domainRevision: 5,
 						value: {
+							profile: "workspace-write", securityRevision: 1,
 							presetAvailability: [
 								{ id: "workspace-write", state: "unavailable", reason: "sandbox_capability_unavailable" },
 								{ id: "approve-for-me", state: "unavailable", reason: "sandbox_capability_unavailable" },
@@ -31,9 +32,9 @@ describe("PermissionsWorkflow", () => {
 						status: "ok" as const,
 						operation,
 						domainRevision: 5,
-						value: { scope: "user", document: { profile: "workspace-write" }, sourceDigest, appliesTo: "new_sessions", editable: true },
+						value: { profile: "workspace-write", securityRevision: 1, scope: "user", document: { profile: "workspace-write" }, sourceDigest, appliesTo: "new_sessions", editable: true },
 					},
-				commandSessionDomain: async () => ({ ok: false as const, status: "unavailable" as const, code: "unused", operation: "security.settings.update" }),
+				commandSessionDomain: async () => ({ ok: false as const, status: "unavailable" as const, code: "unused", operation: "session.security.apply" }),
 			},
 			theme: loadTheme("dark"),
 			showOverlay: (component) => { overlay = component; },
@@ -54,9 +55,9 @@ describe("PermissionsWorkflow", () => {
 		const command = vi.fn(async () => ({
 			ok: true as const,
 			status: "ok" as const,
-			operation: "security.settings.update",
+			operation: "session.security.apply",
 			domainRevision: 5,
-			value: { scope: "user", document: { profile: "danger-full-access" }, sourceDigest, appliesTo: "new_sessions" },
+			value: { effectiveProfile: "danger-full-access", securityRevision: 2, scope: "user", document: { profile: "danger-full-access" }, sourceDigest, appliesTo: "current_and_new_sessions" },
 		}));
 		const workflow = new PermissionsWorkflow({
 			controller: {
@@ -66,7 +67,7 @@ describe("PermissionsWorkflow", () => {
 					status: "ok" as const,
 					operation: "security.settings.inspect",
 					domainRevision: 5,
-					value: { scope: "user", document: { profile: "workspace-write" }, sourceDigest, appliesTo: "new_sessions", editable: true },
+					value: { profile: "workspace-write", securityRevision: 1, scope: "user", document: { profile: "workspace-write" }, sourceDigest, appliesTo: "new_sessions", editable: true },
 				}),
 				commandSessionDomain: command,
 			},
@@ -95,9 +96,10 @@ describe("PermissionsWorkflow", () => {
 		expect(narrowConfirmation).toContain("Deny rules and policy protections remain active.");
 		overlay?.handleInput?.("enter");
 		await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
-		expect(command).toHaveBeenCalledWith("security.settings.update", {
+		expect(command).toHaveBeenCalledWith("session.security.apply", {
 			scope: "user",
 			expectedSourceDigest: sourceDigest,
+			expectedSecurityRevision: 1,
 			document: { profile: "danger-full-access", approvalReviewer: "user" },
 		}, { correlationId: "permission-correlation", effectId: "permission-effect", expectedRevision: 5 });
 	});
@@ -114,9 +116,9 @@ describe("PermissionsWorkflow", () => {
 					status: "ok" as const,
 					operation: "security.settings.inspect",
 					domainRevision: 5,
-					value: { scope: "user", document: { profile: "workspace-write" }, sourceDigest, appliesTo: "new_sessions", editable: true },
+					value: { profile: "workspace-write", securityRevision: 1, scope: "user", document: { profile: "workspace-write" }, sourceDigest, appliesTo: "new_sessions", editable: true },
 				}),
-				commandSessionDomain: async () => ({ ok: false as const, status: "stale" as const, code: "revision_conflict", operation: "security.settings.update", currentRevision: 6 }),
+				commandSessionDomain: async () => ({ ok: false as const, status: "stale" as const, code: "revision_conflict", operation: "session.security.apply", currentRevision: 6 }),
 			},
 			theme: loadTheme("dark"),
 			showOverlay: (component) => { overlay = component; },
@@ -129,5 +131,46 @@ describe("PermissionsWorkflow", () => {
 		await workflow.open();
 		overlay?.handleInput?.("enter");
 		await vi.waitFor(() => expect(notices).toContain("Permissions changed elsewhere. Reopen /permissions and try again."));
+	});
+});
+
+describe("active permission UI state", () => {
+	it("uses the effective profile, prevents double submission, and preserves a newer approval overlay", async () => {
+		let overlay: Component | undefined;
+		let release!: () => void;
+		const barrier = new Promise<void>((resolve) => { release = resolve; });
+		const nextApproval: Component = { render: () => ["new approval"], invalidate: () => undefined };
+		const onApplied = vi.fn();
+		const onCancel = vi.fn();
+		const command = vi.fn(async () => {
+			await barrier;
+			overlay = nextApproval;
+			return { ok: true as const, status: "ok" as const, operation: "session.security.apply", domainRevision: 1, value: { appliesTo: "current_and_new_sessions", effectiveProfile: "danger-full-access", securityRevision: 2 } };
+		});
+		const workflow = new PermissionsWorkflow({
+			controller: {
+				supports: () => true,
+				querySessionDomain: async (operation) => ({ ok: true, status: "ok", operation, domainRevision: 1, value: {
+					profile: "workspace-write", securityRevision: 1, document: { profile: "danger-full-access" }, sourceDigest: runtimeDigest("saved"), editable: true,
+				} }),
+				commandSessionDomain: command,
+			},
+			theme: loadTheme("dark"), showOverlay: (view) => { overlay = view; }, getOverlay: () => overlay,
+			closeOverlay: () => { overlay = undefined; }, showNotice: () => undefined, requestRender: () => undefined,
+			nextRequest: () => ({ correlationId: "apply", effectId: "apply" }), onApplied,
+		});
+		await workflow.open(onCancel);
+		const rendered = stripAnsi(overlay!.render(120).join("\n"));
+		expect(rendered).toContain("Ask for approval (current)");
+		expect(rendered).toContain("Saved default: danger-full-access");
+		overlay!.handleInput?.("escape");
+		expect(onCancel).toHaveBeenCalledTimes(1);
+		await workflow.open();
+		overlay!.handleInput?.("down"); overlay!.handleInput?.("down"); overlay!.handleInput?.("enter");
+		overlay!.handleInput?.("enter"); overlay!.handleInput?.("enter");
+		expect(command).toHaveBeenCalledTimes(1);
+		release();
+		await vi.waitFor(() => expect(onApplied).toHaveBeenCalledWith("danger-full-access"));
+		expect(overlay).toBe(nextApproval);
 	});
 });

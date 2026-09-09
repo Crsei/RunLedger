@@ -12,7 +12,7 @@
 
 ## 模块导航
 
-当前会话权限即时生效修复（2026-09-09，`planned`）：见 [权限专题 §0](worktree-sandbox-permisson/07-three-permission-presets-and-tui-settings-plan.md)。目标是 `/permissions` 在同一对话内更新后续执行与待审批请求；当前实现仍只保存新会话默认值。
+当前会话权限即时生效修复（2026-09-09）：见 [权限专题 §0](worktree-sandbox-permisson/07-three-permission-presets-and-tui-settings-plan.md)。`/permissions` 已接入当前 Owner 的显式 apply，在同一对话更新后续执行及待审批请求；查询区分有效状态与保存默认值。验证状态以专题交付记录为准。
 
 跨领域执行编排见 [`plan/README.md`](plan/README.md)。
 
