@@ -4,7 +4,6 @@ import type { StatusLineAccent, StatusLineSegment } from "../highlight/status-st
 import { sanitizeLabel } from "../presentation/projectors.ts";
 import { visibleWidth } from "../primitives.ts";
 import { fitToWidth } from "../components/render-width.ts";
-import { formatActiveDuration } from "../timeline/selectors.ts";
 
 export type FooterRow = "activity" | "identity" | "usage";
 
@@ -267,13 +266,9 @@ function statusText(snapshot: FooterSnapshot): string | undefined {
 	const timing = snapshot.runTiming;
 	if (timing?.state === "recovery_required") return "Recovery required";
 	if (timing !== undefined) {
-		const activeDurationMs = timing.activeDurationMs
-			+ (timing.state === "working" && timing.lastResumedAtMs !== undefined
-				? Math.max(0, snapshot.nowMs - timing.lastResumedAtMs)
-				: 0);
 		return timing.state === "working"
-			? `Working ${formatActiveDuration(activeDurationMs)}`
-			: `Waiting for input · ${formatActiveDuration(activeDurationMs)}`;
+			? "Working"
+			: "Waiting for input";
 	}
 	return snapshot.isStreaming ? "..." : undefined;
 }
