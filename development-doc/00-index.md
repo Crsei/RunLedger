@@ -12,6 +12,8 @@
 
 ## 模块导航
 
+当前会话权限即时生效修复（2026-09-09，`planned`）：见 [权限专题 §0](worktree-sandbox-permisson/07-three-permission-presets-and-tui-settings-plan.md)。目标是 `/permissions` 在同一对话内更新后续执行与待审批请求；当前实现仍只保存新会话默认值。
+
 跨领域执行编排见 [`plan/README.md`](plan/README.md)。
 
 本地交互测试方法：[`Python + tmux 模式入口测试`](../tests/manual/native-mode/README.md)。

@@ -17,6 +17,78 @@
 
 ## 0. 决策摘要
 
+### 2026-09-09 当前会话权限即时生效修复计划
+
+**状态：planned，尚未实现。** 本节取代本文旧 P4/P5 中“保存只影响新 Session”的目标语义；旧实施记录仍如实描述当前代码。本轮只交付计划，不将设计写成已生效行为。实现前后同步维护 Runtime 04 contract、Runtime 06 生产接线及本专题状态，不另建重复计划。
+
+#### 问题与证据
+
+- 2026-09-09 最新会话“查找已合并可删除的工作树”（session ID 后缀 `mttr9u7g`）于 15:07:05 创建，用户 settings 于 15:07:57 保存为 `danger-full-access`；之后 15:08–15:09 的三次普通 shell 审批均在 30 秒后过期。命令是目录存在性检查和 Git 合并关系检查，包含 `for`/`if`，不是系统破坏操作。
+- `src/tui/permissions/workflow.ts` 的 current 来自保存文档 `view.document.profile`，而保存调用 `security.settings.update`；成功提示明确限定 new Sessions。选中状态因此不能代表当前执行权限。
+- `src/runtime/session-runtime/security-settings-domain.ts` 只保存 settings，不替换当前 SecuritySnapshot。`src/security/composition/session-security.ts` 在创建时加载 snapshot；governed shell/filesystem/network、managed process、final-leaf digest、domain inspection 与其他 policy ceiling 消费者持有启动期引用。只更新 UI 或一个字段无法修复生产行为。
+- 已核对 PATH/global npm link 指向本仓库，当前进程运行本仓库 `dist/cli/cli.js`；此诊断不是由启动了另一个 checkout 推导而来。
+
+#### 目标行为与边界
+
+1. 用户在当前 TUI 通过 `/permissions` 确认预设后，同一 session ID、同一对话内的后续工具操作立即采用新的有效权限，同时保留目前“保存为用户默认值”的行为。不得要求重启、新建对话或再次提交原问题。
+2. 保留 Full Access 二次确认。更新只能由当前 driver 经 Session Owner 的正式命令发起，observer、模型工具和普通文件写入不能调用该提权路径。managed、workspace deny-only、CLI 收紧、protected paths 与系统单次确认继续生效。
+3. 每个 SecuritySnapshot 仍不可变；新增会话内单调递增的权限 revision，Owner 显式发布新 snapshot。权限 revision 与 owner generation、Harness Profile version 分开；不重建 session、不改变 harness/mode、不放宽 child authority。
+4. “生效”的线性化边界是 Owner 提交权限切换并发布当前 revision。尚未到最终副作用入口的操作必须使用新 revision 重新授权；已跨过该入口的操作保留旧 revision 的审计归属，不重复执行、不宣称撤回已有副作用。运行中的进程不会因切换自动被杀死，其后新请求仍走新权限；该限制必须在界面和验收中明确。
+5. 本专项只修改权限更新、组合引用、审批与执行一致性接线。复用已有预设与 backend 选择，不修改 `src/security/sandbox/**`、namespace、隔离机制或平台实现；若完成方案必须扩展这些实现，应报告范围阻碍，不顺带开启 sandbox 专项。
+
+#### R1 — 版本与更新合同
+
+- 在 Runtime 04 定义当前有效权限 query、显式 apply 命令、变更事件与结果 DTO。建议新增 session 级 apply 操作，保留通用 `security.settings.update` 的配置编辑语义，避免其他调用方意外提权；最终命名随 contract 审阅确定。
+- 请求包含期望 owner generation、security revision、source digest 及预设；复用 driver authorization、command/effect 幂等性、Attempt Gateway 和 CAS。冲突返回明确 stale，不自动覆盖并发修改。
+- query/result 分别表达 effective profile/revision/digest、saved default、应用状态和受限原因。成功必须表明当前会话已应用；不得用“保存成功”代替“应用成功”。
+- 整个候选预设经原 resolver/compiler 校验，包含 filesystem/network/reviewer/bash 和全部配置层约束；不能只把 approvalPolicy 改为 never。
+
+#### R2 — Owner 发布与一致执行
+
+- 在生产 `domain.ts` 与 `session-security.ts` 引入 Owner 持有的权限版本容器和受控更新协调器。所有稳定对外端口在每次新操作开始时取得版本，禁止已创建工具闭包长期捕获旧 snapshot。
+- 逐项盘点并更新：authorizationPolicy、permissionRequester、governed shell/filesystem/network、managed-process security、constraint providers、ExecutionGateway/final leaf、session.security.inspect、权限提示词及 policy ceiling 消费者。extension trust 和 child 的冻结限制不得通过重写 ceiling 被隐式扩大。
+- 操作内 pin 同一个 revision；在最终副作用前核对 active revision 和 owner fence。版本已变则丢弃旧授权、重走授权链；绝不能拿旧 receipt 搭配新 snapshot。版本校验与副作用 admission 必须共享受控边界，覆盖“校验后、执行前”切换竞态。
+- 更新协调器仅短暂阻挡新操作 admission，不持锁等待用户审批、模型返回或长进程结束；待审批阶段必须能接收权限切换，避免等待自身结束的死锁。
+
+#### R3 — 待审批与切换故障
+
+- 切换提交后，旧 revision 的 pending ticket 明确终结为被权限切换取代，通知反向请求/TUI 关闭对应弹框；旧弹框迟到的 allow/deny 不得授权新 revision 的操作。
+- 原操作尚未执行且仍有效时，在运行时内部重新评估一次：新策略 allow 则继续原操作；ask 则创建绑定新 revision 的票据；deny 则返回明确结果。已取消、过期或完成的操作不得复活；不得依赖模型重新提交相同命令。
+- 普通升级 Full Access 关闭旧普通审批；系统破坏确认仍创建精确单次请求。收紧权限时，旧 one-shot、session/prefix/network grant 均不能跨 revision 复用。
+- 用户配置文件与 SQLite 不具备跨存储原子事务。采用可恢复的切换记录：校验并准备候选版本 → 持久记录 intent/旧新 digest → CAS 保存配置 → Owner 提交应用记录并发布版本 → 解除 admission 屏障。禁止先发布权限再尝试保存。
+- R1 明确并在 R3 实现每个失败点的恢复表：保存失败保留旧有效权限；保存成功但应用未提交时保持旧版本或阻止执行，并明确报告“已保存、当前未应用”，不返回完整成功。接管按 durable intent 和配置 digest 完成或拒绝恢复，禁止猜测。配置发生并发变化时不盲目回滚覆盖；审计提交失败时 fail closed。
+- apply 幂等重试不得重复递增 revision、重复执行工具或重复消费审批。恢复过程中旧 owner、旧 ticket、旧授权继续受 fence 约束。
+
+#### R4 — TUI 与上下文同步
+
+- 三卡“当前”改为读取 effective profile；另行显示保存默认值，仅在不一致时提示差异。应用中禁用重复提交；收到 committed event/result 后更新选择状态、页脚/权限提示及待审批视图。
+- 成功提示“已应用到当前会话，并保存为默认权限”。stale/失败/部分保存显示实际状态，保留重试入口；退出弹窗不等于更新已提交。
+- 下一次模型请求使用新的权限说明，历史消息和历史 receipt 不改写。正在生成中的工具请求也由当前权限版本重新治理，不能把 prompt 当 authority。
+
+#### R5 — 回归与验收
+
+| 场景 | 必须观察到的结果 |
+|---|---|
+| 当前会话从 Ask for approval 切换 Full Access | 同一 session ID；目录检查 `for`/Git 只读循环执行一次，不再普通弹框；shell/fs/network receipt 绑定新 revision |
+| 弹框等待中切换 | 旧票据终结并关闭弹框，原操作按新策略继续一次；旧响应迟到无效，无 30 秒超时等待 |
+| Full Access 切回受限预设 | 后续越界文件/网络操作按新策略 ask/deny；旧 grant 不可复用 |
+| 切换与最终执行、用户批准并发 | 以 admission 边界决定版本；无旧授权穿透、重复执行、锁死或 receipt 混用 |
+| managed/workspace/CLI 限制及系统确认 | 不允许的更新失败；普通 Full Access 与特殊确认边界保持现有语义 |
+| observer/过期 driver/旧 owner 发起更新 | 明确拒绝，配置和有效权限均不被越权更改 |
+| 保存失败、审计失败、CAS 冲突、各阶段崩溃/接管 | 按恢复表保留或恢复可证明的版本，UI 无假成功，无跨存储状态静默漂移 |
+| 正在运行的进程、已有 extension/child 限制 | 既有操作不被重复执行或宣称撤回；新操作受新策略约束，冻结能力不被扩大 |
+| TUI 重开权限页与新会话默认值 | 有效状态和保存状态分别正确；同一会话可立即继续，无需重启 |
+
+- 先增加缺陷回归：在 Owner 已创建且正在等待普通审批时调用 TUI 所用更新路径，确认当前实现仍使用旧权限，然后再实现。
+- 定向测试覆盖版本容器、resolver、审批竞态、final-leaf admission、Owner 接管和 TUI 状态；对 fs/network 使用隔离 broker 计数证明“未授权不触达、成功仅一次”，不调用真实付费 provider。
+- 代码交付按 `npm run check`（完整输出）、受影响测试及 `npm test`、`npm run build` 执行；既有失败记录归因，不算通过。
+- build 后核对 `command -v runledger`、`readlink -f`、`npm ls -g --depth=0`；以隔离 RUNLEDGER_DIR、受控本地 provider fixture 和真实 tmux/TTY 复现同一对话内切换，检查弹框、输出、session ID、事件及执行次数。Esc/Ctrl+D 退出并验证本任务进程清理。
+- 人工视觉/中文 IME、macOS/Windows、真实外部 provider 分开标注，未执行不关闭门禁。本计划本轮仅检查文档 diff、链接和规则一致性，不运行代码测试。
+
+#### 交付顺序与完成标准
+
+按 R1 contract/失败恢复表 → R2 生产接线 → R3 审批及故障恢复 → R4 TUI → R5 集成/TTY 顺序实现，R2–R4 未闭环前不将功能标记完成。阶段可分提交，但最终交付必须包含同一会话即时生效、待审批重新评估、反向收紧、审计恢复和真实 TTY 证据；仅改提示、默认值或要求用户重开 session 均不算修复。
+
 ### 2026-09-07 Full Access 与独立系统确认
 
 当前内置 Full Access（`danger-full-access` + `never`）允许普通 shell 命令，包括 legacy/AST 无法完整分类的重定向、控制流与脚本。显式设置其他 approval policy 仍保留其收紧语义；管理员要求的 AST 分类也不被普通 Full Access 放行规则覆盖。其他 profile 的 `never` 仍将普通 `ask` 转为 `deny`。
