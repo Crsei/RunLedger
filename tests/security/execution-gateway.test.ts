@@ -31,8 +31,7 @@ import { DeterministicAutoApprovalReviewer } from "../../src/security/permission
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
 import { LinuxBwrapBackend } from "../../src/security/sandbox/linux-bwrap.ts";
 import type { SandboxBackend, SandboxCapability, SandboxDecisionReceipt, SandboxLaunchPlan, SandboxPrepareRequest } from "../../src/security/sandbox/types.ts";
-import type { AuthorizationRequest, AuthorizationResult, SecuritySnapshot, HostWorkspaceExecutionContext } from "../../src/security/types.ts";
-
+import type { AuthorizationRequest, AuthorizationResult, SecuritySnapshot, HostWorkspaceExecutionContext, PermissionPromptResponse } from "../../src/security/types.ts";
 const roots: string[] = [];
 
 const broker: FileSystemBrokerPort = {
@@ -312,7 +311,7 @@ describe("ExecutionGateway", () => {
 		expect(await readFile(target, "utf8")).toBe("approved");
 	});
 
-	it("preserves an expired approval as a typed denial", async () => {
+	it("keeps a pending approval waiting without expiry when the timeout switch is off", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-expired-"));
 		roots.push(root);
 		const currentSnapshot = snapshot(root);
@@ -325,6 +324,8 @@ describe("ExecutionGateway", () => {
 		};
 		const requestDigest = gatewayRequestDigest(request);
 		const binding = await constraint(request, currentSnapshot, requestDigest);
+		let releasePrompt!: (response: PermissionPromptResponse) => void;
+		const release = new Promise<PermissionPromptResponse>((resolve) => { releasePrompt = resolve; });
 		const gateway = new ExecutionGateway({
 			snapshot: currentSnapshot,
 			workspace: request.workspace,
@@ -332,14 +333,19 @@ describe("ExecutionGateway", () => {
 			networkBroker: { request: async () => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: "https://example.com" }) },
 			permissionEngine: new PermissionEngine(),
 			approvalCoordinator: new ApprovalCoordinator({
-				prompter: { request: async () => new Promise(() => undefined) },
-				timeoutMs: 1,
+				prompter: { request: () => release },
 			}),
 			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
 		});
 
-		await expect(gateway.authorize({ request, requestDigest, constraintInput: binding.input, constraintSnapshot: binding.snapshot }))
-			.resolves.toMatchObject({ ok: false, error: { code: "approval_expired" } });
+		// 审批超时总开关已关闭：prompt 长时间未决不产生 approval_expired，只有用户放行后才推进。
+		const pendingAuthorize = gateway.authorize({ request, requestDigest, constraintInput: binding.input, constraintSnapshot: binding.snapshot });
+		let settled = false;
+		void pendingAuthorize.then(() => { settled = true; });
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(settled).toBe(false);
+		releasePrompt?.({ decision: "allow-once", decidedBy: createRuntimeId("principal", "external-write") });
+		await expect(pendingAuthorize).resolves.toMatchObject({ ok: true });
 	});
 
 	it("uses PermissionEngine and ApprovalCoordinator before returning a write-capable port", async () => {

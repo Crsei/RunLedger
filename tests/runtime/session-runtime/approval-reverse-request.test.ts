@@ -30,7 +30,7 @@ interface ApprovalModule {
 		readonly store: SessionStore;
 		readonly fence: OwnerFence;
 		readonly sender: {
-			requestToConnection(connectionId: ConnectionId, request: { readonly kind: string; readonly body: Record<string, unknown> }, timeoutMs?: number): Promise<SessionFrameEnvelope>;
+			requestToConnection(connectionId: ConnectionId, request: { readonly kind: string; readonly body: Record<string, unknown> }, timeoutMs?: number | null): Promise<SessionFrameEnvelope>;
 		};
 		readonly driverConnectionId: () => ConnectionId | undefined;
 		readonly pollIntervalMs?: number;
@@ -165,6 +165,26 @@ describe("Session durable approval reverse requests", () => {
 			reason: "canonical_workspace_source_write",
 		});
 		value.close();
+	});
+
+	it("sends approvals without an expiry as one indefinite reverse request", async () => {
+		const module = await loadModule();
+		if (module === undefined) throw new Error("approval module missing");
+		const value = await fixture();
+		const ports = module.createSessionApprovalPorts({
+			store: value.store, fence: value.fence,
+			driverConnectionId: () => createRuntimeId("connection", "driver"),
+			sender: { requestToConnection: async (_id, request, timeoutMs) => {
+				expect(timeoutMs).toBeNull();
+				expect(request.body.expiresAt).toBeUndefined();
+				return response({ ok: true, decision: "allow-once" });
+			} },
+		});
+		try {
+			const { expiresAt: _expiry, ...request } = prompt(value.fence.sessionId);
+			await expect(ports.prompter.request(request)).resolves.toMatchObject({ decision: "allow-once" });
+			await expect(ports.prompter.request({ ...request, expiresAt: "invalid" })).rejects.toThrow("expiry is invalid");
+		} finally { value.close(); }
 	});
 
 	it("retries on a newly claimed driver before expiry and rejects an old-generation response", async () => {

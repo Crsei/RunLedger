@@ -206,7 +206,10 @@ export interface PermissionPrompt {
 	readonly cwd: string;
 	readonly policyDigest: RuntimeDigest;
 	readonly createdAt: string;
-	readonly expiresAt: string;
+	/**
+	 * 审批期限；缺省表示一直等待用户决策或中止，不设置过期定时器。
+	 */
+	readonly expiresAt?: string;
 }
 
 export type PermissionPromptResponse =

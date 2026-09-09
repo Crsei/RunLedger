@@ -256,7 +256,7 @@ Runtime 只保存可验证的 envelope/ref/receipt,不复制 Workspace、Approva
 | `CapabilityClaim` | capability、resource kind/digest、constraints digest、scope |
 | `CapabilityRequest` | identity context、subject correlation、arguments/envelope/policy digest、nonce、issued/expiry、channel/signature proof ref |
 | `CapabilityDecisionReceipt` | allow/ask/deny、decision revision、matched rules/policy digest、approver/gateway identity、expiry/revocation |
-| `ApprovalTicket/ReceiptRef` | approval ID、request digest、scope、decision、revision、principal、expiry |
+| `ApprovalTicket/ReceiptRef` | approval ID、request digest、scope、decision、revision、principal、可选 expiry；缺省表示无审批期限，不改变 once 消费、撤销和 owner fence 约束 |
 | `RateLimitReceiptRef` | principal/capability/resource/window、reservation、outcome、revision |
 | `CredentialGrantRef` | grant ID、kind、audience/scope digest、expiry/revocation、broker receipt;不含 credential |
 | `SandboxProfileRef` | requested/effective profile、policy digest、backend requirement |

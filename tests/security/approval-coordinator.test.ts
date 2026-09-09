@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	isApprovalReceiptRef,
 	runtimeDigest,
@@ -14,6 +14,7 @@ import {
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
 import type {
 	AuthorizationRequest,
+	PermissionPromptResponse,
 	PermissionPrompter,
 	SecuritySnapshot,
 } from "../../src/security/types.ts";
@@ -92,28 +93,65 @@ function validRevalidation(value: AuthorizationRequest) {
 		policyDigest: value.snapshot.policyDigest,
 	};
 }
-
 describe("ApprovalCoordinator", () => {
-	it.each(["channel", "allow", "revalidation", "revalidation-error", "revalidation-change"])("records expiry instead of stale receipt when %s settles after the deadline", async (scenario) => {
+	it.each(["channel", "allow", "revalidation", "revalidation-error", "revalidation-change"] as const)("keeps waiting instead of recording expiry when %s settles after a slow transport delay", async (scenario) => {
+		// 审批超时总开关已关闭：不设置期限，迟到的响应/失败/变更按原语义处理，不再落 expired。
 		let now = NOW;
 		const value = request();
-		const coordinator = new ApprovalCoordinator({
-			clock: () => now,
-			timeoutMs: 100,
-			prompter: { request: async () => {
-				if (!scenario.startsWith("revalidation")) now = new Date(NOW.getTime() + 101);
+		const prompter: PermissionPrompter = {
+			request: async () => {
+				now = new Date(NOW.getTime() + 101);
 				if (scenario === "channel") throw new Error("transport deadline");
 				return { decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") };
-			} },
-		});
+			},
+		};
+		const coordinator = new ApprovalCoordinator({ clock: () => now, prompter });
 		const result = await coordinator.authorize(value, evaluation(value), () => {
 			now = new Date(NOW.getTime() + 101);
 			if (scenario === "revalidation-error") throw new Error("late validation error");
 			if (scenario === "revalidation-change") return { ...validRevalidation(value), cwd: "/changed" };
 			return validRevalidation(value);
 		});
-		expect(result).toMatchObject({ ok: true, value: { outcome: "deny", approval: { decision: "expired" } } });
+		const expected = scenario === "allow" || scenario === "revalidation"
+			? { ok: true, value: { outcome: "allow", approval: { decision: "allowed" } } }
+			: { ok: true, value: { outcome: "deny", approval: { decision: "cancelled" } } };
+		expect(result).toMatchObject(expected);
 		if (result.ok) expect(isApprovalReceiptRef(result.value.approval)).toBe(true);
+	});
+
+	it.each(["allow", "abort"])("keeps an approval beyond the old timer horizon until %s", async (action) => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const value = request();
+		const controller = new AbortController();
+		let now = NOW;
+		let releasePrompt!: (response: PermissionPromptResponse) => void;
+		let entered!: () => void;
+		const started = new Promise<void>((resolve) => { entered = resolve; });
+		const respond = new Promise<PermissionPromptResponse>((resolve) => { releasePrompt = resolve; });
+		const coordinator = new ApprovalCoordinator({
+			prompter: { request: (prompt) => { expect(prompt.expiresAt).toBeUndefined(); entered(); return respond; } },
+			clock: () => now,
+		});
+		const pending = coordinator.authorize(value, evaluation(value), () => validRevalidation(value), controller.signal);
+		try {
+			let settled = false;
+			void pending.then(() => { settled = true; });
+			await started;
+			now = new Date(NOW.getTime() + 40 * 86400_000);
+			await vi.advanceTimersByTimeAsync(40 * 86400_000);
+			expect(settled).toBe(false);
+			if (action === "abort") {
+				controller.abort();
+				await expect(pending).resolves.toMatchObject({ ok: true, value: { outcome: "deny", approval: { decision: "cancelled" } } });
+			} else {
+				releasePrompt({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") });
+				const result = await pending;
+				expect(result).toMatchObject({ ok: true, value: { outcome: "allow" } });
+				if (!result.ok || !result.value.approval) throw new Error("approval missing");
+				expect(result.value.approval.expiresAt).toBeUndefined();
+				expect(await coordinator.validateAllowOnce(value, result.value.approval)).toMatchObject({ ok: true });
+			}
+		} finally { controller.abort(); await pending; vi.useRealTimers(); }
 	});
 
 	it("durably revokes an allow-once receipt after the authorized effect completes", async () => {
@@ -218,17 +256,6 @@ describe("ApprovalCoordinator", () => {
 		expect(result).toMatchObject({
 			ok: true,
 			value: { outcome: "deny", approval: { decision: "cancelled", principalId: SYSTEM_APPROVAL_PRINCIPAL_ID } },
-		});
-	});
-
-	it("expires a prompt that exceeds its timeout", async () => {
-		const value = request();
-		const pending: PermissionPrompter = { request: async () => new Promise(() => undefined) };
-		const coordinator = new ApprovalCoordinator({ prompter: pending, clock: () => NOW, timeoutMs: 1 });
-		const result = await coordinator.authorize(value, evaluation(value), () => validRevalidation(value));
-		expect(result).toMatchObject({
-			ok: true,
-			value: { outcome: "deny", approval: { decision: "expired", principalId: SYSTEM_APPROVAL_PRINCIPAL_ID } },
 		});
 	});
 

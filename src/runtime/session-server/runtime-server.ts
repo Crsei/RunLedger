@@ -108,7 +108,7 @@ interface ServerConnection {
 interface PendingReverseRequest {
 	readonly resolve: (frame: SessionFrameEnvelope) => void;
 	readonly reject: (error: Error) => void;
-	readonly timeoutId: ReturnType<typeof setTimeout>;
+	readonly timeoutId: ReturnType<typeof setTimeout> | undefined;
 }
 
 export interface SessionRuntimeServerOptions {
@@ -627,7 +627,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 	public requestToConnection(
 		connectionId: ConnectionId,
 		request: { readonly kind: string; readonly body: Record<string, unknown> },
-		timeoutMs: number = SESSION_PROTOCOL_BOUNDS.maxWaitMs,
+		timeoutMs: number | null = SESSION_PROTOCOL_BOUNDS.maxWaitMs,
 		signal?: AbortSignal,
 	): Promise<SessionFrameEnvelope> {
 		if (signal?.aborted) return Promise.reject(new Error("reverse request aborted"));
@@ -650,7 +650,8 @@ export class SessionRuntimeServer implements OwnerTransport {
 				reject(new Error(message));
 			};
 			const onAbort = (): void => cancel("reverse request aborted");
-			const timeoutId = setTimeout(() => cancel("reverse request timed out"), timeoutMs);
+			// null 表示等待用户决策；连接关闭与 AbortSignal 仍会释放该 waiter。
+			const timeoutId = timeoutMs === null ? undefined : setTimeout(() => cancel("reverse request timed out"), timeoutMs);
 			connection.reverseRequests.set(frame.frameId, {
 				resolve: (response) => { signal?.removeEventListener("abort", onAbort); resolve(response); },
 				reject: (error) => { signal?.removeEventListener("abort", onAbort); reject(error); },

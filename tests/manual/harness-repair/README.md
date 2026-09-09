@@ -20,7 +20,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 tests/manual/harness-repair/latency.py --width
 - `y` 批准执行并核对文件内容。
 - 审批期间 Ctrl+C：run 以 aborted 结束，禁止文件不存在。
 - 运行中 Ctrl+C：已启动标记存在，后续写入不发生。
-- 审批超时：工具结果保留 approval_expired，命令没有执行。
+- 审批未决等待（超时开关已关闭）：等待 35 秒跨过原期限后仍保留同一面板的非默认选择，Ctrl+C 中止后 run 以 aborted 结束，全程不出现 approval_expired，命令没有执行。
 - 审批期间杀死本测试 CLI，等待既有 20 秒心跳 stale 门禁后继续同一 Session：旧行显示 Outcome unknown，评估后 Footer 清除 Recovery required，并能完成新请求。
 - 流在完整工具参数后报错：不出现写入、未执行结果保留。
 - 大输出：最终 provider 请求保留末尾失败摘要且默认文本不超过 32,000 字符；近 300 KB 的原始输出不使单结果事件超出 TCP 帧上限。

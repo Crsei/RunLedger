@@ -195,6 +195,49 @@ describe("R4 transport handshake", () => {
 		} finally { release?.(); await transport.close(); }
 	});
 
+	it.each(["allow", "abort", "disconnect"])("preserves an indefinite approval over TCP until %s", async (action) => {
+		const h = await setup();
+		let handlerSignal: AbortSignal | undefined;
+		let release!: (body: Record<string, unknown>) => void;
+		let entered!: () => void;
+		const started = new Promise<void>((resolve) => { entered = resolve; });
+		let calls = 0;
+		const transport = await SessionClientTransport.connect(h.server.endpoint!.port, {
+			reverseRequestHandler: async (_frame, signal) => {
+				calls += 1;
+				handlerSignal = signal;
+				return new Promise<Record<string, unknown>>((resolve) => {
+					release = resolve;
+					signal.addEventListener("abort", () => resolve({ ok: false }), { once: true });
+					entered();
+				});
+			},
+		});
+		const abort = new AbortController();
+		try {
+			await transport.request(handshakeFrame() as never);
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			const reverse = h.server.requestToConnection(onlyConnectionId(), { kind: "approval_prompt", body: {} }, null, abort.signal);
+			let settled = false;
+			const outcome = reverse.then((frame) => { settled = true; return frame; }, (error: unknown) => { settled = true; return error; });
+			await started;
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(settled).toBe(false);
+			expect(handlerSignal?.aborted).toBe(false);
+			expect(calls).toBe(1);
+			vi.useRealTimers();
+			if (action === "allow") {
+				release({ ok: true, decision: "allow-once" });
+				expect(await outcome).toMatchObject({ body: { ok: true, decision: "allow-once" } });
+			} else {
+				if (action === "abort") abort.abort();
+				else await transport.close();
+				expect(await outcome).toBeInstanceOf(Error);
+				await vi.waitFor(() => expect(handlerSignal?.aborted).toBe(true));
+			}
+		} finally { vi.useRealTimers(); abort.abort(); await transport.close(); }
+	});
+
 	it("keeps the TCP connection usable when a timed-out reverse request receives a late response", async () => {
 		const h = await setup();
 		let resolveHandler: ((body: Record<string, unknown>) => void) | undefined;

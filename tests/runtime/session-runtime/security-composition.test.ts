@@ -104,7 +104,6 @@ async function composition(input: {
 	readonly bashShadowTelemetry?: SessionSecurityCompositionOptions["bashShadowTelemetry"];
 	readonly bashClassificationAudit?: SessionSecurityCompositionOptions["bashClassificationAudit"];
 	readonly bashAnalyzer?: BashSecurityAnalyzerPort;
-	readonly approvalTimeoutMs?: number;
 }) {
 	const home = join(root, "home");
 	await fs.mkdir(home, { recursive: true });
@@ -130,7 +129,6 @@ async function composition(input: {
 		...(input.bashShadowTelemetry === undefined ? {} : { bashShadowTelemetry: input.bashShadowTelemetry }),
 		...(input.bashClassificationAudit === undefined ? {} : { bashClassificationAudit: input.bashClassificationAudit }),
 		...(input.bashAnalyzer === undefined ? {} : { bashAnalyzer: input.bashAnalyzer }),
-		...(input.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: input.approvalTimeoutMs }),
 	});
 }
 
@@ -144,11 +142,10 @@ function unavailableAnalyzer(): BashSecurityAnalyzerPort {
 }
 
 describe("session-scoped Security/ExecutionGateway composition", () => {
-	it.each(["expiry", "cancellation"] as const)("revalidates circuit approval at the managed final leaf after %s", async (change) => {
-		let now = new Date("2026-09-07T00:00:00.000Z");
+	it("revalidates circuit approval at the managed final leaf after cancellation", async () => {
 		const controller = new AbortController();
 		const security = await composition({
-			document: { profile: "danger-full-access" }, now: () => now,
+			document: { profile: "danger-full-access" },
 			approvalPorts: {
 				stateStore: new MemoryApprovalStateStore(),
 				audit: { requested: async () => undefined, decided: async () => undefined, revoked: async () => undefined },
@@ -162,9 +159,9 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 			}, controller.signal);
 			if (!result.ok) throw new Error(result.error.message);
 			expect(result.value.constraintInput.modes.approval).toBe("required");
-			if (change === "expiry") now = new Date(now.getTime() + 60_000);
-			else controller.abort();
-			expect(await result.value.validateFinalLeaf()).toMatchObject({ ok: false, error: { code: change === "expiry" ? "approval_expired" : "approval_cancelled" } });
+			// 审批超时总开关已关闭：过期不再发生，只有取消（中止）能在 final leaf 复验时拒绝。
+			controller.abort();
+			expect(await result.value.validateFinalLeaf()).toMatchObject({ ok: false, error: { code: "approval_cancelled" } });
 			await result.value.complete();
 		} finally { await security.close(); }
 	});
@@ -514,7 +511,8 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		expect(prompts).toBe(0);
 	});
 
-	it("expires an AST approval through the production shell path", async () => {
+	it("keeps an unapproved AST shell command waiting and abortable through the production shell path", async () => {
+		// 审批超时总开关已关闭：未决审批不再自动过期；中止是唯一的取消手段，命令不得执行。
 		let shellCalls = 0;
 		const security = await composition({
 			document: {
@@ -523,7 +521,6 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 				sandbox: "off",
 				bashAnalyzerMode: "ast",
 			},
-			approvalTimeoutMs: 1,
 			unrestrictedShell: {
 				exec: async () => {
 					shellCalls += 1;
@@ -545,17 +542,19 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 			},
 		});
 		const controller = new AbortController();
-		const abortTimer = setTimeout(() => controller.abort(), 50);
 		try {
-			await expect(security.executionEnv.shell.exec("rm -f safe-file", { signal: controller.signal }))
-				.rejects.toMatchObject({ code: "approval_expired" });
+			const pending = security.executionEnv.shell.exec("rm -f safe-file", { signal: controller.signal });
+			let settled = false;
+			void pending.catch(() => { settled = true; });
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			controller.abort();
+			await expect(pending).rejects.toMatchObject({ code: "approval_cancelled" });
 		} finally {
-			clearTimeout(abortTimer);
 			await security.close();
 		}
 		expect(shellCalls).toBe(0);
 	});
-
 	it("keeps two Session-owned worker pools isolated when one Session closes", async () => {
 		const first = await composition({
 			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off", bashAnalyzerMode: "ast" },

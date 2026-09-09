@@ -300,12 +300,21 @@ def main():
         probe.save_frame("running-cancel")
         before = probe.submit("HARNESS_EXPIRE")
         probe.approval()
-        report["checks"]["expiry"] = probe.end(before, "stop", 40)
+        # 跨过原 30 秒期限，并保留非默认选择，防止取消/重建面板伪装成持续等待。
+        probe.tm("send-keys", "-t", "probe:0.0", "Down")
+        selected = probe.wait(lambda: next((line.strip() for line in probe.tm("capture-pane", "-p", "-t", "probe:0.0").splitlines()
+                                          if "▶" in line and "2." in line), None), "approval-selection")
+        time.sleep(35)
+        assert selected in probe.save_frame("approval-after-35s"), "approval selection reset while waiting"
+        assert sum(event.get("type") == "agent_end" for event in probe.events()) == before
+        assert not (root / "workspace/expired.txt").exists()
+        probe.tm("send-keys", "-t", "probe:0.0", "C-c")
+        report["checks"]["expire_aborted"] = probe.end(before, "aborted", 10)
         expired = [event for event in probe.events() if event.get("type") == "tool_execution_end"
                    and event.get("result", {}).get("details", {}).get("errorCode") == "approval_expired"]
-        assert expired, "expiry was not reported with its actual error code"
+        assert not expired, "approval_expired must not occur while the timeout switch is off"
         assert not (root / "workspace/expired.txt").exists()
-        probe.save_frame("expiry")
+        probe.save_frame("expire-aborted")
         before = probe.submit("HARNESS_RECOVER")
         probe.approval()
         sessions = probe.session_ids()

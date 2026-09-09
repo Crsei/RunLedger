@@ -41,6 +41,9 @@ import type {
 export const SYSTEM_APPROVAL_PRINCIPAL_ID = createRuntimeId("principal", "runledger-system-approval");
 export const AUTO_REVIEW_APPROVAL_PRINCIPAL_ID = createRuntimeId("principal", "runledger-auto-review");
 
+/** 设为 true 才启用审批期限；关闭时仍保留中止、owner fence 与一次性消费校验。 */
+export const APPROVAL_TIMEOUT_ENABLED = false;
+
 export interface ApprovalStateStorePort {
 	read(approvalId: ApprovalId): Promise<ApprovalReceiptRef | undefined>;
 	commit(receipt: ApprovalReceiptRef, expectedRevision: number): Promise<SecurityResult<ApprovalReceiptRef>>;
@@ -220,7 +223,7 @@ function promptSummary(request: AuthorizationRequest): string {
 	return `${request.toolName}: ${summary}`.slice(0, 512);
 }
 
-function createTicket(request: AuthorizationRequest, now: Date, timeoutMs: number, scope: "once" | "session" = "once"): ApprovalTicket {
+function createTicket(request: AuthorizationRequest, now: Date, effectiveTimeoutMs: number | undefined, scope: "once" | "session" = "once"): ApprovalTicket {
 	const digest = scope === "session" ? sessionApprovalRequestDigest(request) : requestDigest(request);
 	const approvalId = createRuntimeId("approval", `${scope}-${digest.digest.slice(0, 48)}`);
 	return {
@@ -230,7 +233,7 @@ function createTicket(request: AuthorizationRequest, now: Date, timeoutMs: numbe
 		status: "pending",
 		principalId: request.workspace.principalId,
 		createdAt: now.toISOString(),
-		...(scope === "once" ? { expiresAt: new Date(now.getTime() + timeoutMs).toISOString() } : {}),
+		...(scope === "once" && effectiveTimeoutMs !== undefined ? { expiresAt: new Date(now.getTime() + effectiveTimeoutMs).toISOString() } : {}),
 	};
 }
 
@@ -305,17 +308,18 @@ export class ApprovalCoordinator {
 	readonly #autoReviewer?: AutoApprovalReviewerPort;
 	readonly #autoReviewAudit?: AutoApprovalReviewAuditPort;
 	readonly #clock: () => Date;
-	readonly #timeoutMs: number;
+	readonly #timeoutEffectiveMs: number | undefined;
 	readonly #pending = new Map<string, Promise<SecurityResult<AuthorizationResult>>>();
 
 	public constructor(options: ApprovalCoordinatorOptions) {
 		this.#prompter = options.prompter;
 		this.#store = options.store ?? new MemoryApprovalStateStore();
 		this.#audit = options.audit;
+		this.#clock = options.clock ?? (() => new Date());
 		this.#autoReviewer = options.autoReviewer;
 		this.#autoReviewAudit = options.autoReviewAudit;
-		this.#clock = options.clock ?? (() => new Date());
-		this.#timeoutMs = Math.max(1, options.timeoutMs ?? 30_000);
+		// 不用远期时间戳模拟无限等待，避免定时器和票据仍然过期。
+		this.#timeoutEffectiveMs = APPROVAL_TIMEOUT_ENABLED ? Math.max(1, options.timeoutMs ?? 30_000) : undefined;
 	}
 
 	public authorize(
@@ -344,8 +348,10 @@ export class ApprovalCoordinator {
 		try { current = await this.#store.read(receipt.approvalId); }
 		catch { return failure("approval receipt is unavailable before execution", "approval_stale"); }
 		if (current === undefined || canonicalDigest(current) !== canonicalDigest(receipt) || current.requestDigest.digest !== requestDigest(request).digest || current.scope !== "once" || current.decision !== "allowed") return failure("approval receipt changed before execution", "approval_stale");
-		const expiresAt = Date.parse(current.expiresAt ?? "");
-		if (!Number.isFinite(expiresAt) || expiresAt <= this.#clock().getTime()) return failure("approval expired before execution", "approval_expired");
+		if (current.expiresAt !== undefined) {
+			const expiresAt = Date.parse(current.expiresAt);
+			if (!Number.isFinite(expiresAt) || expiresAt <= this.#clock().getTime()) return failure("approval expired before execution", "approval_expired");
+		}
 		return { ok: true, value: undefined };
 	}
 
@@ -391,10 +397,11 @@ export class ApprovalCoordinator {
 			signal?.addEventListener("abort", abortListener, { once: true });
 		});
 		const timeout = new Promise<PromptRace>((resolve) => {
+			if (prompt.expiresAt === undefined) return;
 			timeoutId = setTimeout(() => {
 				controller.abort("approval timeout");
 				resolve({ kind: "timeout" });
-			}, Math.max(0, Math.min(this.#timeoutMs, Date.parse(prompt.expiresAt) - this.#clock().getTime())));
+			}, Math.max(0, Date.parse(prompt.expiresAt) - this.#clock().getTime()));
 		});
 		const promptResult = this.#prompter.request(prompt, controller.signal)
 			.then((response): PromptRace => ({ kind: "response", response }))
@@ -453,10 +460,10 @@ export class ApprovalCoordinator {
 				return { ok: true, value: { outcome: "allow", decisionSource: "session", requests: request.requests, policyDigest: request.snapshot.policyDigest, reason: "matched an approved session network rule" } };
 			}
 		}
-		const sessionTicket = createTicket(request, this.#clock(), this.#timeoutMs, "session");
+		const sessionTicket = createTicket(request, this.#clock(), this.#timeoutEffectiveMs, "session");
 		const sessionReplay = explicit ? undefined : await this.#replayDurableDecision(request, evaluation, sessionTicket, revalidate);
 		if (sessionReplay !== undefined) return sessionReplay;
-		const ticket = createTicket(request, this.#clock(), this.#timeoutMs, "once");
+		const ticket = createTicket(request, this.#clock(), this.#timeoutEffectiveMs, "once");
 		const replayed = await this.#replayDurableDecision(request, evaluation, ticket, revalidate);
 		if (replayed !== undefined) return replayed;
 		const prompt: PermissionPrompt = {
@@ -471,7 +478,7 @@ export class ApprovalCoordinator {
 			cwd: request.cwd,
 			policyDigest: request.snapshot.policyDigest,
 			createdAt: ticket.createdAt,
-			expiresAt: ticket.expiresAt ?? ticket.createdAt,
+			...(ticket.expiresAt === undefined ? {} : { expiresAt: ticket.expiresAt }),
 		};
 		try {
 			await this.#audit?.requested({ request, ticket });
@@ -524,7 +531,7 @@ export class ApprovalCoordinator {
 			}
 		}
 		// 传输超时、迟到响应及复验均可能越过同一审批期限；必须落 expired，不能提交无效的 cancelled/allowed receipt。
-		if (this.#clock().getTime() >= Date.parse(prompt.expiresAt)) {
+		if (prompt.expiresAt !== undefined && this.#clock().getTime() >= Date.parse(prompt.expiresAt)) {
 			raced = { kind: "timeout" };
 			response = { decision: "cancel", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID };
 			prefixRule = undefined;

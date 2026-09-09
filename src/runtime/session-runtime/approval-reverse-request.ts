@@ -249,14 +249,18 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 	}
 
 	async #request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<PermissionPromptResponse> {
-		const deadline = Date.parse(prompt.expiresAt);
-		if (!Number.isFinite(deadline)) throw new Error("approval expiry is invalid");
-		while (Date.now() < deadline) {
+		// 审批超时总开关（APPROVAL_TIMEOUT_ENABLED）关闭时 prompt 无有效期限：
+		// 无限等待 driver 决策，仅受中止与 fence 校验约束，不再落 approval_expired。
+		const deadline = prompt.expiresAt === undefined ? undefined : Date.parse(prompt.expiresAt);
+		if (deadline !== undefined && !Number.isFinite(deadline)) throw new Error("approval expiry is invalid");
+		const expired = (): boolean => deadline !== undefined && Date.now() >= deadline;
+		const remaining = (): number => deadline === undefined ? Number.MAX_SAFE_INTEGER : deadline - Date.now();
+		while (!expired()) {
 			this.#assertFence();
 			if (signal?.aborted) throw new Error("approval request aborted");
 			const connectionId = this.#options.driverConnectionId();
 			if (connectionId === undefined) {
-				await waitForDriver(Math.min(this.#pollIntervalMs, Math.max(1, deadline - Date.now())), signal);
+				await waitForDriver(Math.min(this.#pollIntervalMs, Math.max(1, remaining())), signal);
 				continue;
 			}
 			try {
@@ -269,9 +273,10 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 							...(prompt.requiresExplicitConfirmation === undefined ? {} : { requiresExplicitConfirmation: prompt.requiresExplicitConfirmation }),
 							requests: prompt.requests,
 						cwd: prompt.cwd,
-						expiresAt: prompt.expiresAt,
+						...(prompt.expiresAt === undefined ? {} : { expiresAt: prompt.expiresAt }),
 					},
-				}, Math.max(1, deadline - Date.now()), signal);
+				// 无期限审批保持同一个请求，断线或中止仍由 transport 清理。
+				}, deadline === undefined ? null : Math.max(1, remaining()), signal);
 				this.#assertFence();
 					const decidedBy = createRuntimeId("principal", `session-driver-${connectionId.slice(-64)}`);
 					const decision = decodePermissionPromptResponse(frame.body, decidedBy);
@@ -284,8 +289,8 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 			} catch (error) {
 				this.#assertFence();
 				if (signal?.aborted) throw error;
-				if (Date.now() >= deadline) break;
-				await waitForDriver(Math.min(this.#pollIntervalMs, Math.max(1, deadline - Date.now())), signal);
+				if (expired()) break;
+				await waitForDriver(Math.min(this.#pollIntervalMs, Math.max(1, remaining())), signal);
 			}
 		}
 		throw new Error("approval reverse request timed out");

@@ -1,5 +1,7 @@
 # Session Owner Runtime 替代计划
 
+> 当前审批等待：`APPROVAL_TIMEOUT_ENABLED=false` 时票据和 prompt 不设置 `expiresAt`，反向请求以 `timeoutMs=null` 等待同一次用户决策；中止、连接关闭及 owner fence 仍然生效。有限期限的请求保留原超时行为，其他 reverse request 默认期限不变。
+
 > 2026-09-06 Harness 执行可靠性增量：审批期限与取消传播、同连接即时中断、恢复旧工具 Outcome unknown 和 Footer 同步，见 [执行可靠性计划 §1.2](../plan/03-session-execution-reliability-repair-plan.md#12-2026-09-06-开发案例暴露的-harness-修复)。构建后 Linux TTY 使用本地 HTTP fixture，不替代真实 provider、人工或跨平台验收。
 
 > 状态：**R0–R6 implemented；R6.5 Linux automated candidate PASS but not accepted（真实领域组合、macOS/Windows、独立审计缺失）；R7 标准 CLI 已切换且 Linux 真实多窗口/crash takeover 已验证，但验收仍随 R8 pending；R8 partial/not accepted；R9 not started（旧 Host 仅保留为安全窗口）**
