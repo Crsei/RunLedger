@@ -41,7 +41,7 @@ RunLedger 使用用户级 `settings.json` 的 `uiTheme` 配置主体颜色；`th
 | `info` | Markdown 标题、info notice 基础文字 |
 | `warning`、`error` | 对应 notice 的基础文字；局部 syntax 状态标记仍可覆盖 |
 | `success` | 传统 Markdown 工厂代码块的默认色；native 代码块由 syntax theme 控制 |
-| `background` | 主界面和 overlay 表面、输入区混色的回退背景 |
+| `background` | 主界面和 overlay 表面、输入区混色的回退背景；未显式配置时主界面/overlay 背景跟随 OSC 11 实测终端背景，显式配置优先于探测值 |
 | `surface` | 滚动轨道、overlay 输入表面 |
 | `surfaceAlt` | overlay 选择项背景 |
 | `border` | overlay 边框、输入主题边框 |

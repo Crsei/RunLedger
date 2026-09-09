@@ -831,7 +831,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.ui.requestRender();
     });
     this.unsubscribeThemeMode = this.ui.addThemeModeListener((mode) => this.maybeSwitchTheme(mode));
-    this.unsubscribeTerminalBackground = this.ui.addTerminalBackgroundListener((rgb) => this.refreshEditorAppearance(rgb));
+    this.unsubscribeTerminalBackground = this.ui.addTerminalBackgroundListener((rgb) => {
+      this.ui.setTerminalBackground(rgb);
+      this.refreshEditorAppearance(rgb);
+    });
 	    try {
 		  const recoverySync = this.syncRecoveryState();
 		  if (recoverySync !== undefined) await recoverySync;

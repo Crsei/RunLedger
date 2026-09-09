@@ -20,7 +20,7 @@ import { EDITOR_LEFT_PAD, EDITOR_RIGHT_PAD, DEFAULT_EDITOR_PLACEHOLDER, editorHe
 import type { EditorAppearance } from "./opentui/component-runtime.ts";
 import type { SyntaxThemeController } from "./highlight/theme-controller.ts";
 import { FOOTER_INDENT } from "./footer/layout.ts";
-
+import { rgbToHex } from "./theme/editor-background.ts";
 export interface Component {
   render(width: number): string[];
   present?(width: number): PresentationBlock[];
@@ -385,6 +385,15 @@ export class ProcessTerminal implements Terminal {
 export class TUI extends Container {
   private uiTheme: OpenTuiComponentFrame["uiTheme"];
   setUiTheme(theme: OpenTuiComponentFrame["uiTheme"]): void { this.uiTheme = theme; this.requestRender(); }
+  /** 最近一次 OSC 11 实测背景(#rrggbb);随帧下发给 screen/overlay。 */
+  private terminalBackground: OpenTuiComponentFrame["terminalBackground"];
+  /** OSC 11 实测值;显式 background 配置优先于探测值(Plan 27 §3.3),在帧组装处裁定。 */
+  setTerminalBackground(rgb: RgbColor | undefined): void {
+    const next = rgb === undefined ? undefined : rgbToHex(rgb);
+    if (next === this.terminalBackground) return;
+    this.terminalBackground = next;
+    this.requestRender();
+  }
   readonly terminal: Terminal;
   private focusedComponent: Component | null = null;
   private readonly inputListeners: InputListener[] = [];
@@ -660,6 +669,7 @@ export class TUI extends Container {
         editorHeight,
         editorAppearance: this.editorAppearance,
         uiTheme: this.uiTheme,
+        terminalBackground: this.terminalBackground,
         transcriptScrollPresentation: this.transcriptScrollPresentation,
         statusIndicator: this.statusIndicator,
         statusIndicatorShimmer: this.statusIndicatorShimmer,

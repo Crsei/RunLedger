@@ -40,6 +40,8 @@ export interface TranscriptScrollPresentation {
 
 export interface OpenTuiComponentFrame {
   readonly uiTheme?: UiThemeSnapshot;
+  /** OSC 11 实测终端背景(#rrggbb);缺省 undefined 时使用主题 background 槽。 */
+  readonly terminalBackground?: string;
   readonly body: readonly (string | PresentationBlock)[];
   readonly footer: readonly (string | { readonly kind: "status-line"; readonly segments: readonly StatusLineSegment[] })[];
   readonly overlay?: readonly (string | PresentationBlock)[];

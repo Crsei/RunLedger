@@ -78,8 +78,13 @@ export class OpenTuiFrameRuntime {
   public update(frame: OpenTuiComponentFrame): void {
     const projectionStartedAt = Date.now();
     this.registry.applyTheme(frame.uiTheme ?? resolveUiTheme({}, this.terminalMode, {}));
+    // 屏幕底色独立于 uiTheme 门:OSC 11 实测值可在任意帧到达;
+    // 显式 background 配置优先于探测值(Plan 27 §3.3)。
+    const screenBackground = frame.uiTheme?.backgroundExplicit === true
+      ? frame.uiTheme.colors.background
+      : frame.terminalBackground ?? frame.uiTheme?.colors.background;
+    if (screenBackground !== undefined) this.port.screen.backgroundColor = screenBackground;
     if (frame.uiTheme) {
-      this.port.screen.backgroundColor = frame.uiTheme.colors.background;
       this.port.footer.fg = frame.uiTheme.colors.primary;
       this.port.editor.textColor = frame.uiTheme.colors.primary;
       this.port.statusIndicator.fg = frame.uiTheme.colors.status;

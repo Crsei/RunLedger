@@ -15,6 +15,8 @@ import type { TimelineRow } from "../../src/tui/timeline/types.ts";
 import { editorHeight } from "../../src/tui/editor-height.ts";
 import { editorBackgroundFromTerminal } from "../../src/tui/theme/editor-background.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
+import { TUI, ProcessTerminal } from "../../src/tui/primitives.ts";
+import { resolveUiTheme } from "../../src/tui/theme/ui-theme.ts";
 import { makeSelectListTheme } from "../../src/tui/theme/factories.ts";
 import { SlashCommandPopup } from "../../src/tui/components/slash-command-popup.ts";
 import { builtinCommandDescriptors } from "../../src/tui/commands/registry.ts";
@@ -173,6 +175,36 @@ describe("OpenTUI component projection", () => {
     } finally {
       runtime.destroy();
     }
+  });
+
+  test("carries explicit UI colors and OSC 11 background through TUI frame assembly", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 10 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });
+    const tui = new TUI(new ProcessTerminal());
+    // 使用真实帧组装与渲染器，仅替换终端启动以保持测试隔离。
+    Reflect.set(tui, "runtime", runtime);
+    const render = async () => { Reflect.get(tui, "renderFrame").call(tui); await setup.renderOnce(); };
+    const screen = requireNode(setup.renderer.root, "runledger-screen", BoxRenderable);
+    try {
+      tui.setUiTheme(resolveUiTheme({}, "dark", {}));
+      await render();
+      expect(screen.backgroundColor.toInts().slice(0, 3)).toEqual([11, 14, 20]);
+      tui.setTerminalBackground({ r: 26, g: 43, b: 60 });
+      tui.showOverlay({ render: () => ["overlay"], invalidate: () => {} });
+      await render();
+      expect(screen.backgroundColor.toInts().slice(0, 3)).toEqual([26, 43, 60]);
+      const overlay = requireNode(setup.renderer.root, "runledger-overlay", BoxRenderable);
+      expect(overlay.backgroundColor.toInts().slice(0, 3)).toEqual([26, 43, 60]);
+      tui.setUiTheme(resolveUiTheme({ colors: { common: { background: "#222222", primary: "#abcdef" } } }, "dark", {}));
+      await render();
+      expect(screen.backgroundColor.toInts().slice(0, 3)).toEqual([34, 34, 34]);
+      expect(overlay.backgroundColor.toInts().slice(0, 3)).toEqual([34, 34, 34]);
+      const text = requireNode(setup.renderer.root, "runledger-overlay-content-0", TextRenderable);
+      expect(text.fg.toInts().slice(0, 3)).toEqual([171, 205, 239]);
+      tui.setTerminalBackground(undefined);
+      await render();
+      expect(screen.backgroundColor.toInts().slice(0, 3)).toEqual([34, 34, 34]);
+    } finally { runtime.destroy(); }
   });
 
   test("uses the native track and thumb to update the transcript scrollTop", async () => {

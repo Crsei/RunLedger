@@ -59,14 +59,14 @@ export class OverlayController {
     overlay.paddingTop = bottomLeft ? 0 : compact ? 0 : 1;
     overlay.paddingBottom = bottomLeft ? 0 : compact ? 0 : 1;
     if (transcriptVariant) {
-      overlay.backgroundColor = frame.uiTheme?.colors.background ?? (renderer.themeMode === "light" ? "#ffffff" : "#0b0e14");
+      overlay.backgroundColor = this.surfaceBackground(frame);
       overlay.top = 0;
       overlay.bottom = 0;
       overlay.height = renderer.height;
       overlay.maxHeight = renderer.height;
     } else {
       // 普通面板占据独立布局行，背景和裁剪同时阻止字符穿透。
-      overlay.backgroundColor = frame.uiTheme?.colors.background ?? (renderer.themeMode === "light" ? "#ffffff" : "#0b0e14");
+      overlay.backgroundColor = this.surfaceBackground(frame);
       overlay.top = undefined;
       overlay.bottom = undefined;
       overlay.height = modalHeight;
@@ -102,6 +102,13 @@ export class OverlayController {
         }
       }
     }
+  }
+
+  /** overlay 不透明底色:显式 background 优先,否则跟随 OSC 11 实测终端背景。 */
+  private surfaceBackground(frame: OpenTuiComponentFrame): string | undefined {
+    if (frame.uiTheme?.backgroundExplicit === true) return frame.uiTheme.colors.background;
+    return frame.terminalBackground ?? frame.uiTheme?.colors.background
+      ?? (this.port.renderer.themeMode === "light" ? "#ffffff" : "#0b0e14");
   }
 
   public dispose(): void {
