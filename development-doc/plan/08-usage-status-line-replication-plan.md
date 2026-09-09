@@ -1,5 +1,8 @@
 # RunLedger 输入区 Usage Status Line 复刻计划
 
+> 2026-09-09 缓存命中率修复：OpenAI completions（含 DeepSeek）解析器保留 input/output/cacheRead 的字段存在性，并明确可选独立 cacheWrite 省略时不另计写入，避免默认零值变成 unknown 而隐藏 hit。既有 completions 记录仅在无 reported、零写入且 token 计数完整一致时补充内存投影；不改写历史数据，不将缺失 cacheRead 或显式 unknown 变成零。Provider → 累计 usage → Footer 回归覆盖新旧记录、0%/100% 与缺失值。构建后的标准 CLI 在隔离 SQLite 合成历史、143/189 列真实 TTY 均显示 `hit 98.9%` 并以 0 退出；这不替代真实外部 provider 或人工验收。
+> 同批验证：`npm run check`、`npm run build`、`npm test` 均通过（当前共享工作树 Vitest 506 文件 / 3309 项、Bun 154 项）；既有进程需退出重开才能加载新构建。
+
 > 2026-09-05 修复：费用字段不再作为窄屏的首个丢弃项；原生 Footer 禁止软换行，避免第一行超宽挤掉后续费用行。78/141 可用列回归及隔离 CLI 的 80/143 列合成历史 TTY 均保留累计费用。费用仍来自 canonical session usage；provider 未提供费用时不伪造金额。
 
 > 状态：`partial`。P1–P4 已实现并有 focused/runtime/native 证据；P5 真实 provider/TTY 与 P6 人工验收仍未完成。本文件继续作为 usage status line 的唯一状态入口。

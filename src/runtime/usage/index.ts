@@ -197,9 +197,20 @@ export function usageObservationFromAssistantMessage(
 	source: UsageQuantitySource = "provider",
 	status: UsageObservation["status"] = message.stopReason === "error" || message.stopReason === "aborted" ? "error" : "completed",
 ): UsageObservation {
+	// 既有 completions 记录的零写入遵循同一计数合同；只补内存投影，不改持久化数据。
+	const usage = message.usage;
+	const normalizedUsage = message.api === "openai-completions"
+		&& usage !== undefined
+		&& usage.reported === undefined
+		&& usage.cacheWrite === 0
+		&& isSafeNumber(usage.input) && isSafeNumber(usage.output) && isSafeNumber(usage.cacheRead)
+		&& usage.totalTokens > 0
+		&& usage.totalTokens === usage.input + usage.output + usage.cacheRead
+		? { ...usage, reported: { cacheWrite: true } }
+		: usage;
 	return {
 		id,
-		usage: message.usage,
+		usage: normalizedUsage,
 		durationMs: message.durationMs,
 		ttftMs: message.ttftMs,
 		timingSource: message.timingSource,

@@ -59,6 +59,13 @@ export function parseChunkUsage(
 		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		reported: {
+			input: rawUsage.prompt_tokens !== undefined,
+			output: rawUsage.completion_tokens !== undefined,
+			cacheRead: rawUsage.prompt_tokens_details?.cached_tokens !== undefined || rawUsage.prompt_cache_hit_tokens !== undefined,
+			// 此协议的独立写入字段是可选扩展；省略时已计入 input，不另计写入。
+			cacheWrite: rawUsage.prompt_tokens !== undefined || rawUsage.prompt_tokens_details?.cache_write_tokens !== undefined,
+		},
 	};
 	calculateCost(model, usage);
 	return usage;
