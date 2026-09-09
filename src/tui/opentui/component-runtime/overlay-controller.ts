@@ -6,7 +6,7 @@ import { getOverlayCommandNode, getOverlayInputNode, getOverlaySelectNode, getOv
 import type { KeyedRenderable, OpenTuiComponentFrame, OverlayRenderable } from "./types.ts";
 import type { FrameRuntimePort } from "./frame-runtime.ts";
 
-type OverlayControllerPort = Pick<FrameRuntimePort, "renderer" | "screen" | "editor" | "syntaxHighlightService" | "syntaxThemeController" | "options">;
+type OverlayControllerPort = Pick<FrameRuntimePort, "renderer" | "screen" | "editor" | "syntaxHighlightService" | "syntaxThemeController" | "options" | "footer" | "newContent">;
 
 export class OverlayController {
   private readonly port: OverlayControllerPort;
@@ -27,9 +27,9 @@ export class OverlayController {
     const blocks = frame.overlay.map(toPresentationBlock);
     const transcriptVariant = (frame.overlayVariant === "transcript" || frame.overlayVariant === "trajectory");
     const interactive = blocks.some((block) => block.kind === "select" || block.kind === "input");
-    const bottomLeft = frame.overlayAnchor === "bottom-left";
+    const bottomLeft = !transcriptVariant;
     const compact = frame.overlayNonCapturing === true && bottomLeft;
-    const composerTopOffset = footerHeight + editorHeight + statusIndicatorHeight + 1;
+    const composerTopOffset = footerHeight + editorHeight + statusIndicatorHeight + this.port.newContent.height + 1;
     const modalWidth = transcriptVariant ? renderer.width : Math.max(1, Math.floor(renderer.width * 0.9));
     const chromeHeight = compact ? 0 : bottomLeft ? 2 : 4;
     const contentHeight = blocks.reduce((height, block) => height + overlayBlockHeight(block), 0) + chromeHeight;
@@ -64,20 +64,15 @@ export class OverlayController {
       overlay.bottom = 0;
       overlay.height = renderer.height;
       overlay.maxHeight = renderer.height;
-    } else if (compact) {
-      overlay.backgroundColor = undefined;
-      overlay.top = undefined;
-      overlay.bottom = composerTopOffset;
-    } else if (bottomLeft) {
+    } else {
+      // 普通面板占据独立布局行，背景和裁剪同时阻止字符穿透。
       overlay.backgroundColor = frame.uiTheme?.colors.background ?? (renderer.themeMode === "light" ? "#ffffff" : "#0b0e14");
       overlay.top = undefined;
-      overlay.bottom = composerTopOffset;
-    } else {
-      overlay.backgroundColor = frame.uiTheme?.colors.background;
-      overlay.top = Math.max(0, Math.floor((renderer.height - modalHeight) / 2));
       overlay.bottom = undefined;
+      overlay.height = modalHeight;
+      overlay.maxHeight = maxHeight;
     }
-    if (!transcriptVariant) overlay.height = interactive ? modalHeight : "auto";
+    overlay.position = transcriptVariant ? "absolute" : "relative";
     const fixedBlockHeight = blocks.reduce((height, block) => block.kind === "select"
       ? height + (block.title.length > 0 ? 1 : 0) + (block.query === undefined ? 0 : 1)
       : height + overlayBlockHeight(block), 0);
@@ -123,8 +118,10 @@ export class OverlayController {
       position: "absolute",
       maxHeight: transcriptVariant ? this.port.renderer.height : "80%",
       zIndex: 100,
+      flexShrink: 0,
+      overflow: "hidden",
     });
-    this.port.screen.add(this.overlay);
+    this.port.screen.add(this.overlay, this.port.screen.getChildren().indexOf(this.port.footer));
     return this.overlay;
   }
 

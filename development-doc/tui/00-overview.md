@@ -9,7 +9,7 @@
 >
 > RunLedger 不重新发明 TUI 框架,**直接复用 `@earendil-works/pi-tui` 作为外部依赖**,只移植"事件 → 组件 mutation → requestRender"三段式架构本身。本计划的对象是第 (2) 部分,框架层只在"边界契约"章节出现。
 >
-> 当前 permission 展示例外：Host reverse request 进入 `PermissionRequestView` 后临时替换 transcript 对话正文，采用 Codex 风格 environment/reason/command/编号决策布局；结束或取消后恢复原 Timeline。permission 不再使用居中 overlay，credential/process/selector 等既有 overlay 不受影响。
+> 当前 OpenTUI 普通面板（斜杠补全、选择、审批及输入面板）统一位于 Composer 下方、Footer 上方，参与纵向布局并压缩对话区；使用不透明背景及溢出裁剪，避免字符重叠。Transcript / Trajectory 保持专用全屏查看。历史 anchor 参数兼容保留，普通面板不再按其绝对定位。
 
 ---
 

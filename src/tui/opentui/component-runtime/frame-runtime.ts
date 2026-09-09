@@ -150,7 +150,10 @@ export class OpenTuiFrameRuntime {
     const desiredEditorHeight = Math.max(3, this.requestedEditorHeight, measuredLines + 2);
     const footerHeight = Math.max(1, frame.footer.length);
     const maxEditorHeight = Math.max(1, renderer.height - footerHeight - statusIndicator.height - 1);
-    const boundedEditorHeight = Math.min(desiredEditorHeight, maxEditorHeight);
+    const hasDockedPanel = frame.overlay !== undefined && frame.overlayVariant !== "transcript" && frame.overlayVariant !== "trajectory";
+    // 长草稿也为下方面板留出空间，避免固定高度之和挤出终端。
+    const editorBudget = hasDockedPanel ? Math.max(1, Math.floor(maxEditorHeight / 2)) : maxEditorHeight;
+    const boundedEditorHeight = Math.min(desiredEditorHeight, editorBudget);
     if (boundedEditorHeight !== this.lastEditorHeight) {
       this.lastEditorHeight = boundedEditorHeight;
       this.port.editorRow.height = boundedEditorHeight;

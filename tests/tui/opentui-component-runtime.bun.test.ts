@@ -6,6 +6,7 @@ import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
 import {
   createOpenTuiComponentRuntimeFromRenderer,
+  type OpenTuiComponentFrame,
 } from "../../src/tui/opentui/component-runtime.ts";
 import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
 import { ChatContainer } from "../../src/tui/components/chat-container.ts";
@@ -767,7 +768,45 @@ describe("OpenTUI component projection", () => {
     }
   });
 
-  test("projects slash popup rows as single-line text rows with the command box attached above the editor", async () => {
+  test("separates chat, composer and panels through resize, long drafts and close", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 24 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {}, onResize: () => {},
+    });
+    try {
+      for (const [width, height] of [[80, 24], [40, 12], [143, 36]]) {
+        setup.resize(width!, height!);
+        for (const compact of [true, false]) {
+          const frame: OpenTuiComponentFrame = {
+            body: Array.from({ length: 80 }, (_, index) => `CHAT_MARKER_${index}`),
+            editorText: "draft\n".repeat(30), footer: ["FOOTER_MARKER"],
+            overlay: [{ kind: "text", content: "PANEL_MARKER\n".repeat(30) }],
+            overlayAnchor: "bottom-left", overlayNonCapturing: compact,
+          };
+          runtime.update(frame);
+          await setup.renderOnce();
+          const root = setup.renderer.root;
+          const panel = root.findDescendantById("runledger-overlay")!;
+          const editor = root.findDescendantById("runledger-editor-row")!;
+          const chat = root.findDescendantById("runledger-transcript")!;
+          const footer = root.findDescendantById("runledger-footer")!;
+          expect(chat.screenY + chat.height).toBeLessThanOrEqual(editor.screenY);
+          expect(editor.screenY + editor.height).toBeLessThanOrEqual(panel.screenY);
+          expect(panel.screenY + panel.height).toBeLessThanOrEqual(footer.screenY);
+          expect(footer.screenY + footer.height).toBeLessThanOrEqual(height!);
+          const rows = setup.captureCharFrame().split("\n");
+          expect(rows.some((row) => row.includes("PANEL_MARKER"))).toBe(true);
+          expect(rows.filter((row) => row.includes("PANEL_MARKER")).every((row) => !row.includes("CHAT_MARKER"))).toBe(true);
+          runtime.update({ body: frame.body, editorText: "", footer: frame.footer });
+          await setup.renderOnce();
+          expect(setup.captureCharFrame()).not.toContain("PANEL_MARKER");
+          expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-editor");
+        }
+      }
+    } finally { runtime.destroy(); }
+  });
+
+  test("projects slash popup rows as single-line text rows with the command box attached below the editor", async () => {
     const setup = await createTestRenderer({ width: 80, height: 24 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
@@ -795,9 +834,9 @@ describe("OpenTUI component projection", () => {
       expect(clearLine).toContain("Clear chat");
       // 无原生 select 堆叠节点
       expect(setup.renderer.root.findDescendantById("runledger-overlay-select-0")).toBeUndefined();
-      // 弹窗附着在编辑器上方(底部偏移 = footer + editor 行)
+      // 弹窗在输入框下方占据独立布局行。
       const overlayBox = setup.renderer.root.findDescendantById("runledger-overlay") as { readonly bottom?: number; readonly left?: number; readonly width?: number } | undefined;
-      expect(overlayBox?.bottom).toBeGreaterThan(0);
+      expect(overlayBox?.bottom).toBeUndefined();
       expect(overlayBox?.left).toBe(0);
     } finally {
       runtime.destroy();
@@ -847,9 +886,8 @@ describe("OpenTUI component projection", () => {
       } | undefined;
       expect(overlayBox?.left).toBe(1);
       expect(overlayBox?.width).toBe(72);
-      // capturing secondary views stay attached immediately above the
-      // current Composer + Footer stack, even when either grows.
-      expect(overlayBox?.bottom).toBe(9);
+      // 普通面板参与纵向布局，不使用底部绝对偏移。
+      expect(overlayBox?.bottom).toBeUndefined();
       expect(overlayBox?.border).toBe(true);
       expect(overlayBox?.backgroundColor?.a).toBe(1);
     } finally {
@@ -938,7 +976,7 @@ describe("OpenTUI component projection", () => {
     }
   });
 
-  test("centers a modal when the frame requests the center anchor", async () => {
+  test("docks ordinary modals below the editor even with a legacy center anchor", async () => {
     const setup = await createTestRenderer({ width: 80, height: 24 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
@@ -964,8 +1002,8 @@ describe("OpenTUI component projection", () => {
         readonly top?: number;
         readonly bottom?: number;
       } | undefined;
-      expect(overlayBox?.left).toBe(4);
-      expect(overlayBox?.top).toBe(6);
+      expect(overlayBox?.left).toBe(1);
+      expect(overlayBox?.top).toBeUndefined();
       expect(overlayBox?.bottom).toBeUndefined();
     } finally {
       runtime.destroy();
@@ -1222,7 +1260,7 @@ describe("OpenTUI component projection", () => {
     expect(setup.renderer.isDestroyed).toBe(true);
   });
 
-  test("renders a Codex-style permission request in the secondary view above the Composer", async () => {
+  test("renders a Codex-style permission request in the secondary view below the Composer", async () => {
     const setup = await createTestRenderer({ width: 72, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
@@ -1267,7 +1305,7 @@ describe("OpenTUI component projection", () => {
       expect(select).toBeDefined();
       expect(editorRow).toBeDefined();
       if (overlay !== undefined && select !== undefined && editorRow !== undefined) {
-        expect(overlay.screenY + overlay.height).toBeLessThanOrEqual(editorRow.screenY);
+        expect(overlay.screenY).toBeGreaterThanOrEqual(editorRow.screenY + editorRow.height);
         expect(select.screenY + select.height).toBeLessThanOrEqual(overlay.screenY + overlay.height - 1);
       }
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-overlay-select-2");
