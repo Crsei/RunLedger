@@ -24,6 +24,7 @@ RunLedger 是面向可审计 Agent 执行的运行时。标准 CLI 通过 Sessio
 |---|---|
 | [CLI 参数表](cli.md) | 启动参数、会话选择、模型与权限设置、控制子命令、网关、迁移、环境变量、示例及当前限制 |
 | [架构总览](architecture.md) | 生产入口、Session Owner 组合、跨子系统数据流、生命周期、执行治理与新增行为的归属 |
+| [System prompt 清单](system-prompts.md) | 标准交互、权限片段、Harness Profile、自动标题与 transcript 总结的提示词及组合规则 |
 | [子系统索引](subsystems/README.md) | 各子系统职责与详细参考入口 |
 
 ## 子系统参考
