@@ -58,6 +58,7 @@
 | TUI / Working Loader Shimmer | [`tui/25-pi-working-loader-shimmer-replication-plan.md`](tui/25-pi-working-loader-shimmer-replication-plan.md) | oh-my-pi working loader 渐变（classic/KITT shimmer）、esc bracket 字形与 `display.shimmer` 设置已实现 | Plan 25 S0–S4 accepted；full gates、标准 PATH 隔离 TTY 80/143 列三模式与零宽不变式测试 |
 | TUI / Codex Exploration Output | [`tui/26-codex-exploration-output-summary-plan.md`](tui/26-codex-exploration-output-summary-plan.md) | `read/grep/find/glob/ls` 主时间线摘要、相邻 Exploring 分组、Ctrl+T bounded 详情及双层截断元数据 | `partial`：核心实现、check/test/build 和隔离 PATH TTY smoke 已完成；S6 专项性能/重放、真实探索调用及 dark/light/复制人工验收仍 pending |
 | TUI / 可配置主体色槽 | [`tui/27-configurable-ui-theme-and-thinking-color-plan.md`](tui/27-configurable-ui-theme-and-thinking-color-plan.md) | 用户级 `uiTheme`、三套 dark/light 预设、色槽覆盖与思考灰色、统一渲染接线 | `implemented`：配置与渲染已接通；Linux 自动化及真实 TTY 证据见 Plan 27 §8，人工与跨平台 pending |
+| TUI / System Prompt Dump | [`tui/28-system-prompt-dump-plan.md`](tui/28-system-prompt-dump-plan.md) | `/dump` 命令、只读 domain operation `session.prompt.inspect`、组装结果运行时捕获点、OSC 52 剪贴板出口与 `runledger dump` headless 对应物 | `planned`：设计已冻结，尚无生产代码与证据 |
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
 | Cross-cutting Modularization | [`plan/12-bloated-code-modularization-refactor-plan.md`](plan/12-bloated-code-modularization-refactor-plan.md) | SessionStore、Security、Process、AgentLoop、SessionRuntime、OpenTUI、InteractiveMode、provider adapters 与 model generator 的行为保持拆分 | S0–S5/S8/S9 implemented；S6/S7 automated PATH 候选已通过但 streaming/human 门禁未闭合；S10 受 Runtime 06 R9 阻塞，整体 `partial / blocked` |
 | Package Boundary / Workspace Refactor | [`plan/13-package-boundary-workspace-refactor-plan.md`](plan/13-package-boundary-workspace-refactor-plan.md) | 从单一 npm 包迁移到 contracts、AI、core、product-TUI 与 runledger app 的单向 workspace；先消除跨域环，再物理拆包 | `planned / staged`；P0–P4 可执行，legacy Host 最终收口 P5 受 Runtime 06 R8/R9 阻塞 |
@@ -83,6 +84,10 @@
 ### Plan 24 当前验收状态
 
 Plan 24（Codex Session Display）当前状态为 `implemented/accepted`。2026-08-14 fresh evidence：`npm run check`、Vitest 342 files / 2015 passed / 3 skipped、Bun OpenTUI 89 passed / 443 assertions、`npm run build`，以及标准 PATH 隔离 `runledger` 的 80/143 列 dark/light 真实 TTY 和隔离 SQLite session fixture 验收；逐项记录见 [`tui/24-codex-session-display-replication-plan.md`](tui/24-codex-session-display-replication-plan.md) §S7。
+
+### Plan 28 当前状态
+
+Plan 28（`/dump` 组装后系统提示词导出）当前状态为 `planned`：设计、数据来源与验收口径已冻结在 [`tui/28-system-prompt-dump-plan.md`](tui/28-system-prompt-dump-plan.md)，尚无生产代码、测试或 TTY 证据。该计划不改变 20/24/26/17/18/27 的任何 authority。
 
 ## 原始计划迁移映射
 
@@ -182,6 +187,8 @@ development-doc/
     ├── 24-codex-session-display-replication-plan.md
     ├── 25-pi-working-loader-shimmer-replication-plan.md
     ├── 26-codex-exploration-output-summary-plan.md
+    ├── 27-configurable-ui-theme-and-thinking-color-plan.md
+    ├── 28-system-prompt-dump-plan.md
     └── reference/
         └── 00-opentui-component-index.md
 ```
