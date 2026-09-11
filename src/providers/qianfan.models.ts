@@ -2,11 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/qianfan.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const QIANFAN_MODELS = values as {
-	"deepseek-v3.2": Model<"openai-completions"> & {
-		id: "deepseek-v3.2";
-		provider: "qianfan";
-	};
-};
+export const QIANFAN_MODELS: ModelCatalog<typeof values, "qianfan"> =
+	flattenModelCatalog("qianfan", values);

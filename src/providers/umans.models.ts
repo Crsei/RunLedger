@@ -2,51 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/umans.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const UMANS_MODELS = values as {
-	"umans-coder": Model<"anthropic-messages"> & {
-		id: "umans-coder";
-		provider: "umans";
-	};
-	"umans-deepseek-v4-flash-0731": Model<"anthropic-messages"> & {
-		id: "umans-deepseek-v4-flash-0731";
-		provider: "umans";
-	};
-	"umans-deepseek-v4-flash-vision-exp-lab": Model<"anthropic-messages"> & {
-		id: "umans-deepseek-v4-flash-vision-exp-lab";
-		provider: "umans";
-	};
-	"umans-deepseek-v4-pro-0813": Model<"anthropic-messages"> & {
-		id: "umans-deepseek-v4-pro-0813";
-		provider: "umans";
-	};
-	"umans-flash": Model<"anthropic-messages"> & {
-		id: "umans-flash";
-		provider: "umans";
-	};
-	"umans-glm-5.2": Model<"anthropic-messages"> & {
-		id: "umans-glm-5.2";
-		provider: "umans";
-	};
-	"umans-glm-5.3": Model<"anthropic-messages"> & {
-		id: "umans-glm-5.3";
-		provider: "umans";
-	};
-	"umans-glm-5.3-flash-lab": Model<"anthropic-messages"> & {
-		id: "umans-glm-5.3-flash-lab";
-		provider: "umans";
-	};
-	"umans-kimi-k2.7": Model<"anthropic-messages"> & {
-		id: "umans-kimi-k2.7";
-		provider: "umans";
-	};
-	"umans-kimi-k3": Model<"anthropic-messages"> & {
-		id: "umans-kimi-k3";
-		provider: "umans";
-	};
-	"umans-qwen3.6-35b-a3b": Model<"anthropic-messages"> & {
-		id: "umans-qwen3.6-35b-a3b";
-		provider: "umans";
-	};
-};
+export const UMANS_MODELS: ModelCatalog<typeof values, "umans"> =
+	flattenModelCatalog("umans", values);

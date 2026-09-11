@@ -2,11 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/yolo-auto.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const YOLO_AUTO_MODELS = values as {
-	"deepseek-flash-v4": Model<"openai-completions"> & {
-		id: "deepseek-flash-v4";
-		provider: "yolo-auto";
-	};
-};
+export const YOLO_AUTO_MODELS: ModelCatalog<typeof values, "yolo-auto"> =
+	flattenModelCatalog("yolo-auto", values);

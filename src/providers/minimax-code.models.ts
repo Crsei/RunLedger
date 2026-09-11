@@ -2,43 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/minimax-code.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const MINIMAX_CODE_MODELS = values as {
-	"MiniMax-M2": Model<"openai-completions"> & {
-		id: "MiniMax-M2";
-		provider: "minimax-code";
-	};
-	"MiniMax-M2.1": Model<"openai-completions"> & {
-		id: "MiniMax-M2.1";
-		provider: "minimax-code";
-	};
-	"MiniMax-M2.1-lightning": Model<"openai-completions"> & {
-		id: "MiniMax-M2.1-lightning";
-		provider: "minimax-code";
-	};
-	"MiniMax-M2.5": Model<"openai-completions"> & {
-		id: "MiniMax-M2.5";
-		provider: "minimax-code";
-	};
-	"MiniMax-M2.5-highspeed": Model<"openai-completions"> & {
-		id: "MiniMax-M2.5-highspeed";
-		provider: "minimax-code";
-	};
-	"MiniMax-M2.5-lightning": Model<"openai-completions"> & {
-		id: "MiniMax-M2.5-lightning";
-		provider: "minimax-code";
-	};
-	"MiniMax-M2.7": Model<"openai-completions"> & {
-		id: "MiniMax-M2.7";
-		provider: "minimax-code";
-	};
-	"MiniMax-M2.7-highspeed": Model<"openai-completions"> & {
-		id: "MiniMax-M2.7-highspeed";
-		provider: "minimax-code";
-	};
-	"MiniMax-M3": Model<"openai-completions"> & {
-		id: "MiniMax-M3";
-		provider: "minimax-code";
-	};
-};
+export const MINIMAX_CODE_MODELS: ModelCatalog<typeof values, "minimax-code"> =
+	flattenModelCatalog("minimax-code", values);

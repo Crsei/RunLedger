@@ -2,11 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/litellm.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const LITELLM_MODELS = values as {
-	"claude-opus-4-8": Model<"openai-completions"> & {
-		id: "claude-opus-4-8";
-		provider: "litellm";
-	};
-};
+export const LITELLM_MODELS: ModelCatalog<typeof values, "litellm"> =
+	flattenModelCatalog("litellm", values);

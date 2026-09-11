@@ -348,18 +348,23 @@ describe("S9 emitters", () => {
 		} as unknown as Record<string, Record<string, Model<any>>>;
 	}
 
-	it("emitProviderData writes sorted per-provider catalogs and data json", () => {
+	it("emitProviderData writes api-grouped data and type-derivation shards", () => {
 		const dir = mkdtempSync(join(tmpdir(), "rl-s9-emit-"));
 		try {
 			mkdirSync(join(dir, "src/providers"), { recursive: true });
 			emitProviderData(fixtureProviders(), { packageRoot: dir, pretty: false });
 			const openaiModels = readFileSync(join(dir, "src/providers/openai.models.ts"), "utf8");
 			expect(openaiModels).toContain('import values from "./data/openai.json" with { type: "json" };');
-			expect(openaiModels).toContain('export const OPENAI_MODELS = values as {');
-			expect(openaiModels.indexOf('"gpt-4o"')).toBeLessThan(openaiModels.indexOf('"gpt-4o-mini"'));
-			expect(openaiModels).toContain('"gpt-4o": Model<"openai-responses"> & {');
+			expect(openaiModels).toContain(
+				'export const OPENAI_MODELS: ModelCatalog<typeof values, "openai"> =',
+			);
+			expect(openaiModels).toContain('flattenModelCatalog("openai", values);');
+			const openaiData = JSON.parse(readFileSync(join(dir, "src/providers/data/openai.json"), "utf8"));
+			expect(Object.keys(openaiData)).toEqual(["openai-responses"]);
+			expect(Object.keys(openaiData["openai-responses"])).toEqual(["gpt-4o", "gpt-4o-mini"]);
 			const bedrockData = JSON.parse(readFileSync(join(dir, "src/providers/data/amazon-bedrock.json"), "utf8"));
-			expect(Object.keys(bedrockData)).toEqual(["eu.claude-3"]);
+			expect(Object.keys(bedrockData)).toEqual(["bedrock-converse-stream"]);
+			expect(Object.keys(bedrockData["bedrock-converse-stream"])).toEqual(["eu.claude-3"]);
 			const dataFiles = readdirSync(join(dir, "src/providers/data")).sort();
 			expect(dataFiles).toEqual(["amazon-bedrock.json", "openai.json"]);
 		} finally {
@@ -376,9 +381,9 @@ describe("S9 emitters", () => {
 			expect(generated.indexOf('import { AMAZON_BEDROCK_MODELS } from "./providers/amazon-bedrock.models.ts";')).toBeLessThan(
 				generated.indexOf('import { OPENAI_MODELS } from "./providers/openai.models.ts";'),
 			);
-			expect(generated).toContain('"amazon-bedrock": AMAZON_BEDROCK_MODELS,');
+			expect(generated).toContain('readonly "amazon-bedrock": typeof AMAZON_BEDROCK_MODELS;');
 			expect(generated).toContain('"openai": OPENAI_MODELS,');
-			expect(generated).toContain("} as const;");
+			expect(generated).toContain("} = {");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

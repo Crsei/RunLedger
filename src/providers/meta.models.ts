@@ -2,27 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/meta.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const META_MODELS = values as {
-	"muse-spark-1.1": Model<"openai-responses"> & {
-		id: "muse-spark-1.1";
-		provider: "meta";
-	};
-	"muse-spark-1.2": Model<"openai-responses"> & {
-		id: "muse-spark-1.2";
-		provider: "meta";
-	};
-	"muse-spark-1.2-contributor": Model<"openai-responses"> & {
-		id: "muse-spark-1.2-contributor";
-		provider: "meta";
-	};
-	"muse-spark-1.3": Model<"openai-responses"> & {
-		id: "muse-spark-1.3";
-		provider: "meta";
-	};
-	"muse-spark-1.3-contributor": Model<"openai-responses"> & {
-		id: "muse-spark-1.3-contributor";
-		provider: "meta";
-	};
-};
+export const META_MODELS: ModelCatalog<typeof values, "meta"> =
+	flattenModelCatalog("meta", values);

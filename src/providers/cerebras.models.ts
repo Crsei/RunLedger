@@ -2,39 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/cerebras.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const CEREBRAS_MODELS = values as {
-	"gemma-4-31b": Model<"openai-completions"> & {
-		id: "gemma-4-31b";
-		provider: "cerebras";
-	};
-	"gpt-oss-120b": Model<"openai-completions"> & {
-		id: "gpt-oss-120b";
-		provider: "cerebras";
-	};
-	"llama3.1-8b": Model<"openai-completions"> & {
-		id: "llama3.1-8b";
-		provider: "cerebras";
-	};
-	"qwen-3-235b-a22b-instruct-2507": Model<"openai-completions"> & {
-		id: "qwen-3-235b-a22b-instruct-2507";
-		provider: "cerebras";
-	};
-	"qwen-3-coder-480b": Model<"openai-completions"> & {
-		id: "qwen-3-coder-480b";
-		provider: "cerebras";
-	};
-	"qwen-3.8-27b": Model<"openai-completions"> & {
-		id: "qwen-3.8-27b";
-		provider: "cerebras";
-	};
-	"zai-glm-4.6": Model<"openai-completions"> & {
-		id: "zai-glm-4.6";
-		provider: "cerebras";
-	};
-	"zai-glm-4.7": Model<"openai-completions"> & {
-		id: "zai-glm-4.7";
-		provider: "cerebras";
-	};
-};
+export const CEREBRAS_MODELS: ModelCatalog<typeof values, "cerebras"> =
+	flattenModelCatalog("cerebras", values);

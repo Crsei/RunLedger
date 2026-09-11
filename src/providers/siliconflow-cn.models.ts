@@ -2,15 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/siliconflow-cn.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const SILICONFLOW_CN_MODELS = values as {
-	"deepseek-ai/DeepSeek-V4-Pro": Model<"openai-completions"> & {
-		id: "deepseek-ai/DeepSeek-V4-Pro";
-		provider: "siliconflow-cn";
-	};
-	"zai-org/GLM-5.1": Model<"openai-completions"> & {
-		id: "zai-org/GLM-5.1";
-		provider: "siliconflow-cn";
-	};
-};
+export const SILICONFLOW_CN_MODELS: ModelCatalog<typeof values, "siliconflow-cn"> =
+	flattenModelCatalog("siliconflow-cn", values);

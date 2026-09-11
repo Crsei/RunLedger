@@ -2,23 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/deepseek.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const DEEPSEEK_MODELS = values as {
-	"deepseek-v4-flash": Model<"openai-completions"> & {
-		id: "deepseek-v4-flash";
-		provider: "deepseek";
-	};
-	"deepseek-v4-flash-vision-exp": Model<"openai-completions"> & {
-		id: "deepseek-v4-flash-vision-exp";
-		provider: "deepseek";
-	};
-	"deepseek-v4-pro": Model<"openai-completions"> & {
-		id: "deepseek-v4-pro";
-		provider: "deepseek";
-	};
-	"deepseek-v4.1-flash-expires-on-0910": Model<"openai-completions"> & {
-		id: "deepseek-v4.1-flash-expires-on-0910";
-		provider: "deepseek";
-	};
-};
+export const DEEPSEEK_MODELS: ModelCatalog<typeof values, "deepseek"> =
+	flattenModelCatalog("deepseek", values);

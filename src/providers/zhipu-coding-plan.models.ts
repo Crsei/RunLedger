@@ -2,67 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/zhipu-coding-plan.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const ZHIPU_CODING_PLAN_MODELS = values as {
-	"glm-4.5": Model<"openai-completions"> & {
-		id: "glm-4.5";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-4.5-air": Model<"openai-completions"> & {
-		id: "glm-4.5-air";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-4.6": Model<"openai-completions"> & {
-		id: "glm-4.6";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-4.6v": Model<"openai-completions"> & {
-		id: "glm-4.6v";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-4.7": Model<"openai-completions"> & {
-		id: "glm-4.7";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5": Model<"openai-completions"> & {
-		id: "glm-5";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5-turbo": Model<"openai-completions"> & {
-		id: "glm-5-turbo";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5.1": Model<"openai-completions"> & {
-		id: "glm-5.1";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5.2": Model<"openai-completions"> & {
-		id: "glm-5.2";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5.2-highspeed": Model<"openai-completions"> & {
-		id: "glm-5.2-highspeed";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5.2-highspeed[1m]": Model<"openai-completions"> & {
-		id: "glm-5.2-highspeed[1m]";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5.3": Model<"openai-completions"> & {
-		id: "glm-5.3";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5.3-flash": Model<"openai-completions"> & {
-		id: "glm-5.3-flash";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5.3-highspeed": Model<"openai-completions"> & {
-		id: "glm-5.3-highspeed";
-		provider: "zhipu-coding-plan";
-	};
-	"glm-5v-turbo": Model<"openai-completions"> & {
-		id: "glm-5v-turbo";
-		provider: "zhipu-coding-plan";
-	};
-};
+export const ZHIPU_CODING_PLAN_MODELS: ModelCatalog<typeof values, "zhipu-coding-plan"> =
+	flattenModelCatalog("zhipu-coding-plan", values);

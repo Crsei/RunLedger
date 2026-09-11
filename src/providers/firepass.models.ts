@@ -2,11 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/firepass.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const FIREPASS_MODELS = values as {
-	"kimi-k2.6-turbo": Model<"openai-completions"> & {
-		id: "kimi-k2.6-turbo";
-		provider: "firepass";
-	};
-};
+export const FIREPASS_MODELS: ModelCatalog<typeof values, "firepass"> =
+	flattenModelCatalog("firepass", values);

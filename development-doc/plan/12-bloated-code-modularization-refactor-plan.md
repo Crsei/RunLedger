@@ -498,12 +498,14 @@ scripts/model-generation/
 
 `scripts/generate-models.ts` 只保留 CLI 参数解析、source orchestration 与最终退出码。冻结快照模式不得访问网络；remote source 获取必须继续显式受参数控制。
 
+生成物格式（2026-09-11 调整，对照 pi 的 model-catalog）：`src/providers/data/<id>.json` 由扁平 `modelId → Model` 改为按 `api` 分组的 `api → modelId → Model`，因为 JSON 导入的字符串值会被拓宽为 `string`，api 字面量类型只能从分组键派生；`src/providers/<id>.models.ts` 因此从逐模型枚举 id/api 的 `values as {...}` 变为导入 JSON 并调用 `src/model-catalog.ts` 的 `flattenModelCatalog` 的类型派生 shard。模型值本身不变，公开的 `--json-only` dump 仍是扁平结构。
+
 ### 13.3 TDD 与生成门禁
 
 1. 先为 `detectOpenAICompletionsCompat`、thinking metadata、models.dev normalization 与 emitter 增加纯 fixture tests。
 2. 抽 source adapters，再抽 metadata，最后抽 emitter。
 3. 运行 `npm run generate-models`。
-4. 在冻结输入下，`src/providers/data/*.json`、`src/providers/*.models.ts` 与 `src/models.generated.ts` 应无非预期 diff；若有变化立即停止，不能把变化伪装成格式更新。
+4. 在冻结输入下，`src/providers/data/*.json`、`src/providers/*.models.ts` 与 `src/models.generated.ts` 应无非预期 diff；若有变化立即停止，不能把变化伪装成格式更新。上述 api 分组格式调整是本条的显式例外，已在生成前逐 provider 展平比对确认模型值零变化。
 5. 审阅生成结果后运行 `npm run check`、`npm test`、`npm run build`。
 
 ## 14. S10：legacy Host delete-first 处置与收口

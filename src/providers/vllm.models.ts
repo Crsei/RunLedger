@@ -2,11 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/vllm.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const VLLM_MODELS = values as {
-	"gpt-oss-20b": Model<"openai-completions"> & {
-		id: "gpt-oss-20b";
-		provider: "vllm";
-	};
-};
+export const VLLM_MODELS: ModelCatalog<typeof values, "vllm"> =
+	flattenModelCatalog("vllm", values);

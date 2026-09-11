@@ -40,7 +40,7 @@ OAuth provider 通过 `login()` 完成交互，在过期时经 `CredentialStore.
 
 ## Catalog 与生成边界
 
-静态模型资料由 `scripts/generate-models.ts` 及其 source/normalization 模块生成到 provider data 与 `models.generated.ts`。修改 provider 或 catalog 时，应运行 `npm run generate-models` 并审阅生成差异；手改生成文件不能成为新的 source of truth。
+静态模型资料由 `scripts/generate-models.ts` 及其 source/normalization 模块生成到 provider data 与 `models.generated.ts`。每个 provider 的模型清单只存在于生成的 `src/providers/data/<id>.json`(按 `api` 分组);`src/providers/<id>.models.ts` 只是导入该 JSON 并调用 `src/model-catalog.ts` 的 `flattenModelCatalog` 做类型派生的 shard,不再逐模型枚举 id/api。修改 provider 或 catalog 时，应运行 `npm run generate-models` 并审阅生成差异；手改生成文件不能成为新的 source of truth。
 
 动态 catalog 的 last-known-good 状态只在当前 `InMemoryModelsStore` 进程内有效。除非另有明确存储实现，refresh 成功不能宣称跨进程持久化。
 

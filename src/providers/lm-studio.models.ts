@@ -2,11 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/lm-studio.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const LM_STUDIO_MODELS = values as {
-	"llama-3-8b": Model<"openai-completions"> & {
-		id: "llama-3-8b";
-		provider: "lm-studio";
-	};
-};
+export const LM_STUDIO_MODELS: ModelCatalog<typeof values, "lm-studio"> =
+	flattenModelCatalog("lm-studio", values);

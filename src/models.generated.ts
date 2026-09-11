@@ -72,7 +72,78 @@ import { ZAI_CODING_CN_MODELS } from "./providers/zai-coding-cn.models.ts";
 import { ZENMUX_MODELS } from "./providers/zenmux.models.ts";
 import { ZHIPU_CODING_PLAN_MODELS } from "./providers/zhipu-coding-plan.models.ts";
 
-export const MODELS = {
+export const MODELS: {
+	readonly "abliteration": typeof ABLITERATION_MODELS;
+	readonly "aiand": typeof AIAND_MODELS;
+	readonly "aimlapi": typeof AIMLAPI_MODELS;
+	readonly "alibaba-coding-plan": typeof ALIBABA_CODING_PLAN_MODELS;
+	readonly "alibaba-token-plan": typeof ALIBABA_TOKEN_PLAN_MODELS;
+	readonly "amazon-bedrock": typeof AMAZON_BEDROCK_MODELS;
+	readonly "ant-ling": typeof ANT_LING_MODELS;
+	readonly "anthropic": typeof ANTHROPIC_MODELS;
+	readonly "azure-openai-responses": typeof AZURE_OPENAI_RESPONSES_MODELS;
+	readonly "baseten": typeof BASETEN_MODELS;
+	readonly "bedrock-mantle": typeof BEDROCK_MANTLE_MODELS;
+	readonly "cerebras": typeof CEREBRAS_MODELS;
+	readonly "cline-pass": typeof CLINE_PASS_MODELS;
+	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_MODELS;
+	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_MODELS;
+	readonly "coreweave": typeof COREWEAVE_MODELS;
+	readonly "deepinfra": typeof DEEPINFRA_MODELS;
+	readonly "deepseek": typeof DEEPSEEK_MODELS;
+	readonly "firepass": typeof FIREPASS_MODELS;
+	readonly "fireworks": typeof FIREWORKS_MODELS;
+	readonly "github-copilot": typeof GITHUB_COPILOT_MODELS;
+	readonly "gmi-cloud": typeof GMI_CLOUD_MODELS;
+	readonly "google": typeof GOOGLE_MODELS;
+	readonly "google-vertex": typeof GOOGLE_VERTEX_MODELS;
+	readonly "groq": typeof GROQ_MODELS;
+	readonly "huggingface": typeof HUGGINGFACE_MODELS;
+	readonly "kilo": typeof KILO_MODELS;
+	readonly "kimi-code": typeof KIMI_CODE_MODELS;
+	readonly "kimi-coding": typeof KIMI_CODING_MODELS;
+	readonly "litellm": typeof LITELLM_MODELS;
+	readonly "lm-studio": typeof LM_STUDIO_MODELS;
+	readonly "meta": typeof META_MODELS;
+	readonly "minimax": typeof MINIMAX_MODELS;
+	readonly "minimax-cn": typeof MINIMAX_CN_MODELS;
+	readonly "minimax-code": typeof MINIMAX_CODE_MODELS;
+	readonly "minimax-code-cn": typeof MINIMAX_CODE_CN_MODELS;
+	readonly "mistral": typeof MISTRAL_MODELS;
+	readonly "moonshotai": typeof MOONSHOTAI_MODELS;
+	readonly "moonshotai-cn": typeof MOONSHOTAI_CN_MODELS;
+	readonly "nanogpt": typeof NANOGPT_MODELS;
+	readonly "novita": typeof NOVITA_MODELS;
+	readonly "nvidia": typeof NVIDIA_MODELS;
+	readonly "openai": typeof OPENAI_MODELS;
+	readonly "openai-codex": typeof OPENAI_CODEX_MODELS;
+	readonly "opencode": typeof OPENCODE_MODELS;
+	readonly "opencode-go": typeof OPENCODE_GO_MODELS;
+	readonly "opencode-zen": typeof OPENCODE_ZEN_MODELS;
+	readonly "openrouter": typeof OPENROUTER_MODELS;
+	readonly "qianfan": typeof QIANFAN_MODELS;
+	readonly "qwen-portal": typeof QWEN_PORTAL_MODELS;
+	readonly "sakana": typeof SAKANA_MODELS;
+	readonly "siliconflow": typeof SILICONFLOW_MODELS;
+	readonly "siliconflow-cn": typeof SILICONFLOW_CN_MODELS;
+	readonly "synthetic": typeof SYNTHETIC_MODELS;
+	readonly "together": typeof TOGETHER_MODELS;
+	readonly "umans": typeof UMANS_MODELS;
+	readonly "venice": typeof VENICE_MODELS;
+	readonly "vercel-ai-gateway": typeof VERCEL_AI_GATEWAY_MODELS;
+	readonly "vllm": typeof VLLM_MODELS;
+	readonly "wafer-serverless": typeof WAFER_SERVERLESS_MODELS;
+	readonly "xai": typeof XAI_MODELS;
+	readonly "xiaomi": typeof XIAOMI_MODELS;
+	readonly "xiaomi-token-plan-ams": typeof XIAOMI_TOKEN_PLAN_AMS_MODELS;
+	readonly "xiaomi-token-plan-cn": typeof XIAOMI_TOKEN_PLAN_CN_MODELS;
+	readonly "xiaomi-token-plan-sgp": typeof XIAOMI_TOKEN_PLAN_SGP_MODELS;
+	readonly "yolo-auto": typeof YOLO_AUTO_MODELS;
+	readonly "zai": typeof ZAI_MODELS;
+	readonly "zai-coding-cn": typeof ZAI_CODING_CN_MODELS;
+	readonly "zenmux": typeof ZENMUX_MODELS;
+	readonly "zhipu-coding-plan": typeof ZHIPU_CODING_PLAN_MODELS;
+} = {
 	"abliteration": ABLITERATION_MODELS,
 	"aiand": AIAND_MODELS,
 	"aimlapi": AIMLAPI_MODELS,
@@ -143,4 +214,4 @@ export const MODELS = {
 	"zai-coding-cn": ZAI_CODING_CN_MODELS,
 	"zenmux": ZENMUX_MODELS,
 	"zhipu-coding-plan": ZHIPU_CODING_PLAN_MODELS,
-} as const;
+};

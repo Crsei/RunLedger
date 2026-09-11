@@ -2,15 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/qwen-portal.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const QWEN_PORTAL_MODELS = values as {
-	"coder-model": Model<"openai-completions"> & {
-		id: "coder-model";
-		provider: "qwen-portal";
-	};
-	"vision-model": Model<"openai-completions"> & {
-		id: "vision-model";
-		provider: "qwen-portal";
-	};
-};
+export const QWEN_PORTAL_MODELS: ModelCatalog<typeof values, "qwen-portal"> =
+	flattenModelCatalog("qwen-portal", values);

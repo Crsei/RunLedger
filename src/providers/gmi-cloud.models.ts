@@ -2,11 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/gmi-cloud.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const GMI_CLOUD_MODELS = values as {
-	"deepseek-ai/DeepSeek-V4-Flash": Model<"openai-completions"> & {
-		id: "deepseek-ai/DeepSeek-V4-Flash";
-		provider: "gmi-cloud";
-	};
-};
+export const GMI_CLOUD_MODELS: ModelCatalog<typeof values, "gmi-cloud"> =
+	flattenModelCatalog("gmi-cloud", values);

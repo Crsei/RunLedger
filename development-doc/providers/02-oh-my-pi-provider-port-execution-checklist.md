@@ -4,6 +4,13 @@
 >
 > 下方 2026-08-16 的版本、数量、worktree 和验证结果均为历史快照，不能代表本次状态。
 
+## Model catalog 改为类型派生 shard（2026-09-11）
+
+- 触发：对照 pi / oh-my-pi，RunLedger 的 `src/providers/<id>.models.ts` 为每个模型逐条枚举 `Model<api> & { id; provider }`，70 份 shard 共约 1.9 万行生成代码；上游只用一份 JSON 加泛型派生。
+- 根因：JSON 导入的字符串值会被 TypeScript 拓宽为 `string`，无法直接由 `values["<id>"]["api"]` 得到 api 字面量；因此 RunLedger 之前把类型信息烘焙进 shard 源码。
+- 修改：新增 `src/model-catalog.ts`（`ModelGroups` / `ModelApi` / `ModelCatalog` / `flattenModelCatalog`）。`src/providers/data/<id>.json` 由扁平 `modelId → Model` 改为按 `api` 分组，使 api 字面量可从分组键派生；`<id>.models.ts` 只导入该 JSON 并调用 `flattenModelCatalog`。`src/models.generated.ts` 聚合器改为显式类型标注（否则 70 个 catalog 的推断类型触发 TS7056），并删除已无用途的通配 `*.json` 声明 `src/providers/data-json.d.ts`。公开的 `--json-only` dump 仍为扁平结构。
+- 验证：生成前把 70 份 data 文件展平后与 HEAD 逐模型比对，4711 个模型 0 差异；`npm run build` 后 `dist/models.generated.js` 仍为 70 provider / 4711 模型，混合 api 的 opencode-zen 分组正确。remote 源生成 70 provider、provider 集合与提交版本一致（其中 28 份既有 provider 的 live 源漂移属 generator 既有网络依赖，不计入本改动）。`npm run check`、`npm run build` 与脚本/测试 tsconfig 0 diagnostics；focused providers/auth/scripts 60 files / 398 tests 通过。隔离 RUNLEDGER_DIR 的真实 `runledger` tmux 会话正常渲染 catalog（azure-openai-responses 54 个模型、All models 列表可用），Esc/Esc/Ctrl+D 退出后会话消失。
+
 ## OpenCode Go 会话路由修复（2026-09-11）
 
 - 触发：Go 返回 HTTP 400 `MissingSessionID`。官方 [Go 客户端要求](https://opencode.ai/docs/go/#where-can-i-use-it) 要求每段对话发送稳定的 `x-opencode-session`，并使用客户端自己的 User-Agent。
@@ -101,7 +108,7 @@ RunLedger 的目标链路保持为：
       -> src/cli/{main,runtime-host}.ts
       -> InteractiveSessionController / Agent Loop
 
-模型 catalog 仍由 src/providers/<id>.models.ts、src/providers/data/<id>.json、src/models.generated.ts 和 scripts/generate-models.ts 共同拥有。具体执行必须遵守：
+模型 catalog 仍由 `scripts/generate-models.ts` 生成：provider 模型清单只存在于生成的 `src/providers/data/<id>.json`（按 `api` 分组），`src/providers/<id>.models.ts` 是仅导入该 JSON 并通过 `src/model-catalog.ts` 派生类型的 shard，`src/models.generated.ts` 汇总 provider→catalog。具体执行必须遵守：
 
 - [x] 使用来源 provider 的行为和测试作为参考，但不复制 oh-my-pi 的全局 registry、import-time registration、catalog package、外部 installed/enabled 状态或模型名字 first-wins 逻辑。→ 全部 factory 走 createProvider()；catalog 经 vendored snapshot 归一化；无来源全局 registry 复制。
 - [x] 每个 provider 保持稳定的 provider/model 身份；只有完成 settings/auth/session 兼容审计后才能增加 alias 或重命名。→ azure/moonshot/xai-oauth 三个 identity 映射结论见 §2.1；未新增任何 alias 或重命名。

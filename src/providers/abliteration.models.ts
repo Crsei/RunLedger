@@ -2,19 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/abliteration.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const ABLITERATION_MODELS = values as {
-	"abliterated-model": Model<"openai-responses"> & {
-		id: "abliterated-model";
-		provider: "abliteration";
-	};
-	"abliterated-model-large": Model<"openai-responses"> & {
-		id: "abliterated-model-large";
-		provider: "abliteration";
-	};
-	"abliterated-model-large-v2": Model<"openai-responses"> & {
-		id: "abliterated-model-large-v2";
-		provider: "abliteration";
-	};
-};
+export const ABLITERATION_MODELS: ModelCatalog<typeof values, "abliteration"> =
+	flattenModelCatalog("abliteration", values);

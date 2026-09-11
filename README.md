@@ -22,7 +22,7 @@
 npm install
 npm run check          # TypeScript 完整 typecheck(本期已通过)
 npm run demo           # catalog 摘要 + mock loop demo + 真实 deepseek-v4-pro demo(需 asset/api-key.json)
-npm run generate-models  # 重新生成 src/providers/data/*.json 与 src/models.generated.ts
+npm run generate-models  # 重新生成 src/providers/data/*.json、src/providers/*.models.ts 与 src/models.generated.ts
 npm run build          # 编译到 dist/
 npm test               # vitest,当前测试全绿
 npm link               # 注册 dist CLI 到 PATH(可 `npm unlink -g runledger` 撤销)
@@ -109,7 +109,7 @@ RunLedger/
 ### pi-ai 移植层
 
 - **`Models`** 是 pi 的核心工厂(`src/models.ts:createModels()`),绑定 `credentialStore` + `modelsStore` + `provider factories`,提供 `getProvider` / `getAuth` / `stream` / `streamSimple` 接口。
-- **`Provider<TApi>`** 是 provider 的统一抽象;生产 TUI 当前注册 36 个 builtin provider,其中 35 份 catalog 由 `*.models.ts` + `data/*.json` 自动生成。
+- **`Provider<TApi>`** 是 provider 的统一抽象;生产 TUI 当前注册 36 个 builtin provider,其中 35 份 catalog 由 `data/*.json` 自动生成,`*.models.ts` 只通过 `flattenModelCatalog` 从 JSON 的 api 分组键派生类型。
 - **`auth-storage.ts`** 用 `proper-lockfile` 加锁写 canonical home 的 `auth.json`,mode 0600。
 - **`runtime-credentials.ts`** overlay 模式,允许在不修改 auth.json 的情况下注入运行时 API key。
 - **`oauth/*`** 8 个 provider 的 OAuth 流(anthropic / openai-codex / github-copilot / xai / radius / 通用 device-code / 通用 pkce / oauth-page)。
@@ -119,7 +119,9 @@ RunLedger/
 ```bash
 npm run generate-models
 # → 抓取 models.dev / OpenRouter / Vercel AI Gateway / NVIDIA NIM 等源
-# → 生成 src/providers/data/*.json(35 个文件)+ src/providers/*.models.ts(35 个文件)+ src/models.generated.ts
+# → 生成 src/providers/data/*.json(按 api 分组的模型值)
+# → 生成 src/providers/*.models.ts(仅导入 data JSON 并派生类型的 shard)
+# → 生成 src/models.generated.ts(provider → catalog 聚合器)
 ```
 
 ## 模块路线图

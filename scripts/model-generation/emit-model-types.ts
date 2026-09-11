@@ -27,11 +27,15 @@ export function emitModelTypes(
 		for (const providerId of sortedProviderIds) {
 			output += `import { ${catalogConstName(providerId)} } from "./providers/${providerId}.models.ts";\n`;
 		}
-		output += `\nexport const MODELS = {\n`;
+		output += `\nexport const MODELS: {\n`;
+		for (const providerId of sortedProviderIds) {
+			output += `\treadonly ${JSON.stringify(providerId)}: typeof ${catalogConstName(providerId)};\n`;
+		}
+		output += `} = {\n`;
 		for (const providerId of sortedProviderIds) {
 			output += `\t${JSON.stringify(providerId)}: ${catalogConstName(providerId)},\n`;
 		}
-		output += `} as const;\n`;
+		output += `};\n`;
 		writeFileSync(join(packageRoot, "src/models.generated.ts"), output);
 		console.log("Generated src/models.generated.ts");
 	}

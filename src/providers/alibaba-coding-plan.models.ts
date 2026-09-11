@@ -2,55 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/alibaba-coding-plan.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const ALIBABA_CODING_PLAN_MODELS = values as {
-	"MiniMax-M2.5": Model<"openai-completions"> & {
-		id: "MiniMax-M2.5";
-		provider: "alibaba-coding-plan";
-	};
-	"glm-4.7": Model<"openai-completions"> & {
-		id: "glm-4.7";
-		provider: "alibaba-coding-plan";
-	};
-	"glm-5": Model<"openai-completions"> & {
-		id: "glm-5";
-		provider: "alibaba-coding-plan";
-	};
-	"kimi-k2.5": Model<"openai-completions"> & {
-		id: "kimi-k2.5";
-		provider: "alibaba-coding-plan";
-	};
-	"qwen3-coder-next": Model<"openai-completions"> & {
-		id: "qwen3-coder-next";
-		provider: "alibaba-coding-plan";
-	};
-	"qwen3-coder-plus": Model<"openai-completions"> & {
-		id: "qwen3-coder-plus";
-		provider: "alibaba-coding-plan";
-	};
-	"qwen3-max-2026-01-23": Model<"openai-completions"> & {
-		id: "qwen3-max-2026-01-23";
-		provider: "alibaba-coding-plan";
-	};
-	"qwen3.5-plus": Model<"openai-completions"> & {
-		id: "qwen3.5-plus";
-		provider: "alibaba-coding-plan";
-	};
-	"qwen3.6-flash": Model<"openai-completions"> & {
-		id: "qwen3.6-flash";
-		provider: "alibaba-coding-plan";
-	};
-	"qwen3.6-plus": Model<"openai-completions"> & {
-		id: "qwen3.6-plus";
-		provider: "alibaba-coding-plan";
-	};
-	"qwen3.7-max": Model<"openai-completions"> & {
-		id: "qwen3.7-max";
-		provider: "alibaba-coding-plan";
-	};
-	"qwen3.7-plus": Model<"openai-completions"> & {
-		id: "qwen3.7-plus";
-		provider: "alibaba-coding-plan";
-	};
-};
+export const ALIBABA_CODING_PLAN_MODELS: ModelCatalog<typeof values, "alibaba-coding-plan"> =
+	flattenModelCatalog("alibaba-coding-plan", values);

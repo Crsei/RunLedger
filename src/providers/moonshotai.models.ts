@@ -2,75 +2,7 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/moonshotai.json" with { type: "json" };
-import type { Model } from "../types.ts";
+import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
-export const MOONSHOTAI_MODELS = values as {
-	"kimi-k2-0711-preview": Model<"openai-completions"> & {
-		id: "kimi-k2-0711-preview";
-		provider: "moonshotai";
-	};
-	"kimi-k2-0905-preview": Model<"openai-completions"> & {
-		id: "kimi-k2-0905-preview";
-		provider: "moonshotai";
-	};
-	"kimi-k2-thinking": Model<"openai-completions"> & {
-		id: "kimi-k2-thinking";
-		provider: "moonshotai";
-	};
-	"kimi-k2-thinking-turbo": Model<"openai-completions"> & {
-		id: "kimi-k2-thinking-turbo";
-		provider: "moonshotai";
-	};
-	"kimi-k2-turbo-preview": Model<"openai-completions"> & {
-		id: "kimi-k2-turbo-preview";
-		provider: "moonshotai";
-	};
-	"kimi-k2.5": Model<"openai-completions"> & {
-		id: "kimi-k2.5";
-		provider: "moonshotai";
-	};
-	"kimi-k2.6": Model<"openai-completions"> & {
-		id: "kimi-k2.6";
-		provider: "moonshotai";
-	};
-	"kimi-k2.7-code": Model<"openai-completions"> & {
-		id: "kimi-k2.7-code";
-		provider: "moonshotai";
-	};
-	"kimi-k2.7-code-highspeed": Model<"openai-completions"> & {
-		id: "kimi-k2.7-code-highspeed";
-		provider: "moonshotai";
-	};
-	"kimi-k3": Model<"openai-completions"> & {
-		id: "kimi-k3";
-		provider: "moonshotai";
-	};
-	"moonshot-v1-128k": Model<"openai-completions"> & {
-		id: "moonshot-v1-128k";
-		provider: "moonshotai";
-	};
-	"moonshot-v1-128k-vision-preview": Model<"openai-completions"> & {
-		id: "moonshot-v1-128k-vision-preview";
-		provider: "moonshotai";
-	};
-	"moonshot-v1-32k": Model<"openai-completions"> & {
-		id: "moonshot-v1-32k";
-		provider: "moonshotai";
-	};
-	"moonshot-v1-32k-vision-preview": Model<"openai-completions"> & {
-		id: "moonshot-v1-32k-vision-preview";
-		provider: "moonshotai";
-	};
-	"moonshot-v1-8k": Model<"openai-completions"> & {
-		id: "moonshot-v1-8k";
-		provider: "moonshotai";
-	};
-	"moonshot-v1-8k-vision-preview": Model<"openai-completions"> & {
-		id: "moonshot-v1-8k-vision-preview";
-		provider: "moonshotai";
-	};
-	"moonshot-v1-auto": Model<"openai-completions"> & {
-		id: "moonshot-v1-auto";
-		provider: "moonshotai";
-	};
-};
+export const MOONSHOTAI_MODELS: ModelCatalog<typeof values, "moonshotai"> =
+	flattenModelCatalog("moonshotai", values);
