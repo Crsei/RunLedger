@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InteractiveMode, type InteractiveModeOptions } from "../../src/tui/interactive-mode.ts";
 import { TUI } from "../../src/tui/primitives.ts";
-import { TranscriptOverlayComponent } from "../../src/tui/transcript-view.ts";
 import type { SessionDomainResult } from "../../src/runtime/session-runtime/domain-router.ts";
 import { PromptDumpWorkflow } from "../../src/tui/interactive/prompt-dump-workflow.ts";
 import type { InteractiveModePorts, PromptDumpDocument, PromptDumpPort } from "../../src/tui/interactive/types.ts";
@@ -13,9 +12,6 @@ afterEach(() => vi.restoreAllMocks());
 
 function notices(mode: InteractiveMode): string {
 	return mode.getTuiState().timeline.committedRows.flatMap((row) => row.kind === "notice" ? [row.message.text] : []).join("\n");
-}
-function overlayText(mode: InteractiveMode): string {
-	return mode.overlayComponent instanceof TranscriptOverlayComponent ? mode.overlayComponent.render(120).join("\n") : "";
 }
 async function withMode(controller: ContractController, run: (mode: InteractiveMode, terminal: ContractTerminal) => Promise<void>, options: Omit<InteractiveModeOptions, "controller" | "terminal"> = {}) {
 	const terminal = new ContractTerminal(100, 30);
@@ -31,7 +27,7 @@ describe("/dump raw request export", () => {
 			supportsInlineArgs: true, availableDuringTask: true, policy: { draft: "allowed", history: "allowed", query: "allowed", frozen: "allowed" } });
 	});
 
-	it("exports unchanged large system text while sanitizing and bounding only the preview", async () => {
+	it("automatically copies and exports unchanged large system text without opening a prompt panel", async () => {
 		const content = "raw\u001b\u0085中文\r\n" + "long prompt\n".repeat(22_000);
 		const documents: PromptDumpDocument[] = [];
 		const clipboard = vi.spyOn(TUI.prototype, "writeClipboard").mockReturnValue(true);
@@ -50,8 +46,9 @@ describe("/dump raw request export", () => {
 		await withMode(controller, async (mode) => {
 			mode.echoPrompt("/dump system");
 			await vi.waitFor(() => expect(notices(mode)).toContain("File: /tmp/dump.txt"));
-			expect(overlayText(mode)).toContain("raw��中文");
-			expect(overlayText(mode)).not.toContain("## Configuration");
+			expect(mode.overlayComponent).toBeUndefined();
+			expect(notices(mode)).not.toContain("long prompt");
+			expect(notices(mode)).toContain("Clipboard: raw content automatically copied");
 			expect(notices(mode)).toContain("captured-request");
 			expect(notices(mode)).toContain("Metadata: /tmp/dump.metadata.json");
 		}, { promptDumpPort });
@@ -63,6 +60,29 @@ describe("/dump raw request export", () => {
 		expect(documents[0]?.metadata.model).toBe("captured-model");
 	});
 
+	it.each([false, "throws"])("keeps the file export and reports clipboard failure (%s)", async (failure) => {
+		vi.spyOn(TUI.prototype, "writeClipboard").mockImplementation(() => {
+			if (failure === "throws") throw new Error("clipboard unavailable");
+			return false;
+		});
+		const pager = new RequestDumpPager((view) => ({ ok: true, dump: { content: "private prompt body",
+			metadata: { view, layer: "base-prompt", mediaType: "text/plain", capturedAtMs: 1, state: "assembled" } } }));
+		const controller = new ContractController({ supportedOperations: ["session.request.inspect"], querySessionDomain: async (_operation, payload) => {
+			const result = pager.read(payload);
+			if (!result.ok) throw new Error(result.code);
+			return result.value;
+		} });
+		const write = vi.fn(async () => ({ ok: true as const, path: "/tmp/fallback.txt" }));
+		await withMode(controller, async (mode) => {
+			mode.echoPrompt("/dump base");
+			await vi.waitFor(() => expect(notices(mode)).toContain("File: /tmp/fallback.txt"));
+			expect(notices(mode)).toContain("Clipboard: unavailable; use the exported file.");
+			expect(notices(mode)).not.toContain("private prompt body");
+			expect(mode.overlayComponent).toBeUndefined();
+		}, { promptDumpPort: { write } });
+		expect(write).toHaveBeenCalledTimes(1);
+	});
+
 	it("shows missing capture without producing a substitute file", async () => {
 		class EmptyController extends ContractController {
 			override readonly querySessionDomain = async (operation: string): Promise<SessionDomainResult> => ({ ok: false, status: "failed", code: "provider_request_unavailable", operation });
@@ -71,7 +91,7 @@ describe("/dump raw request export", () => {
 		await withMode(new EmptyController({ supportedOperations: ["session.request.inspect"] }), async (mode) => {
 			mode.echoPrompt("/dump");
 			await vi.waitFor(() => expect(notices(mode)).toContain("No provider request captured"));
-			expect(overlayText(mode)).toBe("");
+			expect(mode.overlayComponent).toBeUndefined();
 		}, { promptDumpPort: { write } });
 		expect(write).not.toHaveBeenCalled();
 	});

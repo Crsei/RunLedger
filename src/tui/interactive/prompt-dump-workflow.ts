@@ -1,10 +1,9 @@
 import { REQUEST_DUMP_VIEWS, type RequestDumpView } from "../../runtime/model-request-snapshots.ts";
 import { readRequestDump, requestDumpErrorMessage } from "../../runtime/request-dump-reader.ts";
 import { querySessionController } from "../adapters/session-domain.ts";
-import { TranscriptOverlayComponent } from "../transcript-view.ts";
 import type { InteractiveModePorts } from "./types.ts";
 
-/** 原始正文交给文件和剪贴板；终端预览是独立的安全投影。 */
+/** 原始正文自动导出到文件和剪贴板，TUI 只显示结果提示。 */
 export class PromptDumpWorkflow {
 	private readonly port: InteractiveModePorts;
 
@@ -31,18 +30,6 @@ export class PromptDumpWorkflow {
 			return;
 		}
 		const { content, metadata } = result.dump;
-		// 大请求完整导出；预览有明确边界，避免阻塞终端布局。
-		const previewLimit = 64 * 1024;
-		const preview = sanitizeForTerminal(content.slice(0, previewLimit));
-		const previewHint = content.length > previewLimit ? " · preview limited to 64 Ki characters; file contains full content" : "";
-		port.showOverlayModal(new TranscriptOverlayComponent({
-			rows: [{ id: "request-dump", kind: "text", content: preview }],
-			timelineGeneration: 0, committedRevision: "request-dump", activeRevision: "request-dump", themeGeneration: 0,
-		}, {
-			title: sanitizeForTerminal(`Dump ${view} · ${metadata.model ?? metadata.layer} · ${metadata.state}`),
-			closeHint: `Read-only preview${previewHint} · Esc close`,
-			getViewportHeight: () => Math.max(4, port.ui.terminal.rows - 2), theme: port.theme, onClose: () => port.closeOverlay(),
-		}), { anchor: "center", variant: "transcript" }, "transcript");
 		let copied = false;
 		try { copied = port.writeClipboard?.(content) ?? false; } catch { /* 文件出口仍可用。 */ }
 		let written = "File: unavailable in this composition.";
@@ -57,7 +44,7 @@ export class PromptDumpWorkflow {
 			`Request: ${metadata.requestId ?? "none"} · Captured: ${new Date(metadata.capturedAtMs).toISOString()}`,
 			...(metadata.latestAttemptId !== undefined && metadata.latestAttemptId !== metadata.requestId
 				? [`Latest attempt: ${metadata.latestAttemptId} · ${metadata.latestAttemptState ?? "unknown"}; it has no captured provider input.`] : []),
-			copied ? "Clipboard: raw content written as OSC 52 (terminal support varies)." : "Clipboard: unavailable; use the exported file.",
+			copied ? "Clipboard: raw content automatically copied via OSC 52 (terminal support varies)." : "Clipboard: unavailable; use the exported file.",
 			written,
 		].join("\n")), "note");
 	}

@@ -27,7 +27,7 @@
 - API `onRequestPrepared(payloadJson, model)` 是只读、best-effort 观测口：传递不可变 JSON 字符串，无法修改发送对象；观测异常不改变执行结果。捕获的是 **provider/SDK 输入对象的 JSON**，不是 HTTP body、SDK 序列化结果、WebSocket frame 或逐重试请求的字节记录。
 - `session.request.inspect` 是 observer 可用的只读 domain operation。输入 `{view, offset?, snapshotId?}`，返回固定快照的正文分块、nextOffset、complete、totalChars、metadata 和 canonical content digest。offset 以 UTF-16 单位计，每块最多 16 Ki 单位，最坏 JSON 转义也低于单帧上限。客户端核对身份、连续 offset、metadata 和整份 digest 后才输出。
 - Owner 保留最近四份导出快照；新请求不会改变已固定的分页内容。被回收的快照返回 `request_dump_snapshot_expired`，不返回截断正文。导出 digest 在固定快照时计算一次。
-- TUI 终端预览单独清洗控制字符，最多显示 64 Ki 字符并明确标注；剪贴板发送原始正文的 OSC 52，终端是否接收仍由终端决定。文件在 `RunledgerLayout.tmp/dump`，原始 `.json`/`.txt` 与 `.metadata.json` 分开保存，目录 0700、文件 0600。正文不清洗、不附加换行；metadata 含正文 UTF-8 SHA-256 与字节数。
+- TUI 不打开提示词预览面板，也不显示正文；运行后自动向剪贴板发送原始正文的 OSC 52，并在通知中说明自动复制结果和导出文件路径。终端是否接收仍由终端决定；剪贴板不可用时明确提示使用导出文件。文件在 `RunledgerLayout.tmp/dump`，原始 `.json`/`.txt` 与 `.metadata.json` 分开保存，目录 0700、文件 0600。正文不清洗、不附加换行；metadata 含正文 UTF-8 SHA-256 与字节数。
 - 快照仅在当前 Session Owner 生命周期内可用；resume/restart 不推测历史原文。显式导出才写文件，不改变 recording 设置、不向 ledger/trace 注入原始请求；默认 digest-only trace 不是原文恢复入口。
 - 旧 `session.prompt.inspect` 保留为 assembler/base 的兼容查询，仍受原单帧预算约束；新 `/dump` 不再消费它，也不通过它退回旧语义。
 
@@ -477,3 +477,10 @@ export interface PromptDumpPort {
 - 此证据属于 Linux 自动化、本地 HTTP provider adapter 与构建后真实 CLI/TUI；不代表付费外部服务验收、系统剪贴板实际接收、人工视觉/IME、macOS/Windows 或 HTTP/WebSocket 逐字节捕获。原始 transport/逐重试快照及跨 Owner 历史保留不在本次实现范围。
 
 共享工作树说明：执行期间并行提交 `65037d5` 已包含 controller 的 `ModelRequestSnapshots` 接线；本修复后续提交补齐 observer、provider、domain、导出与验证文件，不改写该并行提交。
+
+### 9.1 自动复制与无预览交互（2026-09-11）
+
+- `/dump` 各视图自动复制原文并保存文件，只显示复制状态及文件路径，不打开提示词面板、不把正文写入通知。剪贴板失败或抛错时仍保存文件并提示替代路径。
+- `npm run check`、全量 `npm test`、`npm run build` 均退出 0；`tests/tui/prompt-dump.test.ts` 的 8 项回归通过。
+- 构建后真实 PATH CLI / 隔离 tmux + 本地 HTTP fixture：request 369,692 B、system 340,546 B 的文件与 OSC 52 解码内容均逐字节等于 CLI 原文，屏幕无预览/提示词正文，输入框保持可用，Ctrl+D 退出 0。tmux 与 fixture listener 已关闭。证据为 `/tmp/runledger-dump-smoke-y25asnjt/result.json`、`terminal.raw`，脚本 `/tmp/dump-clipboard-smoke.py`；临时证据可能被清理。
+- OSC 52 已写出不等于用户终端/操作系统实际接收；系统剪贴板接收、人工视觉和跨平台验收仍沿用 §9 的边界。
