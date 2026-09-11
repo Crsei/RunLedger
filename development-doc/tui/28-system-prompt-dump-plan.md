@@ -1,6 +1,6 @@
 # `/dump` 命令实施计划（输出组装后的完整系统提示词）
 
-> **状态：** `implemented`（P0–P6 已落地；自动门禁、构建后 CLI 与隔离 `RUNLEDGER_DIR` 的真实 TTY 验收见 §8，`npm run check` 的 current-format 环节被 §8.4 记录的既有缺陷阻塞）
+> **状态：** `implemented`（P0–P6 已落地；自动门禁、构建后 CLI 与隔离 `RUNLEDGER_DIR` 的真实 TTY 验收见 §8，历史门禁阻塞及本次修复见 §8.4/§8.6）
 >
 > **创建日期：** 2026-09-10
 >
@@ -417,13 +417,22 @@ export interface PromptDumpPort {
   - **只读证明（D6）**：同一 owner 会话内在 `/dump` 前后读 SQLite，`session_events` 6 → 6，`session_checkpoints` 0 → 0，`command_attempt_receipts` 0 → 0。
   - **未闭合项**：`PgUp`/`PgDn` 在本机 tmux 2.6 + `TERM=screen-256color` 下不可观测 —— 依次尝试 tmux 键名 `PageUp/PageDown`、`PPage/NPage`、原始 `\x1b[5~`/`\x1b[6~` 与 kitty 编码 `\x1b[57354u`/`\x1b[57355u`，overlay 均未移动，而 `j`/`k`/`G` 正常。组件层的 `pageUp`/`pageDown` 处理已有既有覆盖（`tests/tui/blocks/transcript-view.test.ts` 直接投喂归一化键名），故当前归因于输入层/终端能力，未在本计划范围内改动。human-verified 与跨平台仍未关闭。
 
-### 8.4 既有缺陷：`check:current-format` 与 `npm test` 首环节被文档阻塞
+### 8.4 历史门禁阻塞与审查修正
 
-- 现象：`docs/system-prompts.json:2` 的 `"schemaVersion": 2` 命中 `scripts/check-current-format.ts:44` 的 `schemaVersion` 规则，`npm run check` 第一步即失败；同一原因使 `tests/runtime/current-format-boundary.test.ts` 失败，进而中断 `npm test` 的 bucket 编排。
-- 归属：该文件由本计划之外的提交 `3fa5ceb`（docs: replace prompt inventory with captured session context）引入；工作树对该文件无改动，本计划也不拥有它的内容与分享口径（§P4 与 §6 的 deferred 表）。
-- 影响：`npm run check` 与 `npm test` 不能端到端全绿；本计划用「逐 stage 执行 + 补齐其余 bucket」的方式隔离影响，未伪造通过状态。
-- 最小修复（留给该文件的 owner 决策）：删除该 JSON 的 `schemaVersion` 字段 —— 仓内无消费者（`grep` 仅命中该文件与检查脚本），`docs/*.md` 也未引用该字段。
+- 原先旧提示词 JSON 的数字格式版本字段触发 current-format 门禁，阻断 check/test。
+- 2026-09-11 审查确认，证据补记提交 `78ad6b7` 又在本计划与总索引的说明文字中引入同一禁用标记；此前“全部是既有问题”的归因不完整。即使只修复旧 JSON，门禁仍会失败。
+- 本次删除旧 JSON 中无消费者的数字格式版本字段，同时重写新增文档中的禁用标记说明；不修改检查规则、不跳过门禁。旧 JSON 的抓取内容与分享口径保持独立。
 
 ### 8.5 本计划待提交路径
 
 `src/runtime/types.ts`、`src/runtime/interactive-session-controller.ts`、`src/runtime/session-runtime/{domain-router,domain,session-runtime}.ts`、`src/tui/commands/registry.ts`、`src/tui/interactive-mode.ts`、`src/tui/interactive/{types.ts,prompt-dump-workflow.ts}`、`src/tui/transcript-view.ts`、`src/tui/primitives.ts`、`src/tui/opentui/component-runtime/{index,types}.ts`、`src/cli/{main.ts,control-commands.ts,prompt-dump-artifacts.ts}`、`tests/runtime/interactive-session-controller.test.ts`、`tests/runtime/session-runtime/domain-router.test.ts`、`tests/tui/opentui-component-runtime.bun.test.ts`、`tests/tui/prompt-dump.test.ts`、`tests/cli/{dump-control-command,prompt-dump-artifacts}.test.ts`、`docs/{README,cli,system-prompts}.md`、`development-doc/{00-index.md,tui/00-overview.md,tui/28-system-prompt-dump-plan.md}`。
+
+### 8.6 审查修复（2026-09-11）
+
+- OSC 52：`copyText` 透传底层布尔结果；底层拒绝写出时，notice 报告不可用。此前 §8.3 的成功文案仅证明 UI 显示，不能作为序列确已写出的证据。
+- 请求配置：agent loop 把本次冻结的 thinking 配置传入 assembler；controller 同时捕获 provider/model/thinking，作为 `PromptInspection.selection` 经 domain 返回。overlay、剪贴板和侧车都使用该快照。模型切换不改变旧快照，下一次装配才更新；base 返回当前基座配置。旧响应缺少配置时显示未知，不用当前选择补齐。权限字段明确标为当前权限。
+- 回归覆盖：模型 A/high 请求后切换到 B/low，旧 inspection 保持 A/high，下一次请求更新为 B/low；TUI 文本和侧车读取捕获配置；OSC 52 true/false 两条分支。
+- 本次 `npm run check`（含全部 TS/边界检查和 Rust native 测试）、`npm run build` 均退出 0。聚焦 Vitest 5 files / 53 tests、Bun component runtime 46 tests 通过；构建产物的 OSC 52 拒绝写出探针返回 `false`。
+- 标准 PATH 仍指向本仓 `bin/runledger.js`。新建隔离 HOME/RUNLEDGER_DIR/XDG 后，`runledger dump` 退出 0，base 响应包含 selection；真实 tmux TTY 的 `/dump` 显示 overlay，侧车外层 selection 等于 prompt.selection，文件权限 0600，Esc 后 Ctrl+D 退出 0，独立 tmux server 与临时数据已清理。
+- 人工视觉、系统剪贴板实际内容、真实外部 provider 与跨平台验收仍未关闭；本次 TTY 覆盖 base，assembled 模型切换由自动化 fixture 验证。
+- 全量 `npm test`：首次运行在 `tests/scripts/run-test-buckets.test.ts` 的 executed-cleanup 断言失败；独立重跑该文件 9 tests 和其子命令均通过，未修改测试运行器。随后完整重跑 `npm test` 退出 0，fast/singleton/runtime/security-storage/integration/tui-native 全部执行通过；首次失败保留为偶发观察，未据此扩展修复范围。

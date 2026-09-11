@@ -1,5 +1,4 @@
 {
-  "schemaVersion": 2,
   "description": "在项目目录运行真实 CLI/TUI Session Owner 后，从本地 HTTP 接收端捕获的完整首轮请求。仅刻意省略项目 AGENTS.md 正文。",
   "capture": {
     "capturedAt": "2026-09-10T09:23:31Z",

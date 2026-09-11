@@ -710,7 +710,7 @@ describe("InteractiveSessionController", () => {
 
 	it("records the assembled provider-face prompt and tools after a turn", async () => {
 		const cwd = await tempDir();
-		const { models, p1 } = fixtureModels();
+		const { models, p1, p2 } = fixtureModels();
 		const readTool = {
 			name: "read",
 			description: "Read a file",
@@ -742,6 +742,7 @@ describe("InteractiveSessionController", () => {
 		});
 		await controller.login("p1", "api_key", INTERACTION);
 		await controller.selectModel(p1);
+		await controller.setThinkingLevel("high");
 		await controller.prompt("hi");
 
 		const inspection = controller.promptInspection;
@@ -752,6 +753,14 @@ describe("InteractiveSessionController", () => {
 		expect(inspection.assembledPromptDigest.algorithm).toBe("sha256");
 		expect(inspection.tools.map((tool) => tool.name)).toEqual(["read"]);
 		expect(inspection.tools[0]?.description).toBe("Read a file");
+		expect(inspection.selection).toEqual({ provider: "p1", model: "m1", thinkingLevel: "high" });
+		await controller.login("p2", "api_key", INTERACTION);
+		await controller.selectModel(p2);
+		await controller.setThinkingLevel("low");
+		expect(controller.promptInspection).toBe(inspection);
+		expect(controller.promptInspection.selection).toEqual({ provider: "p1", model: "m1", thinkingLevel: "high" });
+		await controller.prompt("next request");
+		expect(controller.promptInspection.selection).toEqual({ provider: "p2", model: "m2", thinkingLevel: "low" });
 		controller.dispose();
 	});
 

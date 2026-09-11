@@ -10,6 +10,7 @@ const INSPECTION: Record<string, unknown> = {
   systemPrompt: "You are RunLedger's interactive coding agent.\n\nAGENTS: keep replies concise.",
   tools: [{ name: "read", description: "Read a file", parameters: { type: "object", properties: {} } }],
   source: "assembled",
+  selection: { provider: "captured-provider", model: "captured-model", thinkingLevel: "high" },
   turn: 4,
   capturedAtMs: 1_700_000_000_000,
   assembledPromptDigest: { algorithm: "sha256", digest: "a".repeat(64) },
@@ -81,6 +82,8 @@ describe("/dump assembled system prompt", () => {
       expect(overlay).toContain("Prompt source: assembled · turn 4");
       expect(overlay).toContain("- read — Read a file");
       expect(overlay).toContain("Prompt dump");
+      expect(overlay).toContain("Model: captured-model");
+      expect(overlay).toContain("Thinking: high");
       expect(notices(mode)).toContain("Clipboard: unavailable in this terminal");
       expect(notices(mode)).toContain("JSON: /tmp/home/tmp/dump/prompt-dump-contract-session-1.json");
     }, { promptDumpPort, harnessProfile: { id: "standard", version: 1 }, permissionProfile: "default" });
@@ -90,6 +93,7 @@ describe("/dump assembled system prompt", () => {
       kind: "runledger.prompt-dump",
       sessionId: "contract-session",
       permissionProfile: "default",
+      selection: { provider: "captured-provider", model: "captured-model", thinkingLevel: "high" },
       harnessProfile: { id: "standard", version: 1 },
       prompt: { source: "assembled", turn: 4, systemPrompt: INSPECTION.systemPrompt },
     });

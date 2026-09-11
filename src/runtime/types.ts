@@ -342,6 +342,8 @@ export interface LlmContext {
 }
 
 export interface ModelContextAssemblyInput {
+	/** 本次请求冻结的思考配置。 */
+	readonly thinkingLevel?: ModelThinkingLevel;
 	readonly model: Model<Api>;
 	readonly context: LlmContext;
 	readonly sessionId: string;
@@ -371,6 +373,12 @@ export interface PromptInspectionTool {
  * 值取自 assembler 之后的 `LlmContext`，不是渲染层重建。
  */
 export interface PromptInspection {
+	/** 与提示词同次捕获的配置；旧响应缺失时不得用当前选择补齐。 */
+	readonly selection?: {
+		readonly provider?: string;
+		readonly model?: string;
+		readonly thinkingLevel: string;
+	};
 	readonly systemPrompt: string;
 	readonly tools: readonly PromptInspectionTool[];
 	/** assembled = 真实 turn 的 assembler 输出；base = 尚未发生 turn，回退 harness 基座提示词。 */

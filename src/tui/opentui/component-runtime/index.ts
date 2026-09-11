@@ -153,8 +153,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   let previousNativeCellsUpdated = 0;
   const copySelection = (selectedText: string | undefined): boolean => {
     if (selectedText === undefined || selectedText.length === 0) return false;
-    renderer.copyToClipboardOSC52(selectedText);
-    return true;
+    return renderer.copyToClipboardOSC52(selectedText);
   };
   const onSelection = (): void => {
     copySelection(renderer.getSelection()?.getSelectedText());

@@ -505,6 +505,8 @@ describe("OpenTUI component projection", () => {
 
       expect(runtime.copyText("## System Prompt\nassembled body")).toBe(true);
       expect(copy).toHaveBeenCalledWith("## System Prompt\nassembled body");
+      copy.mockReturnValue(false);
+      expect(runtime.copyText("unsupported terminal")).toBe(false);
       expect(setup.renderer.getSelection()?.getSelectedText() ?? "").toBe("");
     } finally {
       copy.mockRestore();

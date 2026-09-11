@@ -51,12 +51,12 @@ export class PromptDumpWorkflow {
 			port.showNotice("/dump failed: session.prompt.inspect returned a malformed result", "error");
 			return;
 		}
-		const selection = port.controller?.currentSelection;
+		const selection = inspection.selection;
 		const header: PromptDumpHeader = {
 			harnessProfile: port.harnessProfile === undefined ? undefined : `harness ${port.harnessProfile.id}@${port.harnessProfile.version}`,
 			permissionProfile: port.permissionProfile,
-			provider: selection?.provider ?? selection?.model?.provider,
-			model: selection?.model?.id,
+			provider: selection?.provider,
+			model: selection?.model,
 			thinkingLevel: selection?.thinkingLevel,
 		};
 		const text = renderPromptDumpText(inspection, header);
@@ -94,17 +94,32 @@ export function parsePromptInspection(value: Record<string, unknown>): PromptIns
 			return [{ name: record.name, description: record.description, parameters: record.parameters }];
 		})
 		: [];
+	const selection = parsePromptSelection(value.selection);
 	const basePromptDigest = parseDigest(value.basePromptDigest);
 	const compositionDigest = parseDigest(value.compositionDigest);
 	return {
 		systemPrompt,
 		tools,
+		...(selection === undefined ? {} : { selection }),
 		source,
 		...(typeof value.turn === "number" ? { turn: value.turn } : {}),
 		...(typeof value.capturedAtMs === "number" ? { capturedAtMs: value.capturedAtMs } : {}),
 		assembledPromptDigest: digest,
 		...(basePromptDigest === undefined ? {} : { basePromptDigest }),
 		...(compositionDigest === undefined ? {} : { compositionDigest }),
+	};
+}
+
+function parsePromptSelection(value: unknown): PromptInspection["selection"] {
+	if (typeof value !== "object" || value === null) return undefined;
+	const record = value as Record<string, unknown>;
+	if (typeof record.thinkingLevel !== "string") return undefined;
+	if (record.provider !== undefined && typeof record.provider !== "string") return undefined;
+	if (record.model !== undefined && typeof record.model !== "string") return undefined;
+	return {
+		...(typeof record.provider === "string" ? { provider: record.provider } : {}),
+		...(typeof record.model === "string" ? { model: record.model } : {}),
+		thinkingLevel: record.thinkingLevel,
 	};
 }
 
@@ -123,10 +138,10 @@ export function sanitizeForTerminal(text: string): string {
 export function renderPromptDumpText(inspection: PromptInspection, header: PromptDumpHeader): string {
 	const lines: string[] = ["## System Prompt", "", sanitizeForTerminal(inspection.systemPrompt), "", "## Configuration", ""];
 	if (header.harnessProfile !== undefined) lines.push(`Harness: ${header.harnessProfile}`);
-	if (header.permissionProfile !== undefined) lines.push(`Permissions: ${header.permissionProfile}`);
+	if (header.permissionProfile !== undefined) lines.push(`Current permissions: ${header.permissionProfile}`);
 	lines.push(`Provider: ${header.provider ?? "(none)"}`);
 	lines.push(`Model: ${header.model ?? "(none)"}`);
-	lines.push(`Thinking: ${header.thinkingLevel ?? "off"}`);
+	lines.push(`Thinking: ${header.thinkingLevel ?? "unknown"}`);
 	lines.push(`Prompt source: ${inspection.source}${inspection.turn === undefined ? "" : ` · turn ${inspection.turn}`}`);
 	if (inspection.capturedAtMs !== undefined) lines.push(`Captured: ${new Date(inspection.capturedAtMs).toISOString()}`);
 	lines.push(`Assembled digest: ${shortDigest(inspection.assembledPromptDigest)}`);
@@ -172,7 +187,7 @@ async function writeSidecar(port: InteractiveModePorts, inspection: PromptInspec
 		selection: {
 			...(header.provider === undefined ? {} : { provider: header.provider }),
 			...(header.model === undefined ? {} : { model: header.model }),
-			thinkingLevel: header.thinkingLevel ?? "off",
+			thinkingLevel: header.thinkingLevel ?? "unknown",
 		},
 		prompt: inspection,
 	};

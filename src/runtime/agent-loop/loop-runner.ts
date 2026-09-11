@@ -205,7 +205,7 @@ export async function runAgentLoop(
         tools: context.tools,
       };
       if (config.modelContextAssembler !== undefined) {
-        const assembled = await config.modelContextAssembler({ model: loopModel, context: llmContext, sessionId, turn });
+        const assembled = await config.modelContextAssembler({ model: loopModel, context: llmContext, sessionId, turn, thinkingLevel: loopReasoning ?? "off" });
         llmContext = assembled.context;
         await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
       }

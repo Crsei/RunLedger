@@ -352,6 +352,11 @@ export class InteractiveSessionController {
       systemPrompt: this.systemPrompt,
       tools: this.tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
       source: "base",
+      selection: {
+        ...(this.selection.provider === undefined ? {} : { provider: this.selection.provider }),
+        ...(this.selection.model === undefined ? {} : { model: this.selection.model.id }),
+        thinkingLevel: this.selection.thinkingLevel,
+      },
       assembledPromptDigest: runtimeDigest(this.systemPrompt),
     };
   }
@@ -550,6 +555,7 @@ export class InteractiveSessionController {
           systemPrompt,
           tools: (assembled.context.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
           source: "assembled",
+          selection: { provider: input.model.provider, model: input.model.id, thinkingLevel: input.thinkingLevel ?? "off" },
           turn: input.turn,
           capturedAtMs: Date.now(),
           assembledPromptDigest: runtimeDigest(systemPrompt),
