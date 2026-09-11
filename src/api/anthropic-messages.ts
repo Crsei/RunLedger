@@ -14,6 +14,7 @@
  * 顶层 adapter export 与 lazy adapter import 路径不变。
  */
 
+import { notifyRequestPrepared } from "./request-observer.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages.js";
 import { calculateCost } from "../models.ts";
@@ -103,6 +104,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
 			}
+			await notifyRequestPrepared(options, { ...params, stream: true }, model);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),

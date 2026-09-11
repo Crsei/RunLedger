@@ -173,6 +173,8 @@ export interface StreamOptions {
 	 * Return undefined to keep the payload unchanged.
 	 */
 	onPayload?: (payload: unknown, model: Model<Api>) => unknown | undefined | Promise<unknown | undefined>;
+	/** 修改完成后的 provider/SDK 输入 JSON；不是 HTTP/WebSocket 原始字节。只读、best effort。 */
+	onRequestPrepared?: (payloadJson: string, model: Model<Api>) => void | Promise<void>;
 	/**
 	 * Optional callback invoked after an HTTP response is received and before
 	 * its body stream is consumed.

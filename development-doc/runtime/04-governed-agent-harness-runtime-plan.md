@@ -654,3 +654,12 @@ contract-only 提交至少运行定向 contract tests、`npm run check` 和 `git
 - [x] 定向 contract tests、完整 gates、Markdown links 与 `git diff --check` 全绿并附证据。
 
 只有以上 contract 验收完成后,才能对外描述为“Runtime 通用契约与用户级保存位置已冻结”。这不等于目录迁移、任何行为实现、生产 adapter、安全强制、持久化 backend 或客户端已经交付。
+
+
+## 请求快照只读导出（2026-09-11）
+
+行为与验收唯一入口为 [Plan 28 当前合同](../tui/28-system-prompt-dump-plan.md)。公共数据以 `src/runtime/model-request-observer.ts`、`model-request-snapshots.ts` 为准：`ModelRequestObservation` 区分 assembled/prepared/response/finished，`RequestDumpMetadata` 提供 requestId/runId/turn、requestKind、provider/model/api、捕获层级及状态，`RequestDump` 将正文字符串与元数据分离。
+
+`session.request.inspect` 作为只读 domain operation，经现有 Session envelope、generation 与 capability 协商访问。payload 为 `{view: request|system|assembled|base, offset?: number, snapshotId?: string}`；分页响应为 `{snapshotId, offset, nextOffset, totalChars, complete, chunk, contentDigest, metadata}`，offset 以 UTF-16 单位计。第一次读取固定正文和 metadata，后续必须提交该 snapshotId。响应不暴露 native artifact 路径；CLI 组合层才持有本地导出路径。缺失/已回收快照明确失败，不做 base fallback 或静默截断。
+
+provider-input 是 adapter/SDK 输入 JSON，不是 transport 字节合同。它不改变 ledger/trace authority；快照为 Session Owner 生命周期内存，原文持久化仅由显式导出触发。旧 `session.prompt.inspect` 继续表示 assembler/base 投影，不代表实际 provider 输入。

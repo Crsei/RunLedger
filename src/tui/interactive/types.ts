@@ -27,26 +27,17 @@ import type { TimelineEvent } from "../timeline/types.ts";
 import type { TuiPreferencesPort, TuiShimmerMode } from "../preferences/types.ts";
 import type { InteractiveSessionAdapter } from "../adapters/interactive-session.ts";
 import type { InteractiveExitIntent } from "../interactive-mode.ts";
-import type { PromptInspection } from "../../runtime/types.ts";
+import type { RequestDump } from "../../runtime/model-request-snapshots.ts";
 
-/**
- * `/dump` 侧车文档：与 overlay 文本同源，但保留原始文本（不做终端清洗）。
- * 以 `kind` 作为格式判别，不引入数字 schema 字段（见 `scripts/check-current-format.ts`）；
- * `docs/system-prompts.json` 是另一套手工抓取口径，不共用。
- */
-export interface PromptDumpDocument {
-	readonly kind: "runledger.prompt-dump";
+/** 原始正文与说明分开；文件写入不增加标题、不清洗、不追加换行。 */
+export interface PromptDumpDocument extends RequestDump {
+	readonly kind: "runledger.request-dump";
 	readonly sessionId: string;
-	readonly capturedAtMs: number;
-	readonly harnessProfile?: { readonly id: string; readonly version: number };
-	readonly permissionProfile?: string;
-	readonly selection: { readonly provider?: string; readonly model?: string; readonly thinkingLevel: string };
-	readonly prompt: PromptInspection;
 }
 
 /** CLI 组合层注入的写盘端口；TUI 不持有 layout/fs。 */
 export interface PromptDumpPort {
-	write(doc: PromptDumpDocument): Promise<{ readonly ok: true; readonly path: string } | { readonly ok: false; readonly code: string }>;
+	write(doc: PromptDumpDocument): Promise<{ readonly ok: true; readonly path: string; readonly metadataPath?: string } | { readonly ok: false; readonly code: string }>;
 }
 
 export type WorkflowKey =

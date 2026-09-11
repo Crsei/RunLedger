@@ -15,6 +15,7 @@
  * 顶层 adapter export 与 lazy adapter import 路径不变。
  */
 
+import { notifyRequestPrepared } from "./request-observer.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -116,6 +117,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
+			await notifyRequestPrepared(options, body, model);
 			const codexSessionId = clampOpenAIPromptCacheKey(options?.sessionId);
 			const websocketRequestId = codexSessionId || uuidv7();
 			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCliPromptDumpPort } from "../../src/cli/prompt-dump-artifacts.ts";
 import { buildRunledgerLayout, type RunledgerLayout } from "../../src/runtime/contracts/storage-layout.ts";
-import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
+import { createHash } from "node:crypto";
 import type { PromptDumpDocument } from "../../src/tui/interactive/types.ts";
 
 const cleanup: string[] = [];
@@ -23,17 +23,9 @@ async function fixture(): Promise<{ home: string; layout: RunledgerLayout }> {
 
 function document(sessionId: string): PromptDumpDocument {
 	return {
-		kind: "runledger.prompt-dump",
-		sessionId,
-		capturedAtMs: 1_700_000_000_000,
-		selection: { thinkingLevel: "high" },
-		prompt: {
-			systemPrompt: "assembled prompt",
-			tools: [{ name: "read", description: "Read a file", parameters: { type: "object" } }],
-			source: "assembled",
-			turn: 2,
-			assembledPromptDigest: runtimeDigest("assembled prompt"),
-		},
+		kind: "runledger.request-dump", sessionId,
+		content: "raw\u001b\u0085中文\r\nno trailing newline",
+		metadata: { view: "system", layer: "provider-input", mediaType: "text/plain", capturedAtMs: 1_700_000_000_000, state: "completed", requestId: "request-test" },
 	};
 }
 
@@ -46,9 +38,13 @@ describe("createCliPromptDumpPort", () => {
 		expect(result.path.startsWith(join(home, "tmp", "dump"))).toBe(true);
 		expect((await stat(result.path)).mode & 0o777).toBe(0o600);
 		expect((await stat(join(home, "tmp", "dump"))).mode & 0o777).toBe(0o700);
-		expect(JSON.parse(await readFile(result.path, "utf8"))).toMatchObject({
-			kind: "runledger.prompt-dump",
-			prompt: { systemPrompt: "assembled prompt", source: "assembled" },
+		expect(await readFile(result.path, "utf8")).toBe(document("sess_01H").content);
+		expect(result.metadataPath).toBeDefined();
+		if (result.metadataPath === undefined) throw new Error("missing metadata file");
+		expect((await stat(result.metadataPath)).mode & 0o777).toBe(0o600);
+		expect(JSON.parse(await readFile(result.metadataPath, "utf8"))).toMatchObject({
+			kind: "runledger.request-dump", layer: "provider-input", state: "completed", requestId: "request-test",
+			contentSha256: createHash("sha256").update(document("sess_01H").content).digest("hex"),
 		});
 	});
 

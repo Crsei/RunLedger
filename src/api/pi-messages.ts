@@ -9,6 +9,7 @@
  * models.json custom provider with `"api": "pi-messages"`.
  */
 
+import { notifyRequestPrepared } from "./request-observer.ts";
 import type {
 	AssistantMessage,
 	AssistantMessageEvent,
@@ -379,6 +380,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 			if (nextPayload !== undefined) {
 				payload = nextPayload;
 			}
+			await notifyRequestPrepared(options, payload, model);
 
 			const response = await fetchWithProviderProxy(
 				model.provider,

@@ -313,13 +313,14 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       category: "ui",
       policy: READONLY_POLICY,
     }),
-    command("dump", "Dump the assembled system prompt", 28, {
+    command("dump", "Export request or system content: /dump [request|system|assembled|base]", 28, {
+      supportsInlineArgs: true,
       actionType: "ui.dump",
       category: "ui",
       policy: READONLY_POLICY,
       // 只读投影：turn 进行中读到的就是本次请求实际使用的提示词,不设 idle 门控。
-      requiredOperation: "session.prompt.inspect",
-      unavailableHint: "Use /trajectory to inspect recorded runtime events instead.",
+      requiredOperation: "session.request.inspect",
+      unavailableHint: "This runtime does not expose request snapshots.",
     }),
   ];
 }

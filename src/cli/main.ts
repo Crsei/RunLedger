@@ -1,3 +1,5 @@
+import { readRequestDump, requestDumpErrorMessage } from "../runtime/request-dump-reader.ts";
+import type { RequestDumpView } from "../runtime/model-request-snapshots.ts";
 import type { RuntimeSelectionOverrides } from "../runtime/interactive-session-controller.ts";
 import { createKimiCodeDeviceIdProvider } from "../storage/kimi-device-id.ts";
 /**
@@ -630,6 +632,19 @@ export async function runControlCommand(
 	const correlationId = `control_${Date.now().toString(36)}`;
 	let effectSequence = 0;
 	const directRequest = controlCommandRequest(command);
+	if (command.group === "dump") {
+		const result = await readRequestDump(directRequest.body.view as RequestDumpView, (payload) => controller.querySessionDomain("session.request.inspect", payload, {
+			correlationId, effectId: `control_dump_${++effectSequence}`,
+		}));
+		if (!result.ok) {
+			process.stderr.write(`${requestDumpErrorMessage(result.code).replaceAll("/dump", "runledger dump")}\n`);
+			process.exitCode = 1;
+			return;
+		}
+		process.stderr.write(`${JSON.stringify(result.dump.metadata)}\n`);
+		process.stdout.write(result.dump.content);
+		return;
+	}
 	if (!directRequest.mutation) {
 		const response = await controller.querySessionDomain(directRequest.operation, directRequest.body, {
 			correlationId,

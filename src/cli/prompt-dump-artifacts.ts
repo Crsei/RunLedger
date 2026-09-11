@@ -7,7 +7,7 @@
  * 检查 → `wx`+0600 临时文件 → rename → chmod。
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { RUNLEDGER_DIRECTORY_MODE, RUNLEDGER_FILE_MODE, type RunledgerLayout } from "../runtime/contracts/storage-layout.ts";
@@ -19,27 +19,39 @@ export function createCliPromptDumpPort(layout: RunledgerLayout): PromptDumpPort
 	return {
 		write: async (document) => {
 			const directory = join(layout.tmp, DIRECTORY_NAME);
-			let temporary: string | undefined;
+			const temporary: string[] = [];
+			const published: string[] = [];
+			let complete = false;
 			try {
 				await mkdir(directory, { recursive: true, mode: RUNLEDGER_DIRECTORY_MODE });
-				const metadata = await lstat(directory);
-				if (metadata.isSymbolicLink()) return { ok: false, code: "prompt_dump_directory_symlink" };
+				const directoryStat = await lstat(directory);
+				if (directoryStat.isSymbolicLink()) return { ok: false, code: "prompt_dump_directory_symlink" };
 				const canonicalDirectory = await realpath(directory);
 				const canonicalHome = await realpath(layout.home);
 				if (canonicalDirectory !== join(canonicalHome, "tmp", DIRECTORY_NAME)) {
 					return { ok: false, code: "prompt_dump_directory_escapes_home" };
 				}
 				await chmod(directory, RUNLEDGER_DIRECTORY_MODE);
-				const target = join(directory, `prompt-dump-${fileSafeSegment(document.sessionId)}-${Date.now()}.json`);
-				temporary = join(directory, `.prompt-dump.${randomUUID()}.tmp`);
-				await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, { flag: "wx", mode: RUNLEDGER_FILE_MODE });
-				await rename(temporary, target);
-				await chmod(target, RUNLEDGER_FILE_MODE);
-				return { ok: true, path: target };
+				const stem = `request-dump-${fileSafeSegment(document.sessionId)}-${Date.now()}-${randomUUID()}`;
+				const target = join(directory, `${stem}.${document.metadata.mediaType === "text/plain" ? "txt" : "json"}`);
+				const metadataPath = join(directory, `${stem}.metadata.json`);
+				const metadata = JSON.stringify({ kind: document.kind, sessionId: document.sessionId, exportedAtMs: Date.now(),
+					...document.metadata, contentSha256: createHash("sha256").update(document.content, "utf8").digest("hex"),
+					contentBytes: Buffer.byteLength(document.content, "utf8") }, null, 2);
+				for (const [path, content] of [[target, document.content], [metadataPath, metadata]] as const) {
+					const pending = join(directory, `.request-dump.${randomUUID()}.tmp`);
+					temporary.push(pending);
+					await writeFile(pending, content, { flag: "wx", mode: RUNLEDGER_FILE_MODE });
+					await rename(pending, path);
+					published.push(path);
+					await chmod(path, RUNLEDGER_FILE_MODE);
+				}
+				complete = true;
+				return { ok: true, path: target, metadataPath };
 			} catch {
 				return { ok: false, code: "prompt_dump_write_failed" };
 			} finally {
-				if (temporary !== undefined) await unlink(temporary).catch(() => undefined);
+				for (const path of [...temporary, ...(complete ? [] : published)]) await unlink(path).catch(() => undefined);
 			}
 		},
 	};

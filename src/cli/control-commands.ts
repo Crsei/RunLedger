@@ -88,7 +88,7 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	plan: new Set(["inspect", "enter", "activate", "write", "request_approval", "approve", "reject", "cancel", "settle_exit"]),
 	compact: new Set(["run", "list"]),
 	context: new Set(["inspect", "assemble"]),
-	dump: new Set(["inspect"]),
+	dump: new Set(["inspect", "request", "system", "assembled", "base"]),
 	memory: new Set(["search", "get", "projection", "approve", "reject", "revoke"]),
 	remember: new Set(["propose"]),
 };
@@ -112,6 +112,7 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	if (!ACTIONS[group].has(rawAction)) return { ok: false, error: `unsupported ${group} action: ${rawAction}` };
 	const args = positional.slice(group === "remember" && positional[1] !== "propose" ? 1 : 2);
 	const key = `${group}.${rawAction}`;
+	if (group === "dump" && args.length > 0) return { ok: false, error: "Usage: runledger dump [request|system|assembled|base]" };
 	if ((group === "plugin" && ["enable", "disable", "trust", "untrust"].includes(rawAction)) && args.length < 1) {
 		return { ok: false, error: `${rawAction} requires a plugin id` };
 	}
@@ -166,6 +167,13 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 		case "skill.trust":
 		case "skill.untrust":
 			body.skillId = command.args[0];
+			break;
+		case "dump.inspect":
+		case "dump.request":
+		case "dump.system":
+		case "dump.assembled":
+		case "dump.base":
+			body.view = command.action === "inspect" ? "request" : command.action;
 			break;
 		case "skill.provider": {
 			const sub = command.args[0];
@@ -239,7 +247,7 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 	}
 	return {
 		operation: key === "security.inspect" ? "session.security.inspect"
-			: key === "dump.inspect" ? "session.prompt.inspect"
+			: command.group === "dump" ? "session.request.inspect"
 			: key === "plugin.reload" ? "extension.reload"
 			: key === "remember.propose" ? "memory.propose"
 			: (key === "plan.approve" || key === "plan.reject") ? "plan.resolve_approval"
@@ -304,7 +312,7 @@ export function controlCommandHelp(): string {
 		"    plugin inspect / mcp inspect are unavailable in standard Sessions; use plugin list / mcp list|doctor.",
 		"  runledger plan inspect|enter|activate|write|request_approval|approve|reject <approval-id>|cancel|settle_exit",
 		"  runledger compact list|run '<source-range-json>' <transcript>",
-		"  runledger dump   (assembled system prompt + tool descriptors as JSON)",
+		"  runledger dump [request|system|assembled|base]   (raw content to stdout; metadata to stderr)",
 		"  runledger memory search|get|approve|reject|revoke   runledger remember <text>",
 		"    worktree, compact, context, memory/remember and plan mutations are unavailable in standard Sessions.",
 	].join("\n");

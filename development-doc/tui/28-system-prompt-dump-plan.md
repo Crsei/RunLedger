@@ -1,13 +1,40 @@
-# `/dump` 命令实施计划（输出组装后的完整系统提示词）
+# `/dump` 请求快照与原始内容导出
 
-> **状态：** `implemented`（P0–P6 已落地；自动门禁、构建后 CLI 与隔离 `RUNLEDGER_DIR` 的真实 TTY 验收见 §8，历史门禁阻塞及本次修复见 §8.4/§8.6）
+> **状态：** `implemented`；2026-09-11 原始请求导出修复已通过本地 check/test/build、HTTP 对照与构建后 CLI/TUI 验证，详见「当前合同」与 §9；旧实现证据保留在 §8。
 >
 > **创建日期：** 2026-09-10
 >
 > **参考实现：** oh-my-pi `omp 18.1.14` —— 本机安装路径 `~/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/src/` 下的 `slash-commands/builtin-collaboration.ts`（`dump` 命令）、`session/agent-session.ts`（`formatSessionAsText` / `dumpLlmRequestToTmpDir`）、`session/session-dump-format.ts`（`renderDumpHeader`）。上游仓库对应路径为 `packages/coding-agent/src/<同上>`。
 >
-> **权威边界：** 本计划拥有 `/dump` 命令本体、只读 domain operation `session.prompt.inspect`、组装结果的运行时捕获点、剪贴板写出 port、侧车 JSON 端口与 headless 对应物。
+> **权威边界：** 本计划拥有 `/dump` 命令、`session.request.inspect` 快照读取、兼容 `session.prompt.inspect` 查询、请求观测与原文导出 port、剪贴板和 headless 对应物；公共 DTO 同步 Runtime 04。
 > 不拥有：Ctrl+T transcript 投影与 exploration 摘要（[24](24-codex-session-display-replication-plan.md) / [26](26-codex-exploration-output-summary-plan.md)）、OpenTUI renderer 与 selection/OSC 52 原语（[17](17-opentui-refactor-plan.md) / [18](18-opentui-streaming-performance-ux-plan.md)）、主题色槽（[27](27-configurable-ui-theme-and-thinking-color-plan.md)）、slash 命令注册表与输入期 popup 链路（[20](20-codex-slash-command-adaptation-plan.md)）、resident Host 路径（[runtime 06](../runtime/06-session-owner-runtime-replacement-plan.md)）、各 provider 的 wire 工具 schema 编码（`src/api/**`）。
+
+## 当前合同（2026-09-11 修复）
+
+本节替代下文旧 P0–P6 的当前产品语义；旧章节及 §8 保留为实施历史。原实现只捕获 assembler 输出，并把报告复制到剪贴板，不能代表最终 provider 输入。当前修复把请求观测放到公共 Agent loop 与 provider adapter，Session Owner 持有内存快照，CLI/TUI 只读取和导出。
+
+| 命令 | 输出 |
+|---|---|
+| `/dump`、`/dump request` | 最近一次主交互请求在 provider 编码及 `onPayload` 修改完成后的 JSON；含真实工具 schema、messages/input 与生成参数 |
+| `/dump system` | 从同一 provider JSON 读取 system 字段；单字符串原值输出，多块/多个位置保留 JSON 结构；无字段时明确 unavailable |
+| `/dump assembled` | 最近一次装配后的 context JSON，包括完整选中 messages 和 runtime 工具描述；与 provider 输入分层标注 |
+| `/dump base` | 显式读取基座提示词原文；不会冒充已发送请求 |
+| `runledger dump [request\|system\|assembled\|base]` | 相同快照读取语义；stdout 仅正文，不加标题、envelope 或换行；metadata 写 stderr；`inspect` 保留为 request 别名 |
+
+- 运行时为每次逻辑模型请求分配独立 requestId，并记录 runId、turn、requestKind、provider/model/api、thinkingLevel、捕获时间及状态。turn 在不同 run 可重复，不能独立作为请求身份。
+- 状态为 `assembled`、`prepared`、`response-received`、`completed`、`error`、`aborted`；它描述可观测请求生命周期。`prepared` 不证明已发送，`error/aborted` 不推断服务端是否收到。无 provider 快照时明确 unavailable；后续拒绝/取消不覆盖上一份 provider 快照，metadata 同时指出最新 attempt。
+- `auto-title`、`idle-recap` 不覆盖主交互快照。child 不共享主 controller 的快照容器；本期没有子请求历史选择器。
+- API `onRequestPrepared(payloadJson, model)` 是只读、best-effort 观测口：传递不可变 JSON 字符串，无法修改发送对象；观测异常不改变执行结果。捕获的是 **provider/SDK 输入对象的 JSON**，不是 HTTP body、SDK 序列化结果、WebSocket frame 或逐重试请求的字节记录。
+- `session.request.inspect` 是 observer 可用的只读 domain operation。输入 `{view, offset?, snapshotId?}`，返回固定快照的正文分块、nextOffset、complete、totalChars、metadata 和 canonical content digest。offset 以 UTF-16 单位计，每块最多 16 Ki 单位，最坏 JSON 转义也低于单帧上限。客户端核对身份、连续 offset、metadata 和整份 digest 后才输出。
+- Owner 保留最近四份导出快照；新请求不会改变已固定的分页内容。被回收的快照返回 `request_dump_snapshot_expired`，不返回截断正文。导出 digest 在固定快照时计算一次。
+- TUI 终端预览单独清洗控制字符，最多显示 64 Ki 字符并明确标注；剪贴板发送原始正文的 OSC 52，终端是否接收仍由终端决定。文件在 `RunledgerLayout.tmp/dump`，原始 `.json`/`.txt` 与 `.metadata.json` 分开保存，目录 0700、文件 0600。正文不清洗、不附加换行；metadata 含正文 UTF-8 SHA-256 与字节数。
+- 快照仅在当前 Session Owner 生命周期内可用；resume/restart 不推测历史原文。显式导出才写文件，不改变 recording 设置、不向 ledger/trace 注入原始请求；默认 digest-only trace 不是原文恢复入口。
+- 旧 `session.prompt.inspect` 保留为 assembler/base 的兼容查询，仍受原单帧预算约束；新 `/dump` 不再消费它，也不通过它退回旧语义。
+
+实现入口：`src/runtime/model-request-observer.ts`、`model-request-snapshots.ts`、`agent-loop/loop-runner.ts`、`src/api/request-observer.ts` 与各文本 provider；协议分页位于 `session-runtime/request-dump-pager.ts`，共享客户端位于 `runtime/request-dump-reader.ts`。
+
+验证记录见 §9。
+
 
 ## 0. 执行结论
 
@@ -436,3 +463,17 @@ export interface PromptDumpPort {
 - 标准 PATH 仍指向本仓 `bin/runledger.js`。新建隔离 HOME/RUNLEDGER_DIR/XDG 后，`runledger dump` 退出 0，base 响应包含 selection；真实 tmux TTY 的 `/dump` 显示 overlay，侧车外层 selection 等于 prompt.selection，文件权限 0600，Esc 后 Ctrl+D 退出 0，独立 tmux server 与临时数据已清理。
 - 人工视觉、系统剪贴板实际内容、真实外部 provider 与跨平台验收仍未关闭；本次 TTY 覆盖 base，assembled 模型切换由自动化 fixture 验证。
 - 全量 `npm test`：首次运行在 `tests/scripts/run-test-buckets.test.ts` 的 executed-cleanup 断言失败；独立重跑该文件 9 tests 和其子命令均通过，未修改测试运行器。随后完整重跑 `npm test` 退出 0，fast/singleton/runtime/security-storage/integration/tui-native 全部执行通过；首次失败保留为偶发观察，未据此扩展修复范围。
+
+
+## 9. 原始请求导出修复验收（2026-09-11）
+
+- `npm run check`、`npm test`、`npm run build` 均退出 0。全量测试跑完 fast、singleton、runtime、security-storage、integration、tui-native；最后补充的多 system 消息、UTF-16 分块边界和会话失效保护另经 fresh check 与聚焦验证。最终聚焦 `tests/runtime/request-dump.test.ts`、`tests/tui/prompt-dump.test.ts`、两个 CLI dump 测试及 `tests/runtime/interactive-session-controller.test.ts` 为 **5 files / 43 tests passed**。
+- 完整日志保留在本机 `/tmp/runledger-dump-check-delivery.log`、`/tmp/runledger-dump-test-final.log`、`/tmp/runledger-dump-build-final.log`、`/tmp/runledger-dump-focused-delivery.log`。初次类型检查暴露的新 fixture 类型缺项已修复，不作为当前通过证据。
+- 本地 HTTP 对照覆盖 OpenAI Completions、OpenAI Responses、Anthropic Messages：provider 编码与 `onPayload` 替换后的导出 JSON 等于服务端收到的 body；Anthropic OAuth 合成凭据路径验证额外 system 身份块被捕获，且原始凭据不进入正文。观测回调失败不改变 provider 成功结果。
+- 回归覆盖：装配后取消但未 dispatch、后续请求失败时保留上一份 provider 快照并显示最新 attempt、旁路 auto-title 不覆盖主请求、多个 system/developer 消息保留原生结构、缺失 system 不回填 base、超过 192 KiB 的 Unicode/控制字符完整分页、UTF-16 代理项跨页边界、跨页快照混合拒绝、原文文件/剪贴板与安全预览分离、切换会话后丢弃延迟导出。
+- **构建后真实 PATH CLI/TUI**：`/home/nzq/.npm-global/bin/runledger` 指向本仓 `bin/runledger.js`，`npm ls -g --depth=0` 核对链接；独立 HOME/RUNLEDGER_DIR/XDG/workspace，143×42 的独立 tmux，配置仅指向 loopback 合成 provider，关闭 auto-title/recap。从 `/model` 选择动态本地模型后发出一次主请求，再从同一 Session Owner 分别执行 headless `dump request/system` 与 TUI `/dump system`、`/dump`。
+- 请求 JSON **369,692 B**，system **340,546 B**，均超过旧单帧预算；服务端 body 与 CLI/TUI 请求对象相等，system UTF-8 字节与 CLI stdout/TUI `.txt` 完全一致，metadata SHA-256 与正文一致，原文文件权限 0600。无请求时 `/dump` 明确 unavailable。TUI 经 Esc、Ctrl+D 退出 0，独占 tmux 与 loopback listener 均确认关闭。
+- 本机验收目录：`/tmp/runledger-dump-smoke-uzxugu7i`，含 `result.json`、请求 body、CLI stdout/stderr、TTY 帧和原文文件；驱动脚本为 `/tmp/runledger-dump-smoke.py`。临时证据可能被系统清理，可重复的 provider/分页/CLI/TUI 回归已在上述测试文件中保留。
+- 此证据属于 Linux 自动化、本地 HTTP provider adapter 与构建后真实 CLI/TUI；不代表付费外部服务验收、系统剪贴板实际接收、人工视觉/IME、macOS/Windows 或 HTTP/WebSocket 逐字节捕获。原始 transport/逐重试快照及跨 Owner 历史保留不在本次实现范围。
+
+共享工作树说明：执行期间并行提交 `65037d5` 已包含 controller 的 `ModelRequestSnapshots` 接线；本修复后续提交补齐 observer、provider、domain、导出与验证文件，不改写该并行提交。

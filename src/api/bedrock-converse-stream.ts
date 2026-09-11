@@ -14,6 +14,7 @@
  * 顶层 adapter export 与 lazy adapter import 路径不变。
  */
 
+import { notifyRequestPrepared } from "./request-observer.ts";
 import { ConverseStreamCommand, ConversationRole, type BedrockRuntimeClientConfig } from "@aws-sdk/client-bedrock-runtime";
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
@@ -172,6 +173,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			if (nextCommandInput !== undefined) {
 				commandInput = nextCommandInput as typeof commandInput;
 			}
+			await notifyRequestPrepared(options, commandInput, model);
 			const command = new ConverseStreamCommand(commandInput);
 
 			const response = await client.send(command, { abortSignal: options.signal });

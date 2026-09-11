@@ -7,6 +7,7 @@
  * 共享同一 `fire` 闭包与循环变量,拆分会破坏原子性(计划 §3 例外记录)。
  */
 
+import { observeModelRequest } from "../model-request-observer.ts";
 import type { TraceModelHandle } from "../trace/recorder.ts";
 import { newId } from "../ledger/types.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
@@ -174,6 +175,8 @@ export async function runAgentLoop(
       break;
     }
     turn++;
+    const requestId = `request-${newId()}`;
+    const observe = (event: Parameters<typeof observeModelRequest>[1]) => observeModelRequest(config.modelRequestObserver, event);
     const tStart = Date.now();
     await fire(
       { type: "turn_start", timestamp: tStart, turn },
@@ -187,6 +190,7 @@ export async function runAgentLoop(
     );
 
     const finishUnrequestedTurn = async (stopReason: "error" | "aborted"): Promise<void> => {
+      observe({ kind: "finished", requestId, stopReason });
       const timestamp = Date.now();
       await fire({ type: "turn_end", timestamp, turn, stopReason }, {
         id: newId(), parentId: sessionId, timestamp, type: "turn",
@@ -207,8 +211,10 @@ export async function runAgentLoop(
       if (config.modelContextAssembler !== undefined) {
         const assembled = await config.modelContextAssembler({ model: loopModel, context: llmContext, sessionId, turn, thinkingLevel: loopReasoning ?? "off" });
         llmContext = assembled.context;
+        observe({ kind: "assembled", requestId, runId, turn, requestKind: config.requestKind ?? "interactive", model: loopModel, thinkingLevel: loopReasoning ?? "off", context: llmContext });
         await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
       }
+      if (config.modelContextAssembler === undefined) observe({ kind: "assembled", requestId, runId, turn, requestKind: config.requestKind ?? "interactive", model: loopModel, thinkingLevel: loopReasoning ?? "off", context: llmContext });
       if (!signal?.aborted && config.traceRecorder) {
         traceModel = await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext });
       }
@@ -236,16 +242,6 @@ export async function runAgentLoop(
     if (!fn) {
       throw new Error("streamFn is required (avoid passing undefined)");
     }
-    const stream = await Promise.resolve(
-      fn(loopModel, llmContext, {
-        apiKey: config.apiKey,
-        env: config.env,
-        signal,
-        metadata: { requestKind: config.requestKind ?? "interactive" },
-        ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
-      }),
-    );
-
     // 3. 消费 stream,边 emit message_* 事件,边累积 assistant content
     const assistantContent: AssistantAgentMessage["content"] = [];
     let assistantStopReason: StopReason = "error";
@@ -254,68 +250,88 @@ export async function runAgentLoop(
     let providerMessage: AssistantMessage | undefined;
     let messageOpen = false;
     let streamStartedAt: number | undefined;
-    for await (const ev of stream) {
-      const ts = Date.now();
-      if (ev.type === "start") {
-        if (!messageOpen) {
-          messageOpen = true;
-          streamStartedAt = ts;
+    try {
+      const stream = await Promise.resolve(
+        fn(loopModel, llmContext, {
+          apiKey: config.apiKey,
+          env: config.env,
+          signal,
+          metadata: { requestKind: config.requestKind ?? "interactive", requestId, runId, turn },
+          ...(config.modelRequestObserver === undefined ? {} : {
+            onRequestPrepared: (payloadJson: string, model: typeof loopModel) => observe({ kind: "prepared", requestId, payloadJson, model }),
+            onResponse: (response: { status: number }) => observe({ kind: "response", requestId, status: response.status }),
+          }),
+          ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
+        }),
+      );
+
+      for await (const ev of stream) {
+        const ts = Date.now();
+        if (ev.type === "start") {
+          if (!messageOpen) {
+            messageOpen = true;
+            streamStartedAt = ts;
+            await fire({
+              type: "message_start",
+              timestamp: ts,
+              role: "assistant",
+              message: { role: "assistant", content: [], stopReason: "stop", api: loopModel.api, provider: loopModel.provider, model: loopModel.id },
+            });
+          }
+        } else if (ev.type === "text_start" || ev.type === "text_end" || ev.type === "thinking_start" || ev.type === "thinking_delta" || ev.type === "thinking_end" || ev.type === "toolcall_start" || ev.type === "toolcall_delta") {
+          // 暂不消费,但 forward 给 observer
           await fire({
-            type: "message_start",
+            type: "message_update",
             timestamp: ts,
-            role: "assistant",
-            message: { role: "assistant", content: [], stopReason: "stop", api: loopModel.api, provider: loopModel.provider, model: loopModel.id },
+            assistantMessageEvent: ev,
           });
+        } else if (ev.type === "text_delta") {
+          // 合并相邻 text 块,避免每个 delta 一个 TextContent
+          const last = assistantContent[assistantContent.length - 1];
+          if (last && last.type === "text") {
+            // 不可变 update:用 spread 创建新对象以避免上层引用混乱
+            assistantContent[assistantContent.length - 1] = {
+              type: "text",
+              text: (last as { type: "text"; text: string }).text + ev.delta,
+            };
+          } else {
+            assistantContent.push({ type: "text", text: ev.delta });
+          }
+          await fire({
+            type: "message_update",
+            timestamp: ts,
+            assistantMessageEvent: ev,
+          });
+        } else if (ev.type === "toolcall_end") {
+          const toolCall = ev.toolCall;
+          // 直接 push pi-ai ToolCall 视图,保留完整字段
+          assistantContent.push(toolCall);
+          await fire({
+            type: "message_update",
+            timestamp: ts,
+            assistantMessageEvent: {
+              type: "toolcall_end",
+              contentIndex: ev.contentIndex,
+              toolCall,
+              partial: ev.partial,
+            },
+          });
+        } else if (ev.type === "done") {
+          providerMessage = ev.message;
+          assistantStopReason = ev.message.stopReason;
+          assistantUsage = ev.message.usage;
+          assistantErrorMessage = ev.message.errorMessage;
+        } else if (ev.type === "error") {
+          providerMessage = ev.error;
+          assistantStopReason = ev.error.stopReason === "aborted" ? "aborted" : "error";
+          assistantErrorMessage = ev.error.errorMessage;
         }
-      } else if (ev.type === "text_start" || ev.type === "text_end" || ev.type === "thinking_start" || ev.type === "thinking_delta" || ev.type === "thinking_end" || ev.type === "toolcall_start" || ev.type === "toolcall_delta") {
-        // 暂不消费,但 forward 给 observer
-        await fire({
-          type: "message_update",
-          timestamp: ts,
-          assistantMessageEvent: ev,
-        });
-      } else if (ev.type === "text_delta") {
-        // 合并相邻 text 块,避免每个 delta 一个 TextContent
-        const last = assistantContent[assistantContent.length - 1];
-        if (last && last.type === "text") {
-          // 不可变 update:用 spread 创建新对象以避免上层引用混乱
-          assistantContent[assistantContent.length - 1] = {
-            type: "text",
-            text: (last as { type: "text"; text: string }).text + ev.delta,
-          };
-        } else {
-          assistantContent.push({ type: "text", text: ev.delta });
-        }
-        await fire({
-          type: "message_update",
-          timestamp: ts,
-          assistantMessageEvent: ev,
-        });
-      } else if (ev.type === "toolcall_end") {
-        const toolCall = ev.toolCall;
-        // 直接 push pi-ai ToolCall 视图,保留完整字段
-        assistantContent.push(toolCall);
-        await fire({
-          type: "message_update",
-          timestamp: ts,
-          assistantMessageEvent: {
-            type: "toolcall_end",
-            contentIndex: ev.contentIndex,
-            toolCall,
-            partial: ev.partial,
-          },
-        });
-      } else if (ev.type === "done") {
-        providerMessage = ev.message;
-        assistantStopReason = ev.message.stopReason;
-        assistantUsage = ev.message.usage;
-        assistantErrorMessage = ev.message.errorMessage;
-      } else if (ev.type === "error") {
-        providerMessage = ev.error;
-        assistantStopReason = ev.error.stopReason === "aborted" ? "aborted" : "error";
-        assistantErrorMessage = ev.error.errorMessage;
       }
+    } catch (error) {
+      observe({ kind: "finished", requestId, stopReason: signal?.aborted ? "aborted" : "error" });
+      throw error;
     }
+    observe({ kind: "finished", requestId, stopReason: assistantStopReason });
     const measuredDurationMs = providerMessage !== undefined
       && providerMessage.durationMs === undefined
       && providerMessage.stopReason !== "error"

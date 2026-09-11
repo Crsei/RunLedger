@@ -1,3 +1,4 @@
+import type { RequestDumpView, RequestDumpResult } from "../model-request-snapshots.ts";
 import type { TrajectoryService } from "../trajectory/service.ts";
 /**
  * R5/R6/R7:SessionRuntime(06 §7) —— lifecycle facade 与 collaborator wiring。
@@ -66,6 +67,7 @@ export interface SessionDomainPort {
 	readonly planInspection?: () => SessionPlanInspection;
 	/** `/dump` 只读投影：assembler 之后的 provider 面系统提示词与工具。 */
 	readonly promptInspection?: () => PromptInspection;
+	readonly requestDump?: (view: RequestDumpView) => RequestDumpResult;
 	readonly process?: SessionProcessDomainPort;
 	readonly resources?: SessionResourceDomainPort;
 	readonly trajectory?: TrajectoryService;
@@ -183,6 +185,7 @@ export class SessionRuntime implements SessionController {
 			...(options.domain?.securityInspection === undefined ? {} : { securityInspection: options.domain.securityInspection }),
 			...(options.domain?.planInspection === undefined ? {} : { planInspection: options.domain.planInspection }),
 			...(options.domain?.promptInspection === undefined ? {} : { promptInspection: options.domain.promptInspection }),
+			...(options.domain?.requestDump === undefined ? {} : { requestDump: options.domain.requestDump }),
 			additionalOperations: [...(options.domain?.multiAgent?.operationManifest ?? []), ...(options.domain?.trajectory?.operationManifest ?? [])],
 		});
 		this.lifecycleCleanup = options.lifecycleCleanup;

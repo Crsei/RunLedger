@@ -40,8 +40,7 @@ function fixture() {
 				cwd: workspace, env, encoding: "utf8", timeout: 20_000, input: "",
 			});
 			expect(result.error, result.stderr).toBeUndefined();
-			expect(result.stdout, result.stderr).not.toBe("");
-			return { status: result.status, body: JSON.parse(result.stdout) as Record<string, unknown> };
+			return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 		},
 	};
 }
@@ -51,25 +50,25 @@ describe("runledger dump control command", () => {
 		const parsed = parseControlCommand(["dump"]);
 		expect(parsed).toMatchObject({ ok: true, command: { group: "dump", action: "inspect", args: [], mutation: false } });
 		if (parsed?.ok !== true) throw new Error("dump command did not parse");
-		expect(controlCommandRequest(parsed.command)).toEqual({ operation: "session.prompt.inspect", body: {}, mutation: false });
+		expect(controlCommandRequest(parsed.command)).toEqual({ operation: "session.request.inspect", body: { view: "request" }, mutation: false });
 		expect(controlCommandQueryOperation(parsed.command)).toBeUndefined();
 		expect(controlCommandHelp()).toContain("runledger dump");
 		expect(parseControlCommand(["dump", "reset"])).toEqual({ ok: false, error: "unsupported dump action: reset" });
 	});
 
-	it("returns the assembled prompt projection through the published operation", () => {
-		const { run } = fixture();
-		const result = run(["dump"]);
-		expect(result).toMatchObject({
-			status: 0,
-			body: { ok: true, status: "ok", operation: "session.prompt.inspect" },
-		});
-		const value = result.body.value as Record<string, unknown> | undefined;
-		expect(value).toBeDefined();
-		expect(typeof value?.systemPrompt).toBe("string");
-		expect((value?.systemPrompt as string).length).toBeGreaterThan(0);
-		expect(value?.source === "base" || value?.source === "assembled").toBe(true);
-		expect(Array.isArray(value?.tools)).toBe(true);
-		expect(value).toMatchObject({ assembledPromptDigest: { algorithm: "sha256" } });
+	it("does not invent a request when a new owner has not dispatched one", () => {
+		const result = fixture().run(["dump"]);
+		expect(result.status).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain("No provider request captured");
+	}, 40_000);
+
+	it("exports base text only when explicitly requested, with metadata on stderr", () => {
+		const result = fixture().run(["dump", "base"]);
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout.length).toBeGreaterThan(0);
+		expect(result.stdout).not.toContain("## Configuration");
+		expect(result.stderr).toContain('"layer":"base-prompt"');
+		expect(result.stderr).toContain('"view":"base"');
 	}, 40_000);
 });

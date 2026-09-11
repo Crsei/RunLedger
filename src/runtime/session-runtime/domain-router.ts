@@ -1,3 +1,5 @@
+import { RequestDumpPager } from "./request-dump-pager.ts";
+import type { RequestDumpView, RequestDumpResult } from "../model-request-snapshots.ts";
 import { resolveAgentMode } from "../harness-profiles/agent-mode.ts";
 import { createRuntimeId, type SessionId } from "../protocol/ids.ts";
 import type { SessionStore } from "../../storage/session-store/session-store.ts";
@@ -53,6 +55,7 @@ export interface SessionDomainRouterOptions {
 	readonly planInspection?: () => SessionPlanInspection;
 	/** `/dump` 只读投影：assembler 之后的 provider 面系统提示词与工具。 */
 	readonly promptInspection?: () => PromptInspection;
+	readonly requestDump?: (view: RequestDumpView) => RequestDumpResult;
 	/** Async domain consumers register their exact manifest here; execution is routed by SessionRuntime. */
 	readonly additionalOperations?: readonly SessionProtocolOperationDescriptor[];
 }
@@ -89,6 +92,7 @@ export class SessionDomainRouter {
 	private readonly securityInspection: SessionDomainRouterOptions["securityInspection"];
 	private readonly planInspection: SessionDomainRouterOptions["planInspection"];
 	private readonly promptInspection: SessionDomainRouterOptions["promptInspection"];
+	private readonly requestDumpPager: RequestDumpPager | undefined;
 	private readonly ownerFence: OwnerFence | undefined;
 
 	public readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
@@ -101,6 +105,7 @@ export class SessionDomainRouter {
 		this.securityInspection = options.securityInspection;
 		this.planInspection = options.planInspection;
 		this.promptInspection = options.promptInspection;
+		this.requestDumpPager = options.requestDump === undefined ? undefined : new RequestDumpPager(options.requestDump);
 		this.ownerFence = options.ownerFence;
 		this.operationManifest = Object.freeze([
 			Object.freeze({ operation: "session.catalog.list", capability: "session.catalog", access: "read" }),
@@ -117,6 +122,7 @@ export class SessionDomainRouter {
 			...(this.promptInspection === undefined
 				? []
 				: [Object.freeze({ operation: "session.prompt.inspect", capability: "session.core", access: "read" })]),
+			...(this.requestDumpPager === undefined ? [] : [Object.freeze({ operation: "session.request.inspect", capability: "session.core", access: "read" })]),
 			...(options.additionalOperations ?? []).map((entry) => Object.freeze({ ...entry })),
 		]);
 	}
@@ -182,6 +188,12 @@ export class SessionDomainRouter {
 				domainRevision: value.state.revision,
 				value,
 			};
+		}
+		if (operation === "session.request.inspect" && this.requestDumpPager !== undefined) {
+			const result = this.requestDumpPager.read(input.payload as Record<string, unknown>);
+			return result.ok
+				? { ok: true, status: "ok", operation, domainRevision: this.generation, value: result.value }
+				: { ok: false, status: "failed", operation, code: result.code };
 		}
 		if (operation === "session.prompt.inspect" && this.promptInspection !== undefined) {
 			const inspection = this.promptInspection();

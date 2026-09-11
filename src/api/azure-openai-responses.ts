@@ -1,3 +1,4 @@
+import { notifyRequestPrepared } from "./request-observer.ts";
 import { AzureOpenAI } from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
@@ -106,6 +107,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
 			}
+			await notifyRequestPrepared(options, params, model);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),

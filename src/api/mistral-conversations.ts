@@ -1,3 +1,4 @@
+import { notifyRequestPrepared } from "./request-observer.ts";
 import { HTTPClient, Mistral } from "@mistralai/mistralai";
 import type {
 	ChatCompletionStreamRequest,
@@ -82,6 +83,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			if (nextPayload !== undefined) {
 				payload = nextPayload as ChatCompletionStreamRequest;
 			}
+			await notifyRequestPrepared(options, payload, model);
 			const mistralStream = await mistral.chat.stream(payload, buildRequestOptions(model, options));
 			stream.push({ type: "start", partial: output });
 			await consumeChatStream(model, output, stream, mistralStream);

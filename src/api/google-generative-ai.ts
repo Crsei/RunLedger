@@ -1,3 +1,4 @@
+import { notifyRequestPrepared } from "./request-observer.ts";
 import {
 	type GenerateContentConfig,
 	type GenerateContentParameters,
@@ -86,6 +87,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
+			await notifyRequestPrepared(options, params, model);
 			const proxyTarget = model.baseUrl ?? "https://generativelanguage.googleapis.com";
 			const proxyUrl = getCachedProviderProxyUrl(model.provider, proxyTarget, options?.env);
 			const googleStream = proxyUrl

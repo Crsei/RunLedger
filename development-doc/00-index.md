@@ -58,7 +58,7 @@
 | TUI / Working Loader Shimmer | [`tui/25-pi-working-loader-shimmer-replication-plan.md`](tui/25-pi-working-loader-shimmer-replication-plan.md) | oh-my-pi working loader 渐变（classic/KITT shimmer）、esc bracket 字形与 `display.shimmer` 设置已实现 | Plan 25 S0–S4 accepted；full gates、标准 PATH 隔离 TTY 80/143 列三模式与零宽不变式测试 |
 | TUI / Codex Exploration Output | [`tui/26-codex-exploration-output-summary-plan.md`](tui/26-codex-exploration-output-summary-plan.md) | `read/grep/find/glob/ls` 主时间线摘要、相邻 Exploring 分组、Ctrl+T bounded 详情及双层截断元数据 | `partial`：核心实现、check/test/build 和隔离 PATH TTY smoke 已完成；S6 专项性能/重放、真实探索调用及 dark/light/复制人工验收仍 pending |
 | TUI / 可配置主体色槽 | [`tui/27-configurable-ui-theme-and-thinking-color-plan.md`](tui/27-configurable-ui-theme-and-thinking-color-plan.md) | 用户级 `uiTheme`、三套 dark/light 预设、色槽覆盖与思考灰色、统一渲染接线 | `implemented`：配置与渲染已接通；Linux 自动化及真实 TTY 证据见 Plan 27 §8，人工与跨平台 pending |
-| TUI / System Prompt Dump | [`tui/28-system-prompt-dump-plan.md`](tui/28-system-prompt-dump-plan.md) | `/dump` 命令、只读 domain operation `session.prompt.inspect`、组装结果运行时捕获点、OSC 52 剪贴板出口与 `runledger dump` headless 对应物 | `implemented`：check/build/聚焦测试/真实 TTY 见 Plan 28 §8；历史格式门禁阻塞与审查修复见 §8.4/§8.6 |
+| TUI / System Prompt Dump | [`tui/28-system-prompt-dump-plan.md`](tui/28-system-prompt-dump-plan.md) | `/dump [request\|system\|assembled\|base]`、provider 输入观测、`session.request.inspect` 固定快照分页、原文文件/剪贴板与 headless 导出 | 当前原始请求导出合同与 fresh 验证见 Plan 28 当前合同/§9；旧 P0–P6 证据见 §8 |
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
 | Cross-cutting Modularization | [`plan/12-bloated-code-modularization-refactor-plan.md`](plan/12-bloated-code-modularization-refactor-plan.md) | SessionStore、Security、Process、AgentLoop、SessionRuntime、OpenTUI、InteractiveMode、provider adapters 与 model generator 的行为保持拆分 | S0–S5/S8/S9 implemented；S6/S7 automated PATH 候选已通过但 streaming/human 门禁未闭合；S10 受 Runtime 06 R9 阻塞，整体 `partial / blocked` |
 | Package Boundary / Workspace Refactor | [`plan/13-package-boundary-workspace-refactor-plan.md`](plan/13-package-boundary-workspace-refactor-plan.md) | 从单一 npm 包迁移到 contracts、AI、core、product-TUI 与 runledger app 的单向 workspace；先消除跨域环，再物理拆包 | `planned / staged`；P0–P4 可执行，legacy Host 最终收口 P5 受 Runtime 06 R8/R9 阻塞 |
@@ -87,7 +87,7 @@ Plan 24（Codex Session Display）当前状态为 `implemented/accepted`。2026-
 
 ### Plan 28 当前状态
 
-Plan 28（`/dump` 组装后系统提示词导出）当前状态为 `implemented`：P0–P6 已落地，历史证据见 [`tui/28-system-prompt-dump-plan.md`](tui/28-system-prompt-dump-plan.md) §8；审查发现的剪贴板失败误报、请求配置混合和文档门禁问题及修复见 §8.4/§8.6。该计划不改变 20/24/26/17/18/27 的任何 authority。
+Plan 28（`/dump` 请求快照与原始内容导出）当前合同及 2026-09-11 修复证据见 [`tui/28-system-prompt-dump-plan.md`](tui/28-system-prompt-dump-plan.md) 当前合同/§9；原 assembler 报告式导出的历史证据保留在 §8。该计划不改变 20/24/26/17/18/27 的任何 authority。
 
 ## 原始计划迁移映射
 

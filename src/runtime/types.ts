@@ -36,6 +36,7 @@ import type {
   ToolCall,
 } from "../types.ts";
 import type { Static, TSchema } from "typebox";
+import type { ModelRequestObserver } from "./model-request-observer.ts";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { ToolContext } from "./tool-context.ts";
 import type { RuntimeTraceRecorder } from "./trace/recorder.ts";
@@ -488,6 +489,8 @@ export interface AgentLoopConfig {
   modelContextAssembler?: ModelContextAssembler;
   /** Canonical Host sink for the bounded `context.assembled` receipt. */
   contextAssemblySink?: ContextAssemblySink;
+  /** 每次模型请求的装配、provider 输入与完成状态。 */
+  modelRequestObserver?: ModelRequestObserver;
 }
 
 export interface AgentRunBudget {
