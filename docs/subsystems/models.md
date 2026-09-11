@@ -44,6 +44,8 @@ OAuth provider 通过 `login()` 完成交互，在过期时经 `CredentialStore.
 
 动态目录有两种落地语义(见 `createProvider` 的 `dynamicModelsAuthoritative`):provider 端点给出完整目录时启用权威语义,一次成功刷新即替换该 provider 的可见清单,静态基线中被 provider 下线的模型随之消失;端点为精选/部分列表时保持 overlay,刷新结果只增改同 id 条目。刷新失败或空结果都保留上次成功清单。 provider 已确认退役、而来源快照仍携带的条目,在 `scripts/ported-provider-catalog.ts` 的 `retiredModels` 登记并从静态基线移除,保证离线/刷新失败时也不显示。修改 provider 或 catalog 时，应运行 `npm run generate-models` 并审阅生成差异；手改生成文件不能成为新的 source of truth。
 
+OpenCode Go 的 `/models` 是较宽的路由目录，不等同于 Go 套餐清单。其生成基线由 `scripts/sources/opencode-go-plan.json` 的审核清单约束；动态刷新与旧缓存只保留基线允许的 ID。套餐增加/移除模型时先核对官方套餐清单、更新来源并重新生成，不能仅凭端点有该 ID 就加入选择器。
+
 动态 catalog 的 last-known-good 状态只在当前 `InMemoryModelsStore` 进程内有效。除非另有明确存储实现，refresh 成功不能宣称跨进程持久化。
 
 ## 错误与取消

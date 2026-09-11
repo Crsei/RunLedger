@@ -24,6 +24,25 @@ function completionsModel(id: string, provider: string, baseUrl: string): Model<
 	return { contextWindow: 4096, maxTokens: 1024, id, name: id, api: "openai-completions", provider, baseUrl, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 }
 
+describe("OpenCode Go plan generation", () => {
+	it("removes routing-only IDs from every source without pruning other providers", () => {
+		const input = [
+			completionsModel("glm-5", "opencode-go", "https://opencode.ai/zen/go/v1"),
+			completionsModel("omen-alpha", "opencode-go", "https://opencode.ai/zen/go/v1"),
+			completionsModel("glm-5", "custom", "https://custom.example.invalid/v1"),
+		];
+		const catalog = normalizeProviderCatalogs(input);
+		expect(Object.keys(catalog["opencode-go"]!)).toHaveLength(27);
+		expect(catalog["opencode-go"]?.["glm-5"]).toBeUndefined();
+		expect(catalog["opencode-go"]?.["omen-alpha"]).toBeUndefined();
+		expect(catalog["opencode-go"]?.["minimax-m2.5"]).toBeUndefined();
+		expect(catalog["custom"]?.["glm-5"]).toBeDefined();
+		expect(catalog["opencode-go"]?.["deepseek-v4.1-flash"]).toMatchObject({
+			api: "openai-completions", contextWindow: 1_000_000, maxTokens: 384_000,
+		});
+	});
+});
+
 describe("S9 detectOpenAICompletionsCompat", () => {
 	it("zai provider resolves zai thinking format and non-standard store", () => {
 		const compat = detectOpenAICompletionsCompat(completionsModel('glm-4.5', 'zai', 'https://api.z.ai/v1'));

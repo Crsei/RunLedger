@@ -9,6 +9,7 @@ import {
 	AIAND_STATIC_MODELS,
 } from "../../src/providers/aiand-catalog.ts";
 import { mergePortedProviderModels } from "../ported-provider-catalog.ts";
+import opencodeGoPlan from "../sources/opencode-go-plan.json" with { type: "json" };
 import type { Api, Model, OpenAICompletionsCompat } from "../../src/types.ts";
 import {
 	applyOpenAICompletionsCompatMetadata,
@@ -22,6 +23,8 @@ import {
 	XAI_BUILTIN_EXCLUDED_MODEL_IDS,
 } from "./compat-metadata.ts";
 import { applyThinkingLevelMetadata, KIMI_K3_MAX_TOKENS, OPENROUTER_KIMI_K3_MODEL_IDS } from "./thinking-metadata.ts";
+
+const OPENCODE_GO_INCLUDED_MODELS = new Set(opencodeGoPlan.models);
 
 export function getBedrockBaseUrl(modelId: string): string {
 	return modelId.startsWith("eu.")
@@ -54,6 +57,27 @@ export function normalizeProviderCatalogs(allModels: Model<any>[]): Record<strin
 		})),
 	);
 	allModels = mergePortedProviderModels(allModels);
+
+	// Go 的套餐清单已收录 V4.1 Flash,旧冻结快照尚无此 ID；规格与价格取官方文档。
+	allModels.push({
+		id: "deepseek-v4.1-flash",
+		name: "DeepSeek V4.1 Flash",
+		api: "openai-completions",
+		baseUrl: "https://opencode.ai/zen/go/v1",
+		provider: "opencode-go",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 384_000,
+		compat: {
+			supportsStore: false,
+			supportsDeveloperRole: false,
+			supportsReasoningEffort: false,
+			thinkingFormat: "deepseek",
+			maxTokensField: "max_tokens",
+		},
+	});
 
 	// Temporary overrides until upstream model metadata is corrected.
 	for (const candidate of allModels) {
@@ -539,6 +563,8 @@ export function normalizeProviderCatalogs(allModels: Model<any>[]): Record<strin
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
 	for (const model of allModels) {
+		// /models 包含套餐外路由与兼容别名；所有生成来源统一受套餐清单约束。
+		if (model.provider === "opencode-go" && !OPENCODE_GO_INCLUDED_MODELS.has(model.id)) continue;
 		if (!providers[model.provider]) {
 			providers[model.provider] = {};
 		}

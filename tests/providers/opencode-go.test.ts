@@ -113,9 +113,8 @@ async function refresh(provider: Provider<GoApi>, credential: boolean) {
 }
 
 /**
- * /models 端点比 models.dev 与 bundled snapshot 更新:它提供 deepseek-v4.1-flash、
- * hy3-preview 等上游 catalog 尚未收录的模型,也停止提供 ox-alpha-free。
- * 没有 discovery 时 TUI 只看到过期静态列表。
+ * /models 返回的是更宽的路由目录,不能证明 Go 套餐包含该模型。
+ * 静态、网络与旧缓存都必须收敛到已核对的套餐范围。
  */
 describe("OpenCode Go model discovery", () => {
 	it("gates discovery behind an API key", async () => {
@@ -142,7 +141,7 @@ describe("OpenCode Go model discovery", () => {
 		});
 	});
 
-	it("replaces the baseline with the endpoint catalog and adds models upstream lacks", async () => {
+	it("intersects the endpoint catalog with the reviewed Go plan", async () => {
 		const fetchImpl: typeof fetch = async () =>
 			catalogResponse([
 				{ id: "deepseek-v4.1-flash" },
@@ -159,9 +158,9 @@ describe("OpenCode Go model discovery", () => {
 
 		const ids = provider.getModels().map((model) => model.id);
 		expect(ids).toContain("deepseek-v4.1-flash");
-		expect(ids).toContain("hy3-preview");
-		expect(ids).toContain("omen-alpha");
-		// 端点列表是权威目录:基线中未出现在结果里的模型(如 kimi-k3)被剪除。
+		expect(ids).not.toContain("hy3-preview");
+		expect(ids).not.toContain("omen-alpha");
+		// 端点仍可剪除缺失项,但不能把套餐外条目加入选择器。
 		expect(ids).not.toContain("kimi-k3");
 		expect(ids).not.toContain("ox-alpha-free");
 	});
@@ -185,7 +184,7 @@ describe("OpenCode Go model discovery", () => {
 		});
 	});
 
-	it("resolves endpoint-only models to a routable api with conservative defaults", async () => {
+	it("does not invent routable models for undocumented endpoint IDs", async () => {
 		const fetchImpl: typeof fetch = async () =>
 			catalogResponse([{ id: "deepseek-v4.1-flash" }, { id: "kimi-k2.6-future" }, { id: "brand-new" }]);
 		const provider = opencodeGoProvider({ fetch: fetchImpl });
@@ -195,34 +194,23 @@ describe("OpenCode Go model discovery", () => {
 			api: "openai-completions",
 			provider: "opencode-go",
 			baseUrl: "https://opencode.ai/zen/go/v1",
-			// /models 不返回能力字段:沿用其它动态 provider 的保守默认,不臆测窗口。
-			contextWindow: 128_000,
-			maxTokens: 8_192,
+			// 套餐新模型由生成目录提供审核后的完整元数据。
+			contextWindow: 1_000_000,
+			maxTokens: 384_000,
 		});
-		expect(provider.getModels().find((model) => model.id === "brand-new")).toMatchObject({
-			api: "openai-completions",
-		});
+		expect(provider.getModels().find((model) => model.id === "brand-new")).toBeUndefined();
+		expect(provider.getModels().find((model) => model.id === "kimi-k2.6-future")).toBeUndefined();
 	});
 
-	it("falls back to completions when npm metadata is absent and honors the Go overrides", async () => {
-		const fetchImpl: typeof fetch = async () =>
-			catalogResponse([
-				{ id: "minimax-m2.9" },
-				{ id: "future-anthropic", provider: { npm: "@ai-sdk/anthropic" } },
-				{ id: "future-openai", provider: { npm: "@ai-sdk/openai" } },
-			]);
+	it("does not let endpoint protocol metadata admit a model outside the Go plan", async () => {
+		const fetchImpl: typeof fetch = async () => catalogResponse([
+			{ id: "kimi-k3" },
+			{ id: "future-anthropic", provider: { npm: "@ai-sdk/anthropic" } },
+			{ id: "future-openai", provider: { npm: "@ai-sdk/openai" } },
+		]);
 		const provider = opencodeGoProvider({ fetch: fetchImpl });
 		await refresh(provider, true);
-		expect(provider.getModels().find((model) => model.id === "minimax-m2.9")).toMatchObject({
-			api: "openai-completions",
-		});
-		expect(provider.getModels().find((model) => model.id === "future-anthropic")).toMatchObject({
-			api: "anthropic-messages",
-			baseUrl: "https://opencode.ai/zen/go",
-		});
-		expect(provider.getModels().find((model) => model.id === "future-openai")).toMatchObject({
-			api: "openai-responses",
-		});
+		expect(provider.getModels().map((model) => model.id)).toEqual(["kimi-k3"]);
 	});
 
 	it("keeps the last known-good catalog when discovery fails", async () => {
@@ -233,10 +221,44 @@ describe("OpenCode Go model discovery", () => {
 		expect(provider.getModels().map((model) => model.id)).toEqual(before);
 	});
 
+	it("reduces the 37 routing IDs to the 27 included models and rejects GLM-5 lookup", async () => {
+		const included = [
+			"grok-4.6", "gpt-5.6-luna", "glm-5.3-flash", "glm-5.3", "glm-5.2", "glm-5.1",
+			"kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "longcat-2.0", "deepseek-v4.1-flash",
+			"deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "mimo-v2.5",
+			"mimo-v2.5-pro", "minimax-m3", "minimax-m2.7", "muse-spark-1.3-contributor",
+			"muse-spark-1.2-contributor", "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max",
+			"qwen3.7-plus", "qwen3.6-plus", "hy4-preview", "hy3",
+		];
+		const excluded = ["glm-5", "kimi-k2.5", "minimax-m2.5", "qwen3.5-plus", "mimo-v2-pro",
+			"mimo-v2-omni", "grok-4.5", "hy3-preview", "omen-alpha", "deepseek-flash"];
+		const provider = opencodeGoProvider({ fetch: async () => catalogResponse(
+			[...included, ...excluded].map((id) => ({ id })),
+		) });
+		await refresh(provider, true);
+		const models = createModels();
+		models.setProvider(provider);
+		expect(models.getModels("opencode-go").map((model) => model.id).sort()).toEqual([...included].sort());
+		expect(models.getModel("opencode-go", "glm-5")).toBeUndefined();
+	});
+
+	it("filters legacy cached routing catalogs even during offline restoration", async () => {
+		const provider = opencodeGoProvider();
+		const reference = provider.getModels().find((model) => model.id === "glm-5.1");
+		if (!reference) throw new Error("fixture model unavailable");
+		const store = new InMemoryModelsStore();
+		await store.write(provider.id, { models: [reference, { ...reference, id: "glm-5" }] });
+		await provider.refreshModels?.({ allowNetwork: false, store: scopedStore(store) });
+		expect(provider.getModels().map((model) => model.id)).toEqual(["glm-5.1"]);
+	});
+
 	it("excludes the provider-retired model from the static baseline", () => {
 		// 刷新不可用(离线/未配置)时用户只能看到静态基线;已下线的模型不能从这里出现。
 		const ids = opencodeGoProvider().getModels().map((model) => model.id);
 		expect(ids).not.toContain("ox-alpha-free");
-		expect(ids.length).toBeGreaterThan(30);
+		expect(ids).toHaveLength(27);
+		expect(ids).not.toContain("glm-5");
+		expect(ids).toContain("glm-5.1");
+		expect(ids).toContain("deepseek-v4.1-flash");
 	});
 });

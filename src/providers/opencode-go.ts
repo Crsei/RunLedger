@@ -6,7 +6,6 @@ import type { RefreshModelsContext } from "../models.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type {
 	Model,
-	OpenAICompletionsCompat,
 	ProviderHeaders,
 	ProviderStreams,
 	StreamOptions,
@@ -30,109 +29,24 @@ function normalizeBaseUrl(value: string | undefined): string {
 	return normalized.endsWith("/v1") ? normalized : `${normalized}/v1`;
 }
 
-function positiveNumber(value: unknown, fallback: number): number {
-	const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
-	return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
-}
-
 function truncateBody(body: string): string {
 	const trimmed = body.trim();
 	return trimmed.length > 512 ? `${trimmed.slice(0, 512)}…` : trimmed;
 }
 
-/**
- * Go 端点以 models.dev 的 npm 声明决定 wire;与生成器 models-dev-source 的映射一致,
- * 不含 @ai-sdk/google(Go provider 未装配 Google API)。
- */
-const OPENCODE_GO_NPM_API: Readonly<Record<string, OpenCodeGoApi>> = {
-	"@ai-sdk/openai": "openai-responses",
-	"@ai-sdk/anthropic": "anthropic-messages",
-	"@ai-sdk/openai-compatible": "openai-completions",
-	"@ai-sdk/alibaba": "openai-completions",
-};
-
-/**
- * 生成器对 Go 端点的已验证修正:这些模型由 /v1/chat/completions 提供,
- * 不接受 Anthropic SDK 认证(models.dev 的 npm 声明在此不可信)。
- */
-const OPENCODE_GO_COMPLETIONS_OVERRIDE_IDS: Readonly<Record<string, true>> = {
-	"minimax-m2.7": true,
-	"qwen3.5-plus": true,
-	"qwen3.6-plus": true,
-};
-
-/** Go 端点已验证的 completions 兼容参数(与生成器 compat 规则一致)。 */
-function completionsCompat(id: string): OpenAICompletionsCompat {
-	const compat: OpenAICompletionsCompat = { supportsStore: false, supportsDeveloperRole: false, maxTokensField: "max_tokens" };
-	if (id === "qwen3.5-plus" || id === "qwen3.6-plus") return { ...compat, thinkingFormat: "qwen" };
-	// Kimi K2.6 接受 Anthropic 风格 thinking 对象,拒绝字符串 thinking 与 reasoning_effort。
-	if (id === "kimi-k2.6") return { ...compat, thinkingFormat: "deepseek", supportsReasoningEffort: false };
-	return compat;
-}
-
-function entryNpm(entry: JsonRecord): string | undefined {
-	const provider = entry.provider;
-	if (typeof provider === "object" && provider !== null && !Array.isArray(provider)) {
-		const npm = (provider as { npm?: unknown }).npm;
-		if (typeof npm === "string") return npm;
-	}
-	if (typeof entry.npm === "string") return entry.npm;
-	return undefined;
-}
-
-/**
- * /models 的条目是裸 `{id, object, created, owned_by}`,不含 api 元数据;
- * 已审核的 bundled catalog 对已知 id 是权威(它带有端点实测过的 api/baseUrl/compat)。
- */
-function resolveApi(entry: JsonRecord, reference: Model<OpenCodeGoApi> | undefined): OpenCodeGoApi {
-	const id = typeof entry.id === "string" ? entry.id : "";
-	if (reference) return reference.api;
-	if (OPENCODE_GO_COMPLETIONS_OVERRIDE_IDS[id]) return "openai-completions";
-	const npm = entryNpm(entry);
-	return (npm && OPENCODE_GO_NPM_API[npm]) || "openai-completions";
-}
-
+/** 路由目录只能收窄已审核的套餐清单,不据裸 ID 猜测可用性或模型能力。 */
 function mapDiscoveredModel(
 	entry: JsonRecord,
-	baseUrl: string,
 	staticModels: readonly Model<OpenCodeGoApi>[],
 ): Model<OpenCodeGoApi> | undefined {
 	const id = typeof entry.id === "string" ? entry.id.trim() : "";
-	if (!id) return undefined;
 	const reference = staticModels.find((model) => model.id === id);
-	const api = resolveApi(entry, reference);
-	// anthropic-messages 提交到裸 base path;Anthropic 客户端自行追加 /v1/messages。
-	const anthropicBaseUrl = baseUrl.endsWith("/v1") ? baseUrl.slice(0, -3) : baseUrl;
-	const modelBaseUrl = reference?.baseUrl ?? (api === "anthropic-messages" ? anthropicBaseUrl : baseUrl);
-	const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : reference?.name ?? id;
-	if (reference) return { ...reference, id, name, provider: "opencode-go" };
-	// /models 不返回模型能力;endpoint 已提供、但已审核 catalog 与 models.dev 都没有的
-	// 新模型只能用保守默认(与其它动态 provider 的 discovery 约定一致),选中后由
-	// provider 侧真实限制决定成败,不在这里臆测更大的窗口。
-	const metadata = {
-		id,
-		name,
-		provider: "opencode-go" as const,
-		baseUrl: modelBaseUrl,
-		reasoning: false,
-		input: ["text"] as ("text" | "image")[],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: positiveNumber(entry.context_length, 128_000),
-		maxTokens: positiveNumber(entry.max_completion_tokens, 8_192),
-	};
-	if (api === "openai-completions") {
-		const model: Model<"openai-completions"> = { ...metadata, api: "openai-completions", compat: completionsCompat(id) };
-		return model;
-	}
-	if (api === "anthropic-messages") {
-		const model: Model<"anthropic-messages"> = { ...metadata, api: "anthropic-messages" };
-		return model;
-	}
-	const model: Model<"openai-responses"> = { ...metadata, api: "openai-responses" };
-	return model;
+	if (!reference) return undefined;
+	const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : reference.name;
+	return { ...reference, name };
 }
 
-/** /models 是官方文档公布的完整列表来源;失败时 createProvider 保留上次成功结果。 */
+/** /models 是较宽的路由目录；与套餐取交集,失败保留上次成功结果。 */
 async function fetchModels(
 	context: RefreshModelsContext,
 	baseUrl: string,
@@ -158,7 +72,7 @@ async function fetchModels(
 	const models = new Map<string, Model<OpenCodeGoApi>>();
 	for (const rawEntry of data) {
 		if (typeof rawEntry !== "object" || rawEntry === null || Array.isArray(rawEntry)) continue;
-		const model = mapDiscoveredModel(rawEntry as JsonRecord, baseUrl, staticModels);
+		const model = mapDiscoveredModel(rawEntry as JsonRecord, staticModels);
 		if (model && !models.has(model.id)) models.set(model.id, model);
 	}
 	if (models.size === 0) throw new Error("OpenCode Go returned an empty model catalog");
@@ -168,12 +82,12 @@ async function fetchModels(
 export function opencodeGoProvider(options: OpencodeGoProviderOptions = {}): Provider<OpenCodeGoApi> {
 	const baseUrl = normalizeBaseUrl(options.baseUrl);
 	const models = Object.values(OPENCODE_GO_MODELS);
-	return createProvider<OpenCodeGoApi>({
+	const provider = createProvider<OpenCodeGoApi>({
 		id: "opencode-go",
 		name: "OpenCode Zen Go",
 		auth: { apiKey: envApiKeyAuth("OpenCode API key", ["OPENCODE_API_KEY"]) },
 		models,
-		// 端点返回完整目录:成功刷新后剪除基线里已被 provider 下线的模型。
+		// 已过滤的路由目录可剪除基线缺失项,不可扩展套餐范围。
 		dynamicModelsAuthoritative: true,
 		fetchModels: (context) => fetchModels(context, baseUrl, options.fetch ?? globalThis.fetch, models),
 		api: {
@@ -182,6 +96,12 @@ export function opencodeGoProvider(options: OpencodeGoProviderOptions = {}): Pro
 			"openai-responses": withGoHeaders(openAIResponsesApi()),
 		},
 	});
+	const included = new Set<string>(models.map((model) => model.id));
+	return {
+		...provider,
+		// 旧进程留下的缓存可能有 37 个路由 ID,离线恢复同样不能让套餐外模型复活。
+		getModels: () => provider.getModels().filter((model) => included.has(model.id)),
+	};
 }
 
 /** Go 的路由标识独立于缓存开关，统一覆盖三种 API。 */

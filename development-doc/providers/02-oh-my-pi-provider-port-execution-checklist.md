@@ -4,7 +4,19 @@
 >
 > 下方 2026-08-16 的版本、数量、worktree 和验证结果均为历史快照，不能代表本次状态。
 
-## Model catalog 落地语义:权威目录 vs overlay（2026-09-11）
+## OpenCode Go 套餐范围修正（2026-09-11，当前合同）
+
+- 用户复现：Go 实际套餐为 27 个模型，TUI 却显示 37 个并允许选择 GLM-5。此前将 `/zen/go/v1/models` 的裸 ID 列表等同于套餐范围，判断错误；刷新成功也会重新引入套餐外模型。
+- 当前来源对账：[Go 产品页](https://opencode.ai/go) 明确标注 27；[How it works 与 Estimated requests](https://opencode.ai/docs/go/) 均列出 27 个模型。`/models` 返回 37 个路由 ID；同页 Endpoints/价格表还保留 MiniMax M2.5，因此不能把路由表、兼容别名、套餐模型数混为一谈。本次按用户确认及产品页/套餐清单的 27 项收敛。
+- 独立对账：models.dev 当前 Go 目录为 36 项，其中 9 项 `status: deprecated`，非弃用项恰为同一组 27 项。旧生成链虽然在 models.dev 归一化时跳过 deprecated，随后仍会合并旧 vendored 快照；没有完整套餐范围约束就会把旧 ID 带回。
+- `scripts/sources/opencode-go-plan.json` 保存带日期与来源的套餐 ID 清单。生成器在所有来源合并之后过滤 Go 模型，移除静态基线中的 `glm-5`、`grok-4.5`、`kimi-k2.5`、`mimo-v2-omni`、`mimo-v2-pro`、`minimax-m2.5`、`qwen3.5-plus`，补入 `deepseek-v4.1-flash`。已有 26 项元数据保持原样；新模型规格取官方文档，费用使用峰时值，未新增峰谷计费能力。
+- 运行期以生成后的 Go catalog 定义套餐范围：网络返回值只与该范围取交集、不能扩展；旧缓存恢复也过滤同一范围。额外路由 `deepseek-flash`、`hy3-preview`、`omen-alpha` 不增加模型数；不对未知裸 ID 猜测协议、上下文或能力。
+- 默认配置/历史会话不会被改写或自动换模。若曾保存套餐外 ID（包含不单列展示的 `deepseek-flash` 别名），应通过 `/model` 显式选择套餐 ID，例如 `deepseek-v4.1-flash`。后续套餐变化需更新这份来源清单并运行 `npm run generate-models`；不会在 TUI 运行期抓取营销页面。
+- 回归覆盖：37→27、GLM-5 lookup 拒绝、旧缓存过滤、网络失败保留有效清单、生成来源不能重新引入套餐外 ID，以及已有三种 API 的 Session header 行为。
+- 已验证：`npm run check` 为 610 consumers / 0 diagnostics；`npm run build` 通过。构建后的公共目录实测为静态 27 → `/models` 原始 37 → 刷新后 27。隔离 `HOME` / `RUNLEDGER_DIR` 的真实 linked CLI + tmux TUI 显示 `27 available models`，遍历 27 项不含 GLM-5，显式 CLI 指定 `glm-5` 被拒绝，干净退出后 active owners 为 0。测试只请求公共模型目录，未发起真实模型推理；不代表逐模型可用性或人工跨平台验收。
+- 全量 `npm test` 退出码 0：Vitest 516 files / 3386 tests passed，3 tests skipped；Bun 156 tests passed / 0 failed。验证输出与 TUI 捕获保存在本次临时证据目录 `/tmp/runledger-go-plan-fix-deogd_7j/`（非长期存档）。
+
+## Model catalog 落地语义:权威目录 vs overlay（2026-09-11，历史修复；Go 范围以上节为准）
 
 - 触发：provider 会下线模型（opencode-go 端点与官方文档都已不再提供 `ox-alpha-free`，而它仍留在静态 catalog 里）。原 `createProvider` 只有"静态基线 + 动态 overlay"一种语义，动态结果只增改同 id 条目、从不删除基线条目，因此下线模型永久可见且可被选中。
 - 修改：`CreateProviderOptions` 增加 `dynamicModelsAuthoritative`（默认 false，语义对照 oh-my-pi 的 `dynamicModelsAuthoritative`）。true 时一次成功的 `fetchModels` 结果即该 provider 的完整目录，静态基线中未出现在结果里的条目被剪除；false 时保持 overlay。空结果由各 discovery 实现按失败处理（throw → 保留 last-known-good），因此不会因一次空响应清空目录；刷新失败同样保留上次成功结果。
@@ -15,7 +27,7 @@
 - 分类证据与边界：只对**有确证**的条目做静态退役。opencode-go 的 `ox-alpha-free` 有三个独立信号（官方文档端点表、`/zen/go/v1/models`、models.dev `status: deprecated`）。其余 provider 的"端点缺失"只在无凭据探测下观察到（aimlapi 261、opencode-zen 25 等），而 provider 常按凭据档位裁剪 `/models`，据此静态删除可能隐藏付费档仍可用的模型，因此不做静态退役，交由运行期权威刷新用**真实凭据**处理。
 - 验证：`tests/runtime/model-catalog-refresh.test.ts`（9 tests）覆盖权威剪除、overlay 保留基线、失败保留 last-known-good、未刷新时显示基线；`tests/providers/opencode-go.test.ts` 断言静态基线不含已退役模型、刷新后端点新增模型出现；`tests/providers/ported-catalog-update.test.ts` 断言目标退役同时命中 vendored 行与其它来源行。重建 `dist` 后经 `builtinModels()`：离线静态基线 33（无 stale）→ 权威刷新后 37（端点新增模型出现）；隔离 `RUNLEDGER_DIR` 的真实 TUI 显示 `opencode-go 37 available models`。`npm run check` 0 diagnostics（610 consumers）；`npm run build` 通过；`npm test` 中 providers/scripts/runtime 197 files / 1200 tests 全绿，全量仅剩另一任务在途的 schema 版本用例（5→6）失败，与本改动无关。
 
-## OpenCode Go catalog 与端点对账（2026-09-11）
+## OpenCode Go catalog 与端点对账（2026-09-11，历史；37 项不代表套餐范围）
 
 - 触发：TUI 的 opencode-go 列表比 provider 实际提供的模型少。
 - 对比证据（同一时刻三方对账）：官方文档公布的完整列表端点 `https://opencode.ai/zen/go/v1/models` 返回 37 个模型；已提交 `src/providers/data/opencode-go.json` 为 34 个；models.dev 为 36 个（含 `status: deprecated`）；oh-my-pi `models.json` 为 34 个。端点有而 catalog 没有的是 `deepseek-v4.1-flash`（2026-09-10 发布）、`hy3-preview`、`omen-alpha`、`deepseek-flash`；catalog 有而端点不再提供的是 `ox-alpha-free`。
