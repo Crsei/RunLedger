@@ -9,7 +9,8 @@
 - 触发：对照 pi / oh-my-pi，RunLedger 的 `src/providers/<id>.models.ts` 为每个模型逐条枚举 `Model<api> & { id; provider }`，70 份 shard 共约 1.9 万行生成代码；上游只用一份 JSON 加泛型派生。
 - 根因：JSON 导入的字符串值会被 TypeScript 拓宽为 `string`，无法直接由 `values["<id>"]["api"]` 得到 api 字面量；因此 RunLedger 之前把类型信息烘焙进 shard 源码。
 - 修改：新增 `src/model-catalog.ts`（`ModelGroups` / `ModelApi` / `ModelCatalog` / `flattenModelCatalog`）。`src/providers/data/<id>.json` 由扁平 `modelId → Model` 改为按 `api` 分组，使 api 字面量可从分组键派生；`<id>.models.ts` 只导入该 JSON 并调用 `flattenModelCatalog`。`src/models.generated.ts` 聚合器改为显式类型标注（否则 70 个 catalog 的推断类型触发 TS7056），并删除已无用途的通配 `*.json` 声明 `src/providers/data-json.d.ts`。公开的 `--json-only` dump 仍为扁平结构。
-- 验证：生成前把 70 份 data 文件展平后与 HEAD 逐模型比对，4711 个模型 0 差异；`npm run build` 后 `dist/models.generated.js` 仍为 70 provider / 4711 模型，混合 api 的 opencode-zen 分组正确。remote 源生成 70 provider、provider 集合与提交版本一致（其中 28 份既有 provider 的 live 源漂移属 generator 既有网络依赖，不计入本改动）。`npm run check`、`npm run build` 与脚本/测试 tsconfig 0 diagnostics；focused providers/auth/scripts 60 files / 398 tests 通过。隔离 RUNLEDGER_DIR 的真实 `runledger` tmux 会话正常渲染 catalog（azure-openai-responses 54 个模型、All models 列表可用），Esc/Esc/Ctrl+D 退出后会话消失。
+- 验证：生成前把 70 份 data 文件展平后与 HEAD 逐模型比对，4711 个模型 0 差异；`npm run build` 后 `dist/models.generated.js` 仍为 70 provider / 4711 模型，混合 api 的 opencode-zen 分组正确。remote 源生成 70 provider、provider 集合与提交版本一致（其中 28 份既有 provider 的 live 源漂移属 generator 既有网络依赖，不计入本改动）。`npm run check`、`npm run build` 与脚本/测试 tsconfig 0 diagnostics；focused providers/auth/scripts 60 files / 398 tests 通过；`npm test` 分桶全部 exit 0（末段 integration 与 tui-native 明细可见，无失败 bucket）。隔离 RUNLEDGER_DIR 的真实 `runledger` tmux 会话正常渲染 catalog（azure-openai-responses 54 个模型、All models 列表可用），Esc/Esc/Ctrl+D 退出后会话消失。
+- 读取方迁移：`tests/manual/development-cases/verify_model.py`（该目录是其他任务的未跟踪手动试跑 harness，不由本次提交接管）改为经 `_lookup_model` 兼容分组后的 `data/*.json`，扁平结构仍可读。
 
 ## OpenCode Go 会话路由修复（2026-09-11）
 
