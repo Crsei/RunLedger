@@ -1,6 +1,7 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
-import { createModels } from "../../src/models.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createModels, type Provider } from "../../src/models.ts";
+import { InMemoryModelsStore, type ProviderModelsStore } from "../../src/models-store.ts";
 import { opencodeGoProvider } from "../../src/providers/opencode-go.ts";
 import { createSessionModelStreamFn } from "../../src/runtime/agents/child-model-runtime.ts";
 import type { CacheRetention, Model } from "../../src/types.ts";
@@ -84,4 +85,149 @@ describe("OpenCode Go conversation routing", () => {
 			expect(requests[0]).toMatchObject({ "x-opencode-session": "direct-session", "user-agent": "fixture-agent/1.0", "x-test": "preserved" });
 		});
 	}
+});
+
+function scopedStore(store: InMemoryModelsStore): ProviderModelsStore {
+	return {
+		read: () => store.read("opencode-go"),
+		write: (entry) => store.write("opencode-go", entry),
+		delete: () => store.delete("opencode-go"),
+	};
+}
+
+function catalogResponse(data: readonly Record<string, unknown>[]): Response {
+	return new Response(JSON.stringify({ object: "list", data }), {
+		status: 200,
+		headers: { "content-type": "application/json" },
+	});
+}
+
+async function refresh(provider: Provider<GoApi>, credential: boolean) {
+	const refreshModels = provider.refreshModels;
+	if (!refreshModels) throw new Error("OpenCode Go provider must support model discovery");
+	await refreshModels({
+		...(credential ? { credential: { type: "api_key" as const, key: "go-test-key" } } : {}),
+		store: scopedStore(new InMemoryModelsStore()),
+		allowNetwork: true,
+	});
+}
+
+/**
+ * /models 端点比 models.dev 与 bundled snapshot 更新:它提供 deepseek-v4.1-flash、
+ * hy3-preview 等上游 catalog 尚未收录的模型,也停止提供 ox-alpha-free。
+ * 没有 discovery 时 TUI 只看到过期静态列表。
+ */
+describe("OpenCode Go model discovery", () => {
+	it("gates discovery behind an API key", async () => {
+		const fetchImpl = vi.fn(async () => catalogResponse([]));
+		const provider = opencodeGoProvider({ fetch: fetchImpl });
+		await expect(refresh(provider, false)).rejects.toThrow("OpenCode Go API key is not configured");
+		expect(fetchImpl).not.toHaveBeenCalled();
+	});
+
+	it("fetches the documented /models endpoint with bearer auth", async () => {
+		const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+		const fetchImpl: typeof fetch = async (input, init) => {
+			calls.push({ url: String(input), init });
+			return catalogResponse([{ id: "deepseek-v4.1-flash" }]);
+		};
+		await refresh(opencodeGoProvider({ fetch: fetchImpl }), true);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]).toMatchObject({
+			url: "https://opencode.ai/zen/go/v1/models",
+			init: {
+				method: "GET",
+				headers: { Authorization: "Bearer go-test-key", Accept: "application/json" },
+			},
+		});
+	});
+
+	it("exposes endpoint models that upstream catalogs lack", async () => {
+		const fetchImpl: typeof fetch = async () =>
+			catalogResponse([
+				{ id: "deepseek-v4.1-flash" },
+				{ id: "hy3-preview" },
+				{ id: "omen-alpha" },
+				{ id: "qwen3.7-max" },
+				{ id: "gpt-5.6-luna" },
+			]);
+		const provider = opencodeGoProvider({ fetch: fetchImpl });
+		await refresh(provider, true);
+
+		const ids = provider.getModels().map((model) => model.id);
+		expect(ids).toContain("deepseek-v4.1-flash");
+		expect(ids).toContain("hy3-preview");
+		expect(ids).toContain("omen-alpha");
+		// createProvider 的语义是静态基线 + 动态 overlay:动态结果只增改同 id 条目,
+		// 不删除基线里已被端点停用的模型。退休条目由 catalog 生成线负责(不在本测试范围)。
+		expect(ids).toContain("ox-alpha-free");
+		expect(ids).not.toContain("never-listed-anywhere");
+	});
+
+	it("keeps the reviewed api and baseUrl of known models instead of re-deriving them", async () => {
+		const fetchImpl: typeof fetch = async () =>
+			catalogResponse([
+				{ id: "minimax-m3", provider: { npm: "@ai-sdk/openai-compatible" } },
+				{ id: "gpt-5.6-luna", provider: { npm: "@ai-sdk/openai-compatible" } },
+				{ id: "kimi-k3" },
+			]);
+		const provider = opencodeGoProvider({ fetch: fetchImpl });
+		await refresh(provider, true);
+		expect(provider.getModels().find((model) => model.id === "minimax-m3")).toMatchObject({
+			api: "anthropic-messages",
+			baseUrl: "https://opencode.ai/zen/go",
+		});
+		expect(provider.getModels().find((model) => model.id === "gpt-5.6-luna")).toMatchObject({
+			api: "openai-responses",
+			baseUrl: "https://opencode.ai/zen/go/v1",
+		});
+	});
+
+	it("resolves endpoint-only models to a routable api with conservative defaults", async () => {
+		const fetchImpl: typeof fetch = async () =>
+			catalogResponse([{ id: "deepseek-v4.1-flash" }, { id: "kimi-k2.6-future" }, { id: "brand-new" }]);
+		const provider = opencodeGoProvider({ fetch: fetchImpl });
+		await refresh(provider, true);
+		const discovered = provider.getModels().find((model) => model.id === "deepseek-v4.1-flash");
+		expect(discovered).toMatchObject({
+			api: "openai-completions",
+			provider: "opencode-go",
+			baseUrl: "https://opencode.ai/zen/go/v1",
+			// /models 不返回能力字段:沿用其它动态 provider 的保守默认,不臆测窗口。
+			contextWindow: 128_000,
+			maxTokens: 8_192,
+		});
+		expect(provider.getModels().find((model) => model.id === "brand-new")).toMatchObject({
+			api: "openai-completions",
+		});
+	});
+
+	it("falls back to completions when npm metadata is absent and honors the Go overrides", async () => {
+		const fetchImpl: typeof fetch = async () =>
+			catalogResponse([
+				{ id: "minimax-m2.9" },
+				{ id: "future-anthropic", provider: { npm: "@ai-sdk/anthropic" } },
+				{ id: "future-openai", provider: { npm: "@ai-sdk/openai" } },
+			]);
+		const provider = opencodeGoProvider({ fetch: fetchImpl });
+		await refresh(provider, true);
+		expect(provider.getModels().find((model) => model.id === "minimax-m2.9")).toMatchObject({
+			api: "openai-completions",
+		});
+		expect(provider.getModels().find((model) => model.id === "future-anthropic")).toMatchObject({
+			api: "anthropic-messages",
+			baseUrl: "https://opencode.ai/zen/go",
+		});
+		expect(provider.getModels().find((model) => model.id === "future-openai")).toMatchObject({
+			api: "openai-responses",
+		});
+	});
+
+	it("keeps the last known-good catalog when discovery fails", async () => {
+		const fetchImpl: typeof fetch = async () => new Response("boom", { status: 502 });
+		const provider = opencodeGoProvider({ fetch: fetchImpl });
+		const before = provider.getModels().map((model) => model.id);
+		await expect(refresh(provider, true)).rejects.toThrow("Could not load OpenCode Go models: 502: boom");
+		expect(provider.getModels().map((model) => model.id)).toEqual(before);
+	});
 });

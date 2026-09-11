@@ -45,6 +45,8 @@ export interface RefreshModelsContext {
 
 export interface ModelsRefreshOptions {
 	allowNetwork?: boolean;
+	/** Restrict refresh to these provider IDs. Unknown and static providers are ignored. */
+	providers?: readonly string[];
 	/** Bypass provider freshness checks and fetch immediately when network access is allowed. */
 	force?: boolean;
 	signal?: AbortSignal;
@@ -276,9 +278,10 @@ class ModelsImpl implements MutableModels {
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		const allowNetwork = options.allowNetwork ?? true;
 		const errors = new Map<string, Error>();
+		const selected = options.providers === undefined ? undefined : new Set(options.providers);
 		const refreshable = Array.from(this.providers.values()).filter(
 			(provider): provider is Provider & Required<Pick<Provider, "refreshModels">> =>
-				provider.refreshModels !== undefined,
+				provider.refreshModels !== undefined && (selected === undefined || selected.has(provider.id)),
 		);
 
 		await Promise.all(

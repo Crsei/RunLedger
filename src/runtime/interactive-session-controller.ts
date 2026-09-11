@@ -26,6 +26,7 @@ import type {
 import { DEFAULT_AGENT_RUN_BUDGET } from "./types.ts";
 import type { ExtensionHookRuntime, ExtensionHookRuntimeResult } from "../extensions/turn-lifecycle.ts";
 import type { ContextAssemblySink, ModelContextAssembler, PromptInspection } from "./types.ts";
+import { ModelRequestSnapshots, type RequestDumpView, type RequestDumpResult } from "./model-request-snapshots.ts";
 import { runtimeDigest } from "./protocol/foundation.ts";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { SessionDomainMutationContext, SessionDomainRequestContext, SessionDomainResult } from "./session-runtime/domain-router.ts";
@@ -44,6 +45,11 @@ import {
   type ChildModelRequestRouter,
   type ChildModelRuntimeFactoryPort,
 } from "./agents/child-model-runtime.ts";
+
+/** 打开模型列表时的 catalog 刷新节流:同一 provider 在 TTL 内不重复发起网络请求。 */
+const MODEL_CATALOG_REFRESH_TTL_MS = 60_000;
+/** 单次刷新总预算;超时按 AbortSignal 中止,列表回退 last-known-good。 */
+const MODEL_CATALOG_REFRESH_TIMEOUT_MS = 10_000;
 
 export interface ModelRequestRouter extends ChildModelRequestRouter {}
 
@@ -156,6 +162,12 @@ export interface InteractiveSessionControllerPort {
   getProviderStatuses(): Promise<ProviderStatus[]>;
   getProvider(id: string): Provider | undefined;
   getAvailableModels(provider?: string): Promise<readonly Model<Api>[]>;
+  /**
+   * Best-effort 网络刷新动态 catalog(pi 在打开模型选择器时做同样的事)。
+   * 仅配置 env key、从不 login 的用户因此也能看到 provider 端新增的模型。
+   * 缺失表示该 controller 不提供刷新;实现必须在失败时保持 last-known-good。
+   */
+  refreshModels?(provider?: string): Promise<void>;
   login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential>;
   logout(providerId: string): Promise<void>;
   selectModel(model: Model<Api>): Promise<void>;
@@ -243,11 +255,14 @@ export class InteractiveSessionController {
   private readonly initialThinkingLevel: ModelThinkingLevel | undefined;
   private agent: Agent | undefined;
   private unsubscribeAgent: (() => void) | undefined;
-  /** `/dump` 捕获点：最近一次真实装配的 provider 面投影；未发生 turn 时保持 undefined。 */
-  private providerInspection: PromptInspection | undefined;
+  private readonly requestSnapshots = new ModelRequestSnapshots();
   private selectionChangePending = false;
   private promptPending = false;
   private selectionPersistenceWarning: string | undefined;
+  /** 每 provider 的 catalog 刷新时间;TTL 内不重复发起网络请求。 */
+  private readonly catalogRefreshedAt = new Map<string, number>();
+  /** 串行化并发刷新,避免同时打开多个列表时重复请求同一 provider。 */
+  private catalogRefreshInFlight: Promise<void> | undefined;
 
   private constructor(
     opts: InteractiveSessionControllerOptions,
@@ -347,7 +362,14 @@ export class InteractiveSessionController {
 
   /** 无真实 turn 时回退 harness 基座提示词；调用方据 `source` 字段区分。 */
   get promptInspection(): PromptInspection {
-    if (this.providerInspection !== undefined) return this.providerInspection;
+    return this.requestSnapshots.promptInspection ?? this.basePromptInspection;
+  }
+
+  requestDump(view: RequestDumpView): RequestDumpResult {
+    return this.requestSnapshots.dump(view, this.basePromptInspection);
+  }
+
+  private get basePromptInspection(): PromptInspection {
     return {
       systemPrompt: this.systemPrompt,
       tools: this.tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
@@ -411,6 +433,41 @@ export class InteractiveSessionController {
 	return isModelSelectable === undefined
 		? enabledModels
 		: enabledModels.filter((model) => isModelSelectable(model));
+  }
+
+  /**
+   * Best-effort 刷新动态 catalog(标准 CLI 只在 login 时做网络刷新,仅用 env key
+   * 的用户于是永远看不到 provider 侧新增的模型;pi 在打开模型选择器时刷新)。
+   * 失败只进入 refresh 结果的 errors,不影响调用方返回的 last-known-good 列表。
+   */
+  async refreshModels(provider?: string): Promise<void> {
+    const inFlight = this.catalogRefreshInFlight;
+    if (inFlight !== undefined) {
+      await inFlight.catch(() => undefined);
+      return;
+    }
+    const now = Date.now();
+    const targets = (provider === undefined ? this.models.getProviders().map((entry) => entry.id) : [provider])
+      .filter((id) => this.models.getProvider(id)?.refreshModels !== undefined)
+      .filter((id) => now - (this.catalogRefreshedAt.get(id) ?? 0) >= MODEL_CATALOG_REFRESH_TTL_MS);
+    if (targets.length === 0) return;
+    const operation = (async () => {
+      try {
+        await this.models.refresh({
+          allowNetwork: true,
+          providers: targets,
+          signal: AbortSignal.timeout(MODEL_CATALOG_REFRESH_TIMEOUT_MS),
+        });
+      } catch {
+        // 超时/中止:保留 last-known-good,下一次调用在 TTL 后重试。
+      } finally {
+        // 失败也要记时间:否则每次打开列表都会立刻重试同一个故障 provider。
+        for (const id of targets) this.catalogRefreshedAt.set(id, Date.now());
+        this.catalogRefreshInFlight = undefined;
+      }
+    })();
+    this.catalogRefreshInFlight = operation;
+    await operation;
   }
 
   async login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential> {
@@ -543,25 +600,6 @@ export class InteractiveSessionController {
       ...(this.modelRequestRouter === undefined ? {} : { modelRequestRouter: this.modelRequestRouter }),
     });
     const authorization = authorizationBeforeToolCall(this.policy);
-    // `/dump` 捕获点：包裹 assembler 记录本 turn 真实发出的 provider 面内容。
-    // 只在 assembler 存在时成立；无 assembler 的低层 fixture 由 getter 回退基座提示词。
-    const assembler = this.modelContextAssembler;
-    const wrappedAssembler: ModelContextAssembler | undefined = assembler === undefined
-      ? undefined
-      : async (input) => {
-        const assembled = await assembler(input);
-        const systemPrompt = assembled.context.systemPrompt ?? this.systemPrompt;
-        this.providerInspection = {
-          systemPrompt,
-          tools: (assembled.context.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
-          source: "assembled",
-          selection: { provider: input.model.provider, model: input.model.id, thinkingLevel: input.thinkingLevel ?? "off" },
-          turn: input.turn,
-          capturedAtMs: Date.now(),
-          assembledPromptDigest: runtimeDigest(systemPrompt),
-        };
-        return assembled;
-      };
     const beforeToolCall = async (request: Parameters<NonNullable<AgentLoopConfig["beforeToolCall"]>>[0], signal?: AbortSignal) => {
       const hook = await this.runExtensionHook("PreToolUse", request.args, request.toolCall.name, signal);
       if (hook?.blocked || hook?.decision === "deny" || hook?.decision === "aborted") return { block: true, reason: "PreToolUse hook denied the tool call" };
@@ -593,7 +631,8 @@ export class InteractiveSessionController {
         runBudget: this.runBudget,
         ...(this.runBudgetUsage === undefined ? {} : { runBudgetUsage: this.runBudgetUsage }),
         ...(this.toolResultOverflowStore === undefined ? {} : { toolResultOverflowStore: this.toolResultOverflowStore }),
-        ...(wrappedAssembler === undefined ? {} : { modelContextAssembler: wrappedAssembler }),
+        ...(this.modelContextAssembler === undefined ? {} : { modelContextAssembler: this.modelContextAssembler }),
+        modelRequestObserver: this.requestSnapshots.observe,
         ...(this.contextAssemblySink === undefined ? {} : { contextAssemblySink: this.contextAssemblySink }),
       },
       toolExecution: "sequential",

@@ -10,11 +10,14 @@ import { SESSION_PROTOCOL_BOUNDS } from "../../../src/runtime/session-server/pro
 import type { SessionCommandResult } from "../../../src/runtime/session-server/runtime-server.ts";
 import type { SessionFrameEnvelope } from "../../../src/runtime/session-server/protocol.ts";
 import type { SessionClientTransport } from "../../../src/runtime/session-server/client-transport.ts";
-import type { SessionCommandPort } from "../../../src/runtime/session-runtime/command-routes.ts";
+import type { SessionCommandPort, SessionCommandRouteTable } from "../../../src/runtime/session-runtime/command-routes.ts";
 import { createModelCommandRoutes, pageModels } from "../../../src/runtime/session-runtime/command-routes/model.ts";
 import type { InteractiveSessionControllerPort } from "../../../src/runtime/interactive-session-controller.ts";
 import { SessionInteractiveController, type SessionInteractiveSnapshot } from "../../../src/cli/session-interactive-controller.ts";
 import type { OwnedSessionHandle } from "../../../src/cli/session-client.ts";
+
+/** `models` 等 route 的返回集合;命名类型避免在测试里用 ReturnType 推导。 */
+type ModelCommandRoutes = Pick<SessionCommandRouteTable, "models">;
 
 function model(index: number, nameBytes = 400): Model<"openai-completions"> {
 	return {
@@ -42,6 +45,28 @@ function routesFor(models: readonly Model<"openai-completions">[] | (() => Promi
 		handleEditorActivity: () => undefined,
 	} as unknown as SessionCommandPort;
 	return createModelCommandRoutes(port);
+}
+
+/** 记录 refreshModels 调用;可选注入失败或返回新列表以验证 best-effort 语义。 */
+function routesWithRefresh(options: {
+	refresh?: (provider: string | undefined) => Promise<void>;
+	models: readonly Model<"openai-completions">[];
+}): { routes: ModelCommandRoutes; calls: Array<string | undefined> } {
+	const calls: Array<string | undefined> = [];
+	const port = {
+		domain: {
+			controller: {
+				refreshModels: async (provider?: string) => {
+					calls.push(provider);
+					await options.refresh?.(provider);
+				},
+				getAvailableModels: async () => options.models,
+			} as unknown as InteractiveSessionControllerPort,
+		},
+		invalidateIdleRecap: () => undefined,
+		handleEditorActivity: () => undefined,
+	} as unknown as SessionCommandPort;
+	return { routes: createModelCommandRoutes(port), calls };
 }
 
 function frameBytes(result: Record<string, unknown>): number {
@@ -145,5 +170,38 @@ describe("SessionInteractiveController model list accumulation", () => {
 		expect(requests.length).toBeGreaterThan(1);
 		expect(requests[0]).toEqual({ provider: "fixture" });
 		expect(requests[1]).toMatchObject({ provider: "fixture", cursor: expect.any(String) });
+	});
+});
+
+/**
+ * 打开模型列表即刷新 catalog(pi 在模型选择器里同样刷新)。标准 CLI 只在 login
+ * 时做网络刷新,仅配置 env key 的用户否则永远看不到 provider 端新增的模型。
+ */
+describe("model list catalog refresh", () => {
+	it("refreshes the requested provider before listing", async () => {
+		const { routes, calls } = routesWithRefresh({ models: [model(0, 0)] });
+		await routes.models({ body: { provider: "opencode-go" } } as never, {} as never);
+		expect(calls).toEqual(["opencode-go"]);
+	});
+
+	it("refreshes the whole catalog when no provider is requested", async () => {
+		const { routes, calls } = routesWithRefresh({ models: [model(0, 0)] });
+		await routes.models({ body: {} } as never, {} as never);
+		expect(calls).toEqual([undefined]);
+	});
+
+	it("still lists the last known-good catalog when the refresh fails", async () => {
+		const { routes, calls } = routesWithRefresh({
+			models: [model(0, 0)],
+			refresh: async () => { throw new Error("discovery unavailable"); },
+		});
+		const result = modelPage(await routes.models({ body: { provider: "opencode-go" } } as never, {} as never));
+		expect(calls).toEqual(["opencode-go"]);
+		expect(result.models.map((entry) => entry.id)).toEqual(["model-0"]);
+	});
+
+	it("lists models from controllers that cannot refresh", async () => {
+		const result = modelPage(await routesFor([model(0, 0)]).models({ body: {} } as never, {} as never));
+		expect(result.models.map((entry) => entry.id)).toEqual(["model-0"]);
 	});
 });

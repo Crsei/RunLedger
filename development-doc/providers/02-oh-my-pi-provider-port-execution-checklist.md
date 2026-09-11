@@ -4,6 +4,15 @@
 >
 > 下方 2026-08-16 的版本、数量、worktree 和验证结果均为历史快照，不能代表本次状态。
 
+## OpenCode Go catalog 与端点对账（2026-09-11）
+
+- 触发：TUI 的 opencode-go 列表比 provider 实际提供的模型少。
+- 对比证据（同一时刻三方对账）：官方文档公布的完整列表端点 `https://opencode.ai/zen/go/v1/models` 返回 37 个模型；已提交 `src/providers/data/opencode-go.json` 为 34 个；models.dev 为 36 个（含 `status: deprecated`）；oh-my-pi `models.json` 为 34 个。端点有而 catalog 没有的是 `deepseek-v4.1-flash`（2026-09-10 发布）、`hy3-preview`、`omen-alpha`、`deepseek-flash`；catalog 有而端点不再提供的是 `ox-alpha-free`。
+- 根因：RunLedger 的 opencode-go catalog 来自冻结的 oh-my-pi 18.1.9 快照（2026-09-05），早于这些模型上线；且 `opencode-go.ts` 当时没有 `fetchModels`（同族的 opencode-zen、deepinfra、cline-pass 等已有）。纯静态生成补不齐：`hy3-preview` / `deepseek-flash` 在 models.dev 与快照里都不存在。
+- 修改：`opencode-go.ts` 增加基于 `/models` 的动态发现（bearer 认证、调用方 signal、失败保留 last-known-good、空/坏 payload 与 HTTP 错误均 throw）。已知 id 沿用已审核 catalog 的 api/baseUrl/compat/limits，不重新推导；端点新增 id 按 models.dev npm 规则映射 wire，缺元数据时用与其它动态 provider 相同的保守默认（128k/8k），不臆测更大窗口。`ox-alpha-free` 属 catalog 生成线的退役条目，`createProvider` 的“静态基线 + 动态 overlay”语义（与 pi 一致）不删除基线条目，本次不处理。
+- 顺带修复两处使动态目录在标准 CLI 中不可用的问题：`ModelsRefreshOptions.providers` 此前只写在文档注释里、实现未过滤（pi 有实现），现按 provider 过滤；标准 CLI 只在 login 时做网络刷新，仅配置 env key 的用户永远看不到 provider 端新增模型，现由 `models` 命令在列出前 best-effort 刷新（每 provider 60s TTL、单次 10s 预算、失败不抛错并保持 last-known-good）。
+- 验证：`tests/providers/opencode-go.test.ts` 新增 6 个 discovery 用例（key gate、端点与鉴权头、端点新增 id 可见、已知 id api 不被重新推导、未知 id 的保守默认、失败保留 last-known-good）；`tests/runtime/model-catalog-refresh.test.ts`（5）覆盖 providers 过滤、TTL 节流、失败不抛；`tests/runtime/session-runtime/model-list-paging.test.ts`（9）覆盖列出前刷新与刷新失败仍列出。`npm run check` 0 diagnostics；`npm test` 全分桶 exit 0。重建 `dist` 后经生产 `builtinModels()` 路径刷新：opencode-go 34 → 38，`deepseek-v4.1-flash` / `hy3-preview` / `omen-alpha` / `deepseek-flash` 均出现且可 dispatch（已审核的 `deepseek-v4-flash` 仍为 openai-completions，`minimax-m3` 仍为 anthropic-messages + 裸 base path）；隔离 `RUNLEDGER_DIR` 的真实 TUI 中 opencode-go 显示 38 个模型。
+
 ## Model catalog 改为类型派生 shard（2026-09-11）
 
 - 触发：对照 pi / oh-my-pi，RunLedger 的 `src/providers/<id>.models.ts` 为每个模型逐条枚举 `Model<api> & { id; provider }`，70 份 shard 共约 1.9 万行生成代码；上游只用一份 JSON 加泛型派生。

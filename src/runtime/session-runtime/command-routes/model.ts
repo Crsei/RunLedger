@@ -45,6 +45,9 @@ export function createModelCommandRoutes(port: SessionCommandPort): Pick<Session
 		models: async (request) => {
 			if (port.domain === undefined) return { ok: false, code: "domain_unavailable" };
 			const provider = typeof request.body.provider === "string" ? request.body.provider : undefined;
+			// 打开模型列表前做 best-effort 网络刷新(pi 在模型选择器里同样刷新);
+			// 失败不影响列表,controller 内部保留 last-known-good 并有 TTL 节流。
+			await port.domain.controller.refreshModels?.(provider).catch(() => undefined);
 			const available = await port.domain.controller.getAvailableModels(provider);
 			const page = pageModels(available, request.body.cursor);
 			if (page === undefined) return { ok: false, code: "invalid_input" };
