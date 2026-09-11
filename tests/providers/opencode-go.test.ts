@@ -142,7 +142,7 @@ describe("OpenCode Go model discovery", () => {
 		});
 	});
 
-	it("prunes baseline models the endpoint no longer serves", async () => {
+	it("replaces the baseline with the endpoint catalog and adds models upstream lacks", async () => {
 		const fetchImpl: typeof fetch = async () =>
 			catalogResponse([
 				{ id: "deepseek-v4.1-flash" },
@@ -152,7 +152,8 @@ describe("OpenCode Go model discovery", () => {
 				{ id: "gpt-5.6-luna" },
 			]);
 		const provider = opencodeGoProvider({ fetch: fetchImpl });
-		expect(provider.getModels().map((model) => model.id)).toContain("ox-alpha-free");
+		// 基线的 `ox-alpha-free` 已按 provider 退役移除,不会再回到列表。
+		expect(provider.getModels().map((model) => model.id)).not.toContain("ox-alpha-free");
 
 		await refresh(provider, true);
 
@@ -160,7 +161,8 @@ describe("OpenCode Go model discovery", () => {
 		expect(ids).toContain("deepseek-v4.1-flash");
 		expect(ids).toContain("hy3-preview");
 		expect(ids).toContain("omen-alpha");
-		// opencode-go 的端点列表是权威目录:基线里已被 provider 下线的模型不再出现。
+		// 端点列表是权威目录:基线中未出现在结果里的模型(如 kimi-k3)被剪除。
+		expect(ids).not.toContain("kimi-k3");
 		expect(ids).not.toContain("ox-alpha-free");
 	});
 
@@ -229,5 +231,12 @@ describe("OpenCode Go model discovery", () => {
 		const before = provider.getModels().map((model) => model.id);
 		await expect(refresh(provider, true)).rejects.toThrow("Could not load OpenCode Go models: 502: boom");
 		expect(provider.getModels().map((model) => model.id)).toEqual(before);
+	});
+
+	it("excludes the provider-retired model from the static baseline", () => {
+		// 刷新不可用(离线/未配置)时用户只能看到静态基线;已下线的模型不能从这里出现。
+		const ids = opencodeGoProvider().getModels().map((model) => model.id);
+		expect(ids).not.toContain("ox-alpha-free");
+		expect(ids.length).toBeGreaterThan(30);
 	});
 });

@@ -114,6 +114,12 @@ interface PortedProviderConfig {
 	compat?: OpenAICompletionsCompat | OpenAIResponsesCompat;
 	/** 过滤掉不适合作为 builtin 的模型 id。 */
 	filterModel?: (id: string) => boolean;
+	/**
+	 * 目标侧退役的模型 id:来源快照仍带着它,但 provider 已确认不再提供。
+	 * 从静态基线中删除,避免离线/刷新失败时仍显示已下线的模型;
+	 * provider 端若实际仍提供,运行期权威刷新会把它带回来。
+	 */
+	retiredModels?: readonly string[];
 	/** 只同步目标已有协议支持的条目。 */
 	filterApi?: Api;
 }
@@ -209,7 +215,12 @@ const PORTED_PROVIDER_CONFIGS: readonly PortedProviderConfig[] = [
 	{ sourceKey: "nvidia", provider: "nvidia" },
 	{ sourceKey: "openai", provider: "openai" },
 	{ sourceKey: "openai-codex", provider: "openai-codex" },
-	{ sourceKey: "opencode-go", provider: "opencode-go" },
+	{
+		sourceKey: "opencode-go",
+		provider: "opencode-go",
+		// provider 的官方端点表(https://opencode.ai/docs/go/)与 /zen/go/v1/models 都已不再列出该模型。
+		retiredModels: ["ox-alpha-free"],
+	},
 	{ sourceKey: "together", provider: "together" },
 	{ sourceKey: "vercel-ai-gateway", provider: "vercel-ai-gateway" },
 	{ sourceKey: "xai", provider: "xai" },
@@ -317,6 +328,8 @@ function mapVendoredEntry(entry: JsonRecord, config: PortedProviderConfig): Mode
 	if (!id) return undefined;
 	if (config.filterApi && entry.api !== config.filterApi) return undefined;
 	if (config.filterModel && !config.filterModel(id)) return undefined;
+	// 目标侧退役的 id 不进入静态基线;来源快照里的同 id 行同样跳过。
+	if (config.retiredModels?.includes(id)) return undefined;
 	const contextWindow = positiveNumber(entry.contextWindow, 4096);
 	const api = (config.api ?? (typeof entry.api === "string" ? (entry.api as Api) : "openai-completions")) as Api;
 	const baseUrl = config.baseUrl ?? (typeof entry.baseUrl === "string" ? entry.baseUrl : "");
@@ -416,7 +429,9 @@ export function mergePortedProviderModels(models: Model<Api>[]): Model<Api>[] {
 			cost: { ...model.cost, ...(previous.cost.tiers ? { tiers: previous.cost.tiers } : {}) } };
 	});
 	const keys = new Set(ported.map((model) => `${model.provider}\0${model.id}`));
-	const retired = new Set(PORTED_PROVIDER_CONFIGS.flatMap((config) =>
-		((snapshot.removedModels as Record<string, string[]>)[config.sourceKey] ?? []).map((id) => `${config.provider}\0${id}`)));
+	const retired = new Set(PORTED_PROVIDER_CONFIGS.flatMap((config) => [
+		...((snapshot.removedModels as Record<string, string[]>)[config.sourceKey] ?? []),
+		...(config.retiredModels ?? []),
+	].map((id) => `${config.provider}\0${id}`)));
 	return [...ported, ...models.filter((model) => !keys.has(`${model.provider}\0${model.id}`) && !retired.has(`${model.provider}\0${model.id}`))];
 }
