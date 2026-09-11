@@ -232,9 +232,23 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		return undefined;
 	}
 
+	/**
+	 * `models` 按帧预算分页返回;这里跟随 nextCursor 累积整表。
+	 * cursor 必须是严格前进的安全整数(服务端十进制偏移),否则停止,避免坏 cursor 死循环。
+	 */
 	public async getAvailableModels(provider?: string): Promise<readonly Model<Api>[]> {
-		const response = await this.command("models", provider === undefined ? {} : { provider });
-		return Array.isArray(response.models) ? (response.models as Model<Api>[]) : [];
+		const models: Model<Api>[] = [];
+		let offset = 0;
+		for (;;) {
+			const response = await this.command("models", {
+				...(provider === undefined ? {} : { provider }),
+				...(offset === 0 ? {} : { cursor: String(offset) }),
+			});
+			if (Array.isArray(response.models)) models.push(...(response.models as Model<Api>[]));
+			const next = typeof response.nextCursor === "string" ? Number(response.nextCursor) : undefined;
+			if (next === undefined || !Number.isSafeInteger(next) || next <= offset) return models;
+			offset = next;
+		}
 	}
 
 	public async login(providerId: string, type: AuthType, _interaction: AuthInteraction): Promise<Credential> {

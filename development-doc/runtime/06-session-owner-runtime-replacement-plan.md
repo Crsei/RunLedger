@@ -823,6 +823,8 @@ src/
 
 退出条件：三个 client 同时观察同一 SessionRuntime；observer mutation 在进入 Agent/tool/backend 前被拒绝；slow client 不影响其他 client。已达成：protocol 4 + transport 8 + driver 6 + subscription 7 + multi-client 5 = 30 tests。
 
+补充修复（2026-09-11）：`models` 命令曾经把整份 available catalog 塞进单个 `command_result` frame，超过 `maxFrameBytes`(256 KiB) 时 RuntimeServer 按既有规则 `destroy(connection)`，客户端表现为 `Model discovery failed: Error: connection closed`，TUI 模型列表整体不可用。实测触发条件（静态 catalog 已足够，无需网络）：`openrouter` 503 模型 ≈296 KiB、`kilo` 545 ≈358 KiB、`nanogpt` 974 ≈632 KiB；已认证 provider 合计超限时一级 quick pick 也会失败。修复：`command-routes/model.ts` 按半帧预算分页并返回不透明十进制偏移 `nextCursor`（单条超预算模型独占一页，保证 cursor 严格前进；非法 cursor 返回 `invalid_input`），客户端 `getAvailableModels` 跟随 cursor 累积整表。证据：`tests/runtime/session-runtime/model-list-paging.test.ts`（5 tests，修复前 4 failed）；隔离 `RUNLEDGER_DIR` 真实 TUI 中 `openrouter 503`、`nanogpt 974`、`kilo 545` 及跨 provider 合计 2079 模型的聚合列表均正常渲染。
+
 ### R5：authority replay、checkpoint cache 与 recovery barrier
 
 目标：Runtime disposable、Session durable。
