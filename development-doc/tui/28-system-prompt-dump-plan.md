@@ -378,6 +378,8 @@ export interface PromptDumpPort {
 
 **状态：** P0–P6 已落地（实现 2026-09-10；2026-09-11 补齐 P3 剪贴板测试与本节证据）。真实 TTY 已完成；human-verified 与跨平台未关闭。
 
+**实现提交：** `2cd4df5`（`feat(tui): add /dump for the assembled system prompt`，含 §8.5 的全部路径）；本节其余内容为提交后补记的证据。
+
 ### 8.1 交付清单
 
 | 阶段 | 关键路径 |
