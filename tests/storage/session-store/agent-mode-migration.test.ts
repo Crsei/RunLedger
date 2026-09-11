@@ -28,7 +28,7 @@ describe("agent mode offline migration", () => {
 		expect(migrateSessionStoreToCurrent(db)).toMatchObject({ ok: false, code: "active_owners_present" });
 		expect(db.querySingle("SELECT MAX(schema_version) AS version FROM schema_meta")).toEqual({ version: 4 });
 		db.runSync("UPDATE session_owners SET state = 'unowned' WHERE session_id = ?", [legacyId]);
-		expect(migrateSessionStoreToCurrent(db)).toMatchObject({ ok: true, storeVersion: 5 });
+		expect(migrateSessionStoreToCurrent(db)).toMatchObject({ ok: true, storeVersion: 6 });
 		expect(store.getSession(legacyId)?.harnessProfile).toEqual(minimalHarnessProfileRef());
 		const mode = resolveAgentMode("minimal"); if (!mode.ok) throw new Error(mode.code);
 		const shellId = createRuntimeId("session", "shell-mode");

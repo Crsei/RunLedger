@@ -1,5 +1,7 @@
 # RunLedger Agent Mode 入口实施计划
 
+> 2026-09-11 更新：新建 `default` 使用 `standard@2`；恢复/attach/fork 仍保留原 ref。schema 6 升级必须先停止 active Session，再显式执行 `runledger migrate schema --confirm`。当前提示词合同与验证见 [Prompt 专题](../prompt/01-standard-execution-and-behavior-gaps.md)。下文原 standard@1 交付记录保留为历史。
+
 > 状态：implemented；M0–M6 代码、Linux 本地自动化与 built CLI/TUI 验证完成；外部 provider、人工与跨平台门禁见第 6 节。
 > 实施日期：2026-09-05–06；实施基线 `5a1b67a`，分支 `rollback/before-composer-shape`，共享工作树包含并发改动。
 > 范围：用户授权执行全部阶段，包含 shell-only、Plan 与用户配置；不修改 OS sandbox 或真实用户数据库。
@@ -12,7 +14,7 @@
 
 | 用户 Mode | 新建 durable ref | 模型工具 | Prompt / 扩展 |
 |---|---|---|---|
-| `default` | `standard@1` | 标准工具集，受当前策略约束 | 保留 assembled prompt、已装配扩展与受限 child 策略 |
+| `default` | `standard@2` | 标准工具集，受当前策略约束 | 保留 assembled prompt、已装配扩展与受限 child 策略 |
 | `minimal` | `minimal@2` | 仅 governed `bash`，无 background 参数 | 完整固定 prompt；不装配扩展、LSP、child |
 | `plan` | `plan@1` | `read`, `glob`, `ls`, `plan_read`, `plan_write` | 完整 Plan prompt；不装配扩展、LSP、child |
 | 恢复的旧 minimal | `minimal@1` | `bash`, `edit` | 旧 ref、prompt、descriptor 与工具 schema 不变 |

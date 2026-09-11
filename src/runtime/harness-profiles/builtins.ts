@@ -1,6 +1,7 @@
 /** 版本化 builtin Harness Profile；模型可见行为变化必须新增 version。 */
 
 import type { HarnessProfileDescriptor } from "./types.ts";
+import { STANDARD_EXECUTION_SYSTEM_PROMPT } from "./standard-prompt.ts";
 
 export const MINIMAL_HARNESS_SYSTEM_PROMPT = "You are a helpful software engineer assistant.";
 
@@ -20,6 +21,12 @@ const STANDARD_HARNESS_PROFILE = Object.freeze({
 		lifecycle: true,
 	}),
 	multiAgent: true,
+} satisfies HarnessProfileDescriptor);
+
+const STANDARD_EXECUTION_HARNESS_PROFILE = Object.freeze({
+	...STANDARD_HARNESS_PROFILE,
+	version: 2,
+	prompt: Object.freeze({ mode: "assembled", text: STANDARD_EXECUTION_SYSTEM_PROMPT }),
 } satisfies HarnessProfileDescriptor);
 
 const MINIMAL_HARNESS_PROFILE = Object.freeze({
@@ -70,6 +77,7 @@ const BUILTIN_HARNESS_PROFILES = Object.freeze([
 	MINIMAL_HARNESS_PROFILE,
 	SHELL_ONLY_HARNESS_PROFILE,
 	PLAN_HARNESS_PROFILE,
+	STANDARD_EXECUTION_HARNESS_PROFILE,
 ] satisfies readonly HarnessProfileDescriptor[]);
 
 export function builtinHarnessProfiles(): readonly HarnessProfileDescriptor[] {

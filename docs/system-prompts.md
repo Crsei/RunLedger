@@ -1,8 +1,10 @@
 # 真实 session 上下文快照
 
+> 本页保留 2026-09-10 standard@1 的历史请求证据。新建 default 已选择 standard@2，固定执行规则、来源标记与最新验收见 [Prompt 专题](../development-doc/prompt/01-standard-execution-and-behavior-gaps.md)；旧会话不自动更换 profile。
+
 本页与 [JSON 文件](system-prompts.json) 来自一次在本项目目录运行的真实 CLI/TUI session。捕获点是 provider 编码后发到本地 HTTP 端点的请求正文，包含最终 system prompt、用户消息以及完整工具描述和参数 schema。仅项目 `AGENTS.md` 正文按用户要求刻意省略，注入位置保留。
 
-活会话里取同一份数据不需要手工抓包：TUI 用 `/dump`（pager overlay + OSC 52 剪贴板 + `RUNLEDGER_DIR/tmp/dump/` 侧车 JSON），非交互用 `runledger dump` 打印同一投影的 JSON；两者的数据来源、边界与 schema 见 [Plan 28](../development-doc/tui/28-system-prompt-dump-plan.md)。本页保留本地 HTTP fixture 的手工抓取方法，它额外给出 provider 编码后的原始请求正文。
+活会话里取同一份数据不需要手工抓包：TUI 用 `/dump` 导出原始 provider 请求、`/dump system` 导出 system 内容（自动写出 OSC 52 并保存到 `RUNLEDGER_DIR/tmp/dump/`，只显示结果提示，不打开正文面板），非交互用 `runledger dump [request|system|assembled|base]` 输出同一快照正文；两者的数据来源、边界与 schema 见 [Plan 28](../development-doc/tui/28-system-prompt-dump-plan.md)。本页保留本地 HTTP fixture 的手工抓取方法，它额外给出 provider 编码后的原始请求正文。
 
 ## 本次运行
 

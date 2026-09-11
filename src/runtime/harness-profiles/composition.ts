@@ -5,7 +5,7 @@ import type { AgentTool } from "../types.ts";
 import { harnessToolReceiptTable } from "./tool-receipt-table.ts";
 import { projectHarnessTools } from "./tool-projection.ts";
 import { resolveHarnessProfile } from "./resolver.ts";
-import type { HarnessProfileRef, ResolvedHarnessComposition } from "./types.ts";
+import type { HarnessProfileDescriptor, HarnessProfileRef, ResolvedHarnessComposition } from "./types.ts";
 
 export interface ResolveHarnessCompositionInput {
 	readonly ref: HarnessProfileRef;
@@ -23,11 +23,20 @@ export class HarnessCompositionError extends Error {
 	}
 }
 
+/** composition root 在创建有生命周期的资源前也使用同一基座校验。 */
+export function assertAssembledPromptBase(descriptor: HarnessProfileDescriptor, systemPrompt: string): void {
+	const fixedBase = descriptor.prompt.mode === "assembled" ? descriptor.prompt.text : undefined;
+	if (fixedBase !== undefined && systemPrompt !== fixedBase && !systemPrompt.startsWith(`${fixedBase}\n\n`)) {
+		throw new HarnessCompositionError("harness_prompt_override_conflict", "assembled prompt must preserve the profile's fixed base");
+	}
+}
+
 export function resolveHarnessComposition(
 	input: ResolveHarnessCompositionInput,
 ): ResolvedHarnessComposition {
 	const resolved = resolveHarnessProfile(input.ref);
 	if (!resolved.ok) throw new HarnessCompositionError(resolved.error.code, resolved.error.message);
+	assertAssembledPromptBase(resolved.descriptor, input.systemPrompt);
 	const systemPrompt = resolved.descriptor.prompt.mode === "complete"
 		? resolved.descriptor.prompt.text!
 		: input.systemPrompt;

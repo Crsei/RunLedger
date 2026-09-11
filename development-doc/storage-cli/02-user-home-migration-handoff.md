@@ -1,5 +1,7 @@
 # Storage/CLI 用户级单一 home 迁移 handoff
 
+> 2026-09-11 SQLite schema 6：新空库直接安装当前 schema；已有库需要先停止所有 active Session，再运行 `runledger migrate schema --confirm`。普通启动只提示该命令，不自动迁移。此入口只升级 SQLite exact ref 约束，不导入 JSONL、不归档/删除源数据，也不切换已有 Session 的 profile。新建 default 使用 standard@2；恢复旧 Session 保留旧版本。验证与兼容边界见 [Prompt 专题](../prompt/01-standard-execution-and-behavior-gaps.md)。
+
 > 状态:已完成（S0–S5，2026-08-02）;实现了 canonical user home、旧 authority 拒绝与显式破坏性迁移。验证只使用临时测试目录，本仓库未对真实用户数据执行迁移、复制或删除
 > 上位契约:[Runtime 保存位置合同](../runtime/04-governed-agent-harness-runtime-plan.md#contract-persistence)
 > 历史输入:[`01-project-layout-cli-plan.md`](01-project-layout-cli-plan.md) 与 [`../project-cli-layout.md`](../project-cli-layout.md)（均已 superseded）

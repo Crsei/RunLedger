@@ -19,6 +19,7 @@ export interface HarnessProfileDescriptor {
 	readonly version: 1 | 2;
 	readonly prompt: {
 		readonly mode: "assembled" | "complete";
+		/** complete 是完整正文；standard@2 assembled 的 text 是不可替换的固定基座。 */
 		readonly text?: string;
 	};
 	readonly tools: {
@@ -170,7 +171,8 @@ export function isHarnessProfileRef(value: unknown): value is HarnessProfileRef 
 
 export function isHarnessProfileDescriptor(value: unknown): value is HarnessProfileDescriptor {
 	if (!Value.Check(HarnessProfileDescriptorSchema, value) || !supportedIdentity(value.id, value.version)) return false;
-	if (value.prompt.mode === "complete" ? value.prompt.text === undefined : value.prompt.text !== undefined) return false;
+	const requiresText = value.prompt.mode === "complete" || (value.id === "standard" && value.version === 2);
+	if (requiresText ? value.prompt.text === undefined : value.prompt.text !== undefined) return false;
 	if (value.tools.mode === "standard" ? value.tools.allowlist.length !== 0 : value.tools.allowlist.length === 0) return false;
 	return new Set(value.tools.allowlist).size === value.tools.allowlist.length;
 }
@@ -180,5 +182,5 @@ export function isHarnessCompositionReceipt(value: unknown): value is HarnessCom
 }
 
 function supportedIdentity(id: HarnessProfileId, version: number): boolean {
-	return version === 1 || (id === "minimal" && version === 2);
+	return version === 1 || ((id === "minimal" || id === "standard") && version === 2);
 }

@@ -1,5 +1,7 @@
 # RunLedger Runtime 通用协议、被动状态与用户级保存契约计划
 
+> 2026-09-11 Harness Profile 补充：新增 `standard@2` exact ref。其 assembled descriptor 的 `prompt.text` 是固定行为基座并参与 descriptor digest，实际请求仍装配环境/AGENTS/动态权限；standard@1 不带该字段，minimal/plan complete 语义不变。SQLite schema 6 只扩展 exact ref 白名单，已有 profile 与 lineage 不改写；普通启动不自动升级，显式 `runledger migrate schema --confirm` 仍受零 active owner gate 约束。实现、摘要和验收见 [Prompt 专题](../prompt/01-standard-execution-and-behavior-gaps.md)。
+
 > 文档状态:Runtime 通用 contract milestone 已验证;当前唯一权威入口;不承担 Runtime 行为实现状态
 > 基线复核:2026-08-02
 > 适用范围:`src/runtime/` 中的公共 protocol、types、schema、event payload、adapter port、用户级保存位置,以及对应 contract tests

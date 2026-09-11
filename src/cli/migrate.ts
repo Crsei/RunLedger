@@ -2,6 +2,7 @@ import { migrateLegacyData, MigrationError } from "../storage/migration.ts";
 import { resolveRunledgerHome } from "../storage/runledger-home.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateSessionStoreCommand } from "./session-store-migrate.ts";
+import { runMigrateSchemaCommand } from "./schema-migrate.ts";
 
 export interface MigrateArgs {
 	readonly source: string;
@@ -51,6 +52,10 @@ export function parseMigrateArgs(argv: readonly string[]): MigrateParseResult {
 }
 
 export async function runMigrateCommand(argv: readonly string[]): Promise<void> {
+	if (argv[0] === "schema") {
+		await runMigrateSchemaCommand(argv.slice(1));
+		return;
+	}
 	if (argv[0] === "session-store") {
 		await runMigrateSessionStoreCommand(argv.slice(1));
 		return;

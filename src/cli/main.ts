@@ -41,7 +41,7 @@ import {
 	type ControlCommand,
 } from "./control-commands.ts";
 import { openSessionDatabase } from "../storage/session-store/database.ts";
-import { checkStoreCompatibility, migrateSessionStoreToCurrent, readStoreHeader } from "../storage/session-store/schema-compatibility.ts";
+import { checkStoreCompatibility, readStoreHeader } from "../storage/session-store/schema-compatibility.ts";
 import { installSessionStoreSchema, SESSION_STORE_SCHEMA_VERSION } from "../storage/session-store/schema.ts";
 import { SessionStore } from "../storage/session-store/session-store.ts";
 import { resolveAgentMode, type AgentMode } from "../runtime/harness-profiles/agent-mode.ts";
@@ -181,16 +181,12 @@ export async function main(argv: readonly string[]): Promise<void> {
       return;
     }
   }
-  let compatibility = checkStoreCompatibility(db);
+  const compatibility = checkStoreCompatibility(db);
   if (compatibility.ok && compatibility.header.storeVersion < SESSION_STORE_SCHEMA_VERSION) {
-    const migration = migrateSessionStoreToCurrent(db);
-    if (!migration.ok) {
-      db.close();
-		process.stderr.write(`[runledger] session store legacy -> current migration failed: ${migration.code}: ${migration.detail}\n`);
-      process.exit(2);
-      return;
-    }
-    compatibility = checkStoreCompatibility(db);
+    db.close();
+    process.stderr.write(`[runledger] session store schema ${compatibility.header.storeVersion} requires explicit migration: stop active sessions, then run 'runledger migrate schema --confirm'\n`);
+    process.exit(2);
+    return;
   }
   if (!compatibility.ok) {
     db.close();

@@ -11,6 +11,7 @@ runledger auth-gateway <serve|token|status|check> [网关参数]
 runledger workspace capability
 runledger migrate --source <path> --confirm-delete
 runledger migrate session-store --confirm-archive
+runledger migrate schema --confirm
 runledger storage prune-legacy --manifest <digest> --confirm-delete
 ```
 
@@ -146,8 +147,11 @@ runledger --session-id <session-id> mcp doctor
 | `workspace capability` | 无必需 flag | 只读展示各平台 path/Git/process/cleanup 证据矩阵，不证明 sandbox enforcement |
 | `workspace --help` | 也支持 `-h`；单独 `workspace` 也显示帮助 | 展示 workspace 子命令帮助 |
 | `migrate --source <path> --confirm-delete` | 两项必填；支持 `--source=...` | 外部 legacy source 迁入 canonical JSONL 布局，验证后按 manifest 删除源内容 |
+| `migrate schema --confirm` | 显式确认与零 active Session | 将既有 SQLite schema 升级到 6，保留 Session profile；普通启动不自动迁移 |
 | `migrate session-store --confirm-archive` | 显式确认必填 | canonical JSONL 导入 SQLite，并将源文件归档；不直接导入任意外部路径 |
 | `storage prune-legacy --manifest <digest> --confirm-delete` | 两项必填；支持 `--manifest=...` | 删除对应已验证归档，属于显式删除操作 |
+
+新建 `default` 会话使用 `standard@2` 执行提示词；恢复和 fork 保留原 profile。旧数据库先关闭 active Session，再显式升级 schema；[提示词合同](../development-doc/prompt/01-standard-execution-and-behavior-gaps.md)说明版本差异。
 
 迁移不支持 `--dry-run`、`--read-only` 或 `--fallback`。session-store 迁移不接受 `--workspace-id` / `--repository-id` 手动覆盖；workspace identity 由当前路径与 Git 证据推导。外部旧数据与 SQLite 导入是两个不同流程，使用前阅读 [迁移 handoff](../development-doc/storage-cli/02-user-home-migration-handoff.md)和 [Persistence](subsystems/persistence.md)。
 

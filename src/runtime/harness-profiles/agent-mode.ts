@@ -14,7 +14,7 @@ export function isAgentMode(value: unknown): value is AgentMode {
 	return value === "default" || value === "minimal" || value === "plan";
 }
 export function resolveAgentMode(value: unknown): { readonly ok: true; readonly ref: HarnessProfileRef } | { readonly ok: false; readonly code: string } {
-	if (value === "default") return { ok: true, ref: standardHarnessProfileRef() };
+	if (value === "default") return { ok: true, ref: standardHarnessProfileRef(2) };
 	if (value === "minimal") return { ok: true, ref: shellOnlyHarnessProfileRef() };
 	if (value === "plan") return { ok: true, ref: planHarnessProfileRef() };
 	return { ok: false, code: "unsupported_agent_mode" };

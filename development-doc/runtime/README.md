@@ -9,6 +9,7 @@
 | [Runtime 08](08-bounded-multi-agent-system-plan.md) | bounded multi-agent 与明确非目标 |
 | [Runtime 09](09-minimal-harness-profile-implementation-plan.md) | 不可变 Harness Profile 的现有实现与验收 |
 | [Runtime 10：Agent Mode 入口](10-agent-mode-entry-implementation-plan.md) | `/mode`、CLI/config/Footer、minimal@2 与 plan@1；实施及各类验收门禁 |
+| [standard 执行提示词](../prompt/01-standard-execution-and-behavior-gaps.md) | standard@2、default 新建选择、schema 6 显式迁移与行为缺口 |
 | [Trace](trace/README.md) | 记录与导出专题 |
 
 完整开发模块导航见 [开发索引](../00-index.md)。

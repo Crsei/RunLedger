@@ -13,7 +13,7 @@ const MINIMAL_DIGEST = "f77ad882678905487fc76b109d8c88dac16622174553ae7bd08772f8
 describe("builtin HarnessProfiles", () => {
 	it("freezes standard@1 and minimal@1 in stable registry order", () => {
 		const builtins = builtinHarnessProfiles();
-		expect(builtins.map(({ id, version }) => `${id}@${version}`)).toEqual(["standard@1", "minimal@1", "minimal@2", "plan@1"]);
+		expect(builtins.map(({ id, version }) => `${id}@${version}`)).toEqual(["standard@1", "minimal@1", "minimal@2", "plan@1", "standard@2"]);
 		expect(builtins.every((descriptor) => Object.isFrozen(descriptor))).toBe(true);
 		expect(builtins.every((descriptor) => Object.isFrozen(descriptor.prompt)
 			&& Object.isFrozen(descriptor.tools)

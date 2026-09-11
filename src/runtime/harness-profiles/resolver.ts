@@ -33,6 +33,7 @@ function refFor(id: HarnessProfileId, version: 1 | 2 = 1): HarnessProfileRef {
 }
 
 const STANDARD_REF = refFor("standard");
+const STANDARD_EXECUTION_REF = refFor("standard", 2);
 const MINIMAL_REF = refFor("minimal");
 const SHELL_ONLY_REF = refFor("minimal", 2);
 const PLAN_REF = refFor("plan");
@@ -45,8 +46,9 @@ export function shellOnlyHarnessProfileRef(): HarnessProfileRef {
 	return SHELL_ONLY_REF;
 }
 
-export function standardHarnessProfileRef(): HarnessProfileRef {
-	return STANDARD_REF;
+/** 无参数调用保留旧 ref；产品新建 default 显式选择版本 2。 */
+export function standardHarnessProfileRef(version: 1 | 2 = 1): HarnessProfileRef {
+	return version === 1 ? STANDARD_REF : STANDARD_EXECUTION_REF;
 }
 
 export function minimalHarnessProfileRef(): HarnessProfileRef {
@@ -54,7 +56,7 @@ export function minimalHarnessProfileRef(): HarnessProfileRef {
 }
 
 export function resolveHarnessProfileId(id: unknown): HarnessProfileResolution {
-	if (id === "standard") return resolveHarnessProfile(STANDARD_REF);
+	if (id === "standard") return resolveHarnessProfile(STANDARD_EXECUTION_REF);
 	if (id === "minimal") return resolveHarnessProfile(SHELL_ONLY_REF);
 	return {
 		ok: false,

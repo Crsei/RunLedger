@@ -13,7 +13,7 @@ describe("HarnessProfile contracts", () => {
 		expect(isHarnessProfileRef(standard)).toBe(true);
 		expect(isHarnessProfileRef({ ...standard, authority: "user" })).toBe(false);
 		expect(isHarnessProfileRef({ ...standard, id: "custom" })).toBe(false);
-		expect(isHarnessProfileRef({ ...standard, version: 2 })).toBe(false);
+		expect(isHarnessProfileRef({ ...standard, version: 3 })).toBe(false);
 		expect(isHarnessProfileRef({ ...standard, descriptorDigest: { algorithm: "sha256", digest: "f".repeat(63) } })).toBe(false);
 	});
 
@@ -43,7 +43,7 @@ describe("HarnessProfile contracts", () => {
 			ok: false,
 			error: { code: "harness_profile_digest_mismatch" },
 		});
-		expect(resolveHarnessProfile({ ...standard, version: 2 })).toMatchObject({
+		expect(resolveHarnessProfile({ ...standard, version: 3 })).toMatchObject({
 			ok: false,
 			error: { code: "unsupported_harness_profile" },
 		});

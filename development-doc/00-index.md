@@ -22,6 +22,7 @@
 | 开发模块 | 计划与设计文档 | 关注范围 | 当前事实入口 |
 |---|---|---|---|
 | Agent Harness 既有执行闭环加固 | [`Plan 14`](plan/14-agent-harness-reliability-hardening-plan.md) | 失败响应执行边界、工具输出、上下文选择、重复失败与中断恢复回归；不新增产品功能 | H1–H5 已实现；完整 check/test/build、确定性 HTTP/Owner 与 Built CLI/TTY 已通过；六例结果与人工/平台验收缺口见本文 |
+| Prompt / standard 行为基座 | [`prompt/README.md`](prompt/README.md) | standard@2 固定执行规则、AGENTS 来源标记、显式 schema 迁移与 Codex 行为缺口 | [`实现与缺口说明`](prompt/01-standard-execution-and-behavior-gaps.md)；行为遵循率与基础设施能力分开验收 |
 | Codex 提示词模板 | [`notez/README.md`](notez/README.md) | 创建任务、执行、debug、重构、文档和协作提示词 | 可复制模板，不作为项目实现状态或自动执行指令 |
 | 项目运行与结构审计 | [`audit/README.md`](audit/README.md)、[`2026-09-05 审计与修复记录`](audit/2026-09-05-runtime-and-structure.md)、[`CLI/TUI 命令与提问实测`](audit/2026-09-05-cli-tui-command-audit.md) | 运行缺陷修复、过度防御清理、依赖边界及 check/build/test/真实 CLI 复验 | 原始审计、命令修复与重新实测证据分开；剩余领域能力、拆包及外部/人工/平台验收见清单，不替代领域计划 |
 | Runtime Contract | [`runtime/04-governed-agent-harness-runtime-plan.md`](runtime/04-governed-agent-harness-runtime-plan.md) | 当前权威 contract:公共类型/schema、event payload、adapter port、ref/receipt/snapshot/projection、逻辑保存分类与 `RUNLEDGER_DIR`/默认 `~/.runledger` 单一用户级布局 | contract work package 证据;行为和迁移状态查对应专项、当前代码/tests 与 `AGENTS.md` |

@@ -5,7 +5,7 @@ import { minimalHarnessProfileRef, resolveHarnessProfile, standardHarnessProfile
 
 describe("canonical agent modes", () => {
 	it("maps default to durable standard and minimal to a new shell-only version", () => {
-		expect(resolveAgentMode("default")).toEqual({ ok: true, ref: standardHarnessProfileRef() });
+		expect(resolveAgentMode("default")).toEqual({ ok: true, ref: standardHarnessProfileRef(2) });
 		const minimal = resolveAgentMode("minimal");
 		expect(minimal).toMatchObject({ ok: true, ref: { id: "minimal", version: 2 } });
 		if (!minimal.ok) return;

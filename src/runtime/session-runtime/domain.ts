@@ -1,5 +1,7 @@
 import { TrajectoryService } from "../trajectory/service.ts";
 import { SessionPlanDomain } from "./plan-domain.ts";
+import { buildStandardExecutionPrompt } from "./standard-system-prompt.ts";
+import { assertAssembledPromptBase } from "../harness-profiles/composition.ts";
 import { createSessionPlanTools } from "./plan-tools.ts";
 import { planReadOnlyExecutionEnv } from "./plan-execution.ts";
 import { GovernedToolAuthorizationPolicy } from "../../security/integration/runtime-tool-authorization.ts";
@@ -125,6 +127,7 @@ export async function assembleSessionDomain(
 	if (catalog === undefined) throw new Error(`session not found during domain composition: ${sessionId}`);
 	const harnessProfile = resolveHarnessProfile(catalog.harnessProfile);
 	if (!harnessProfile.ok) throw new HarnessCompositionError(harnessProfile.error.code, harnessProfile.error.message);
+	if (options.systemPrompt !== undefined) assertAssembledPromptBase(harnessProfile.descriptor, options.systemPrompt);
 	if (
 		harnessProfile.descriptor.prompt.mode === "complete"
 		&& options.systemPrompt !== undefined
@@ -251,7 +254,9 @@ export async function assembleSessionDomain(
 		...(extensions === undefined || !harnessProfile.descriptor.extensions.tools ? [] : extensions.tools),
 	];
 	const standardSystemPrompt = harnessProfile.descriptor.prompt.mode === "assembled"
-		? options.systemPrompt ?? buildSystemPrompt(options.cwd, options.layout.agents)
+		? options.systemPrompt ?? (catalog.harnessProfile.version === 2
+			? buildStandardExecutionPrompt(options.cwd, options.layout.agents)
+			: buildSystemPrompt(options.cwd, options.layout.agents))
 		: MINIMAL_HARNESS_SYSTEM_PROMPT;
 	const harnessComposition = resolveHarnessComposition({
 		ref: catalog.harnessProfile,
