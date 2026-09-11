@@ -4,6 +4,16 @@
 >
 > 下方 2026-08-16 的版本、数量、worktree 和验证结果均为历史快照，不能代表本次状态。
 
+## OpenCode Go 会话路由修复（2026-09-11）
+
+- 触发：Go 返回 HTTP 400 `MissingSessionID`。官方 [Go 客户端要求](https://opencode.ai/docs/go/#where-can-i-use-it) 要求每段对话发送稳定的 `x-opencode-session`，并使用客户端自己的 User-Agent。
+- 根因：`createSessionModelStreamFn` 仅把 session ID 用于治理路由，没有传给模型请求选项；自动标题的独立 completion 也未传递。Go factory 的三种 API 未装配 Go 会话请求头。
+- 修复：Session-owned 主请求、child、ephemeral 请求与自动标题都传递所属 session ID；Go factory 在 `stream` / `streamSimple` 的共同协议包装中设置 `x-opencode-session` 和 `User-Agent: RunLedger`。缓存关闭仍保留会话路由信息；不生成逐请求随机 ID。请求方显式 headers 的大小写和覆盖语义保留。
+- 范围为会话 ID 透传与 Go 请求头装配，沿用现有模型 catalog 和认证流程。
+- 自动化：本地 HTTP 接收端对缺少会话头的请求返回 400，三种协议的直接请求复现；修复后 9 个 Go 用例覆盖 OpenAI completions、Anthropic messages、OpenAI responses，缓存 none/short、连续请求同 ID、不同会话不同 ID、直接 stream 与显式 User-Agent。连同 controller/auto-title/child 回归，4 files / 52 tests 通过。完整 `npm run check`、`npm run build` 与 `npm test` 退出 0（全量六个测试分桶均执行）。
+- 构建后 CLI/TTY：标准 PATH 指向本仓 `bin/runledger.js`；临时 Bun preload 仅把 `opencode.ai` fetch 转到本地 HTTP 接收端并拒绝其他外部 fetch。隔离 HOME/RUNLEDGER_DIR/XDG，使用 fake key，`opencode-go/deepseek-v4-flash` 的两轮主请求和一次自动标题均发送同一非空会话头与 `RunLedger` User-Agent；显示两次回复，Esc/Ctrl+D 退出 0，测试 server/TTY/临时目录已清理。
+- 证据边界：没有读取真实 API key、没有调用真实 Go 订阅；外部 provider 成功响应仍待用户重启 CLI 后实测。已有进程不会自动热更新已加载代码。
+
 ## 0. 当前基线与范围判定
 
 - [x] 已确认 oh-my-pi 工作树干净，当前版本为 17.2.15。

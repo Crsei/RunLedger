@@ -74,7 +74,7 @@ describe("same-model Session title lifecycle", () => {
 		expect(captured.model).toBe(selected);
 		expect(captured.context?.tools).toEqual([]);
 		expect(captured.context?.messages).toHaveLength(1);
-		expect(captured.options).toMatchObject({ maxTokens: 64, temperature: 0, reasoning: "minimal" });
+		expect(captured.options).toMatchObject({ sessionId: options().sessionId, maxTokens: 64, temperature: 0, reasoning: "minimal" });
 		expect(setAutoTitle).toHaveBeenCalledWith(expect.objectContaining({
 			providerId: "coding-provider",
 			modelId: "coding-model",

@@ -114,7 +114,8 @@ export function createSessionModelStreamFn(options: {
 			const decision = await options.modelRequestRouter.route(request);
 			if (decision.outcome !== "compatible") return deniedModelStream(requestModel, decision);
 		}
-		return options.models.streamSimple(requestModel, context as Context, streamOptions);
+		// Session Owner 的稳定 ID 同时覆盖主请求、child 与 ephemeral 请求。
+		return options.models.streamSimple(requestModel, context as Context, { ...streamOptions, sessionId: options.sessionId });
 	};
 }
 

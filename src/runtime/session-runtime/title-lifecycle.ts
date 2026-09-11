@@ -111,6 +111,7 @@ export class SessionTitleLifecycle {
 			}
 			const completion = await Promise.race([
 				this.options.models.completeSimple(model, context, {
+					sessionId: this.options.sessionId,
 					signal: controller.signal,
 					maxTokens: 64,
 					temperature: 0,

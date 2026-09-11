@@ -675,6 +675,7 @@ describe("InteractiveSessionController", () => {
 	it("runs idle recap through the active model without mutating the interactive transcript", async () => {
 		const cwd = await tempDir();
 		const { models, p1 } = fixtureModels();
+		const stream = vi.spyOn(models, "streamSimple");
 		const initialMessages: AgentTool[] = [];
 		const controller = await InteractiveSessionController.create({
 			cwd,
@@ -703,6 +704,7 @@ describe("InteractiveSessionController", () => {
 		});
 
 		expect(result).toContain("Summarize the next action");
+		expect(stream).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ sessionId: controller.sessionId }));
 		expect(controller.messages).toEqual(before);
 		expect(events).toEqual([]);
 		controller.dispose();
