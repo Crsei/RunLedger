@@ -113,6 +113,8 @@ export function llamaCppProvider(options: LlamaCppProviderOptions = {}): Provide
 		auth: { apiKey: llamaCppAuth },
 		// 纯动态 provider:无静态 baseline,首次 discovery 前列表为空(与来源一致)。
 		models: [],
+		// 端点返回完整目录:成功刷新后剪除基线里已被 provider 下线的模型。
+		dynamicModelsAuthoritative: true,
 		fetchModels: (context) => fetchModels(context, baseUrl, options.fetch ?? globalThis.fetch),
 		api: openAICompletionsApi(),
 	});

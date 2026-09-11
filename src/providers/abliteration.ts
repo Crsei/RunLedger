@@ -13,6 +13,8 @@ export function abliterationProvider(options: { baseUrl?: string; fetch?: typeof
 		baseUrl,
 		auth: { apiKey: envApiKeyAuth("Abliteration API key", ["ABLITERATION_API_KEY", "ABLIT_KEY"]) },
 		models,
+		// 端点返回完整目录:成功刷新后剪除基线里已被 provider 下线的模型。
+		dynamicModelsAuthoritative: true,
 		fetchModels: (context) => fetchUpdatedProviderModels({ provider: "abliteration", api: "openai-responses", baseUrl, models, context, fetch: options.fetch ?? globalThis.fetch }),
 		api: openAIResponsesApi(),
 	});

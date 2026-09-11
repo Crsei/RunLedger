@@ -147,6 +147,8 @@ export function aimlapiProvider(options: AimlapiProviderOptions = {}): Provider<
 		baseUrl,
 		auth: { apiKey: envApiKeyAuth("AIML API key", ["AIMLAPI_API_KEY"]) },
 		models: staticModels,
+		// 端点返回完整目录:成功刷新后剪除基线里已被 provider 下线的模型。
+		dynamicModelsAuthoritative: true,
 		fetchModels: (context) => fetchModels(context, baseUrl, options.fetch ?? globalThis.fetch, staticModels),
 		api: openAICompletionsApi(),
 	});

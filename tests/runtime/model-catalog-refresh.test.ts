@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderAuth } from "../../src/auth/types.ts";
 import { createModels, createProvider } from "../../src/models.ts";
+import { InMemoryModelsStore } from "../../src/models-store.ts";
 import { buildRunledgerLayout } from "../../src/runtime/contracts/storage-layout.ts";
 import { InteractiveSessionController } from "../../src/runtime/interactive-session-controller.ts";
 import { MemoryLedger } from "../../src/runtime/ledger/memory-ledger.ts";
@@ -171,5 +172,94 @@ describe("InteractiveSessionController.refreshModels", () => {
 		} finally {
 			controller.dispose();
 		}
+	});
+});
+
+/**
+ * 目录落地语义:provider 都会下线模型,所以端点返回完整列表时必须能剪除基线条目。
+ * 权威(true)与 overlay(默认)两种语义都在 createProvider 层,provider 各自选择;
+ * 失败与空结果不得清空目录。
+ */
+describe("createProvider dynamic catalog semantics", () => {
+	function providerWith(options: {
+		id: string;
+		baseline: readonly Model<Api>[];
+		authoritative?: boolean;
+		fetchModels: () => Promise<readonly Model<Api>[]>;
+	}) {
+		return createProvider({
+			id: options.id,
+			name: options.id,
+			auth: envAuth(),
+			models: options.baseline,
+			...(options.authoritative === undefined ? {} : { dynamicModelsAuthoritative: options.authoritative }),
+			fetchModels: options.fetchModels,
+			api: { stream: () => stopStream(), streamSimple: () => stopStream() },
+		});
+	}
+
+	async function refreshOnce(provider: ReturnType<typeof createProvider>, store = new InMemoryModelsStore()) {
+		const refreshModels = provider.refreshModels;
+		if (!refreshModels) throw new Error("provider must support discovery");
+		await refreshModels({
+			credential: { type: "api_key", key: "k" },
+			store: {
+				read: () => store.read(provider.id),
+				write: (entry) => store.write(provider.id, entry),
+				delete: () => store.delete(provider.id),
+			},
+			allowNetwork: true,
+		});
+	}
+
+	it("drops baseline-only models after an authoritative refresh", async () => {
+		const provider = providerWith({
+			id: "authoritative",
+			baseline: [model("authoritative", "retired"), model("authoritative", "kept")],
+			authoritative: true,
+			fetchModels: async () => [model("authoritative", "kept"), model("authoritative", "new")],
+		});
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["retired", "kept"]);
+		await refreshOnce(provider);
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["kept", "new"]);
+	});
+
+	it("keeps baseline-only models when discovery is an overlay", async () => {
+		const provider = providerWith({
+			id: "overlay",
+			baseline: [model("overlay", "retired"), model("overlay", "kept")],
+			fetchModels: async () => [model("overlay", "kept"), model("overlay", "new")],
+		});
+		await refreshOnce(provider);
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["retired", "kept", "new"]);
+	});
+
+	it("keeps the last known-good catalog when an authoritative refresh fails", async () => {
+		let fail = true;
+		const provider = providerWith({
+			id: "authoritative",
+			baseline: [model("authoritative", "retired")],
+			authoritative: true,
+			fetchModels: async () => {
+				if (fail) throw new Error("discovery unavailable");
+				return [model("authoritative", "live")];
+			},
+		});
+		await expect(refreshOnce(provider)).rejects.toThrow("discovery unavailable");
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["retired"]);
+
+		fail = false;
+		await refreshOnce(provider);
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["live"]);
+	});
+
+	it("keeps the baseline when no refresh has succeeded yet", async () => {
+		const provider = providerWith({
+			id: "authoritative",
+			baseline: [model("authoritative", "baseline")],
+			authoritative: true,
+			fetchModels: async () => [model("authoritative", "live")],
+		});
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["baseline"]);
 	});
 });

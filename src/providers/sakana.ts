@@ -108,6 +108,8 @@ export function sakanaProvider(options: SakanaProviderOptions = {}): Provider<"o
 		baseUrl,
 		auth: { apiKey: envApiKeyAuth("Sakana AI API key", ["SAKANA_API_KEY", "FUGU_API_KEY"]) },
 		models: staticModels,
+		// 端点返回完整目录:成功刷新后剪除基线里已被 provider 下线的模型。
+		dynamicModelsAuthoritative: true,
 		fetchModels: (context) => fetchModels(context, baseUrl, options.fetch ?? globalThis.fetch, staticModels),
 		api: openAIResponsesApi(),
 	});

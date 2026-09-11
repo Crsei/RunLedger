@@ -142,7 +142,7 @@ describe("OpenCode Go model discovery", () => {
 		});
 	});
 
-	it("exposes endpoint models that upstream catalogs lack", async () => {
+	it("prunes baseline models the endpoint no longer serves", async () => {
 		const fetchImpl: typeof fetch = async () =>
 			catalogResponse([
 				{ id: "deepseek-v4.1-flash" },
@@ -152,16 +152,16 @@ describe("OpenCode Go model discovery", () => {
 				{ id: "gpt-5.6-luna" },
 			]);
 		const provider = opencodeGoProvider({ fetch: fetchImpl });
+		expect(provider.getModels().map((model) => model.id)).toContain("ox-alpha-free");
+
 		await refresh(provider, true);
 
 		const ids = provider.getModels().map((model) => model.id);
 		expect(ids).toContain("deepseek-v4.1-flash");
 		expect(ids).toContain("hy3-preview");
 		expect(ids).toContain("omen-alpha");
-		// createProvider 的语义是静态基线 + 动态 overlay:动态结果只增改同 id 条目,
-		// 不删除基线里已被端点停用的模型。退休条目由 catalog 生成线负责(不在本测试范围)。
-		expect(ids).toContain("ox-alpha-free");
-		expect(ids).not.toContain("never-listed-anywhere");
+		// opencode-go 的端点列表是权威目录:基线里已被 provider 下线的模型不再出现。
+		expect(ids).not.toContain("ox-alpha-free");
 	});
 
 	it("keeps the reviewed api and baseUrl of known models instead of re-deriving them", async () => {

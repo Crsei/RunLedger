@@ -543,8 +543,23 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
 	auth: ProviderAuth;
 	/** Static baseline model list (empty for purely dynamic providers). */
 	models: readonly Model<TApi>[];
-	/** Fetch a dynamic model overlay. createProvider restores/persists it through ModelsStore. */
+	/**
+	 * Fetch a dynamic model overlay. createProvider restores/persists it through ModelsStore.
+	 *
+	 * 动态目录语义见 `dynamicModelsAuthoritative`。
+	 */
 	fetchModels?: (context: RefreshModelsContext) => Promise<readonly Model<TApi>[]>;
+	/**
+	 * 决定动态结果的落地方式。true:一次成功的 `fetchModels` 结果即该 provider 的
+	 * 完整目录,静态基线中未出现在结果里的条目被剪除(provider 下线模型后不再复活,
+	 * 对照 oh-my-pi 的 `dynamicModelsAuthoritative`)。false(默认):结果只做 overlay,
+	 * 只增改同 id 条目,基线独有条目保留。
+	 *
+	 * 只在端点确实返回完整列表时启用:精选/部分列表(Kilo 的推荐列表、ClinePass 的
+	 * roster)启用会把 provider 实际仍提供的模型隐藏。空结果视为失败(discovery 实现
+	 * 约定),因此不会因为一次空响应清空整份目录。
+	 */
+	dynamicModelsAuthoritative?: boolean;
 	filterModels?: (models: readonly Model<TApi>[], credential: Credential | undefined) => readonly Model<TApi>[];
 	/** Single implementation, or map keyed by `model.api` for mixed-API providers. */
 	api: ProviderStreams | Partial<Record<TApi, ProviderStreams>>;
@@ -561,7 +576,10 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 	let dynamicModels: readonly Model<TApi>[] = [];
 	let inflightRefresh: Promise<void> | undefined;
 	const fetchModels = input.fetchModels;
+	/** 权威目录:端点列表即完整事实,基线独有条目在端点下线后必须消失。 */
+	const prunesBaseline = input.dynamicModelsAuthoritative === true;
 	const currentModels = (): readonly Model<TApi>[] => {
+		if (prunesBaseline && dynamicModels.length > 0) return [...dynamicModels];
 		const merged = [...baselineModels];
 		for (const model of dynamicModels) {
 			const index = merged.findIndex((entry) => entry.id === model.id);

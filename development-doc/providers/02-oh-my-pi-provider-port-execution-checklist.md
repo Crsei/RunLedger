@@ -4,6 +4,14 @@
 >
 > 下方 2026-08-16 的版本、数量、worktree 和验证结果均为历史快照，不能代表本次状态。
 
+## Model catalog 落地语义:权威目录 vs overlay（2026-09-11）
+
+- 触发：provider 会下线模型（opencode-go 端点已不再提供 `ox-alpha-free`，而它仍留在静态 catalog 里）。原 `createProvider` 只有"静态基线 + 动态 overlay"一种语义，动态结果只增改同 id 条目、从不删除基线条目，因此下线模型永久可见且可被选中。
+- 修改：`CreateProviderOptions` 增加 `dynamicModelsAuthoritative`（默认 false，语义对照 oh-my-pi 的 `dynamicModelsAuthoritative`）。true 时一次成功的 `fetchModels` 结果即该 provider 的完整目录，静态基线中未出现在结果里的条目被剪除；false 时保持 overlay。空结果由各 discovery 实现按失败处理（throw → 保留 last-known-good），因此不会因一次空响应清空目录；刷新失败同样保留上次成功结果。
+- 分类依据：以 oh-my-pi `packages/catalog/src/provider-models/descriptors.ts` 与同包 mapper 中显式声明的 `dynamicModelsAuthoritative` 为准（该字段描述的是"端点是否给出完整目录"），逐个 provider 对照。24 个启用权威语义：abliteration、aiand、aimlapi、alibaba-token-plan、baseten、bedrock-mantle、cline-pass、coreweave、deepinfra、gmi-cloud、novita、opencode-go、opencode-zen、sakana、siliconflow、siliconflow-cn、synthetic、umans、yolo-auto、zhipu-coding-plan，以及 4 个本地 OpenAI-compatible provider（litellm / lm-studio / vllm / llama-cpp，其 `/models` 就是本机 server 实际提供的全部模型，静态条目仅是发现前的占位）。11 个保持 overlay：alibaba-coding-plan、kilo、kimi-code、meta、nanogpt、proxy-provider、qianfan、qwen-portal、venice、wafer-serverless、zenmux——这些端点是精选/部分列表，剪除基线会隐藏 provider 实际仍提供的模型。
+- 与旧记录的差异：本文档 §2.1 矩阵（2026-08-16 快照）把 coreweave 标为"非 authoritative"，上游 18.1.x 已显式标为 authoritative，本次以上游为准；其余 provider 的矩阵分类与上游一致。
+- 验证：`tests/runtime/model-catalog-refresh.test.ts`（9 tests）覆盖权威剪除、overlay 保留基线、失败保留 last-known-good、未刷新时显示基线；`tests/providers/opencode-go.test.ts` 断言刷新后 `ox-alpha-free` 消失且端点新增模型出现。重建 `dist` 后经 `builtinModels()`：opencode-go 基线 34（含 stale）→ 权威刷新后 37（stale 消失，端点新增模型出现）；隔离 `RUNLEDGER_DIR` 的真实 TUI 显示 `opencode-go 37 available models`。`npm run check` 0 diagnostics；`npm test` 在只含本次改动的隔离副本中除一个与本改动无关的环境用例（`/tmp` 与仓库跨文件系统的 `EXDEV`，主工作树同一文件 4/4 通过）外全绿。
+
 ## OpenCode Go catalog 与端点对账（2026-09-11）
 
 - 触发：TUI 的 opencode-go 列表比 provider 实际提供的模型少。
@@ -55,7 +63,7 @@
 - 唯一活动来源为 `scripts/sources/oh-my-pi-provider-models-18.1.9.json`，包含来源 commit、原始 catalog SHA-256、可移植字段与退役 ID。`extract-oh-my-pi-models.ts` 校验来源 HEAD 和 catalog 干净状态，按白名单裁剪来源 compat；旧 17.2.15 文件只保留为历史输入。上游 MIT notice 位于 `scripts/sources/oh-my-pi-LICENSE`。
 - `scripts/ported-provider-catalog.ts` 同步模型元数据，保留目标已有 native API、base URL、headers、compat、分层价格和本地 thinking 修正；Azure 继续经目标 OpenAI→Azure 生成链。来源 `openrouter` 映射到目标 `openai-completions`，Mistral 保留目标 conversations；Google Vertex 仅接收已支持的 Vertex API，ZAI 仅接收目标现有 completions 模型。
 - 来源已移除的 `opencode` provider 在 RunLedger 保留，避免改变已有 provider/settings/session 身份；target-only provider/model 也保留。来源 LiteLLM 多协议、XAI 既有模型切换 Responses、ZAI/Vertex 其他协议分支，以及统一 compat/auth/transportFetch 架构重写不在本次 catalog 合并中自动替换。§7 的特殊协议和 OAuth 暂缓项继续成立，不能据此宣称与 oh-my-pi 全量行为等价。
-- 四个新 provider 的 discovery 共用 5 秒超时与调用方 AbortSignal，区分 Cline roster、DeepInfra metadata 和普通 `/models`；空/坏响应与 HTTP 错误不覆盖上次成功结果。DeepInfra 仅纳入 `chat` 模型，避免把 context 总容量误作输出上限；未知模型使用保守容量回退。继续采用 RunLedger 的静态基线加动态 overlay、进程内 ModelsStore，不宣称上游的目录替换语义或跨进程持久化。
+- 四个新 provider 的 discovery 共用 5 秒超时与调用方 AbortSignal，区分 Cline roster、DeepInfra metadata 和普通 `/models`；空/坏响应与 HTTP 错误不覆盖上次成功结果。DeepInfra 仅纳入 `chat` 模型，避免把 context 总容量误作输出上限；未知模型使用保守容量回退。静态基线与动态 overlay 的关系已按 2026-09-11 的目录权威性改造更新，见下节；进程内 ModelsStore 与跨进程持久化结论不变。
 - ClinePass 保留公共 model ID，只在请求端增加订阅前缀，免费模型保持 raw ID；思考预算来自固定快照。Abliteration 不请求其不支持的 encrypted reasoning 字段。
 - **主工作区 CLI 使用前置条件**：当前工作区另有未提交的 model compatibility admission 修复，要求 canonical manifest 包含对应 verified profile，否则标准 CLI 返回 `model profile is not verified`。该 CLI 修复不属于本次 provider 提交；本次 TUI smoke 基于包含该修复的工作区，不能据此宣称 provider 提交自身引入了该 gate。真实用户 settings/auth/manifest 均未改动；隔离目录中明确标注的 UI fixture profile 不能视为真实模型能力认证。
 

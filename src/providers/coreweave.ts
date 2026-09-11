@@ -211,6 +211,8 @@ export function coreweaveProvider(options: CoreweaveProviderOptions = {}): Provi
 		baseUrl,
 		auth: { apiKey: coreweaveAuth },
 		models: staticModels,
+		// 端点返回完整目录:成功刷新后剪除基线里已被 provider 下线的模型。
+		dynamicModelsAuthoritative: true,
 		fetchModels: (context) => fetchModels(context, baseUrl, options.fetch ?? globalThis.fetch, staticModels, authCtx),
 		api: openAICompletionsApi(),
 	});
