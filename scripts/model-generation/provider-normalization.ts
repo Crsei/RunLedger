@@ -73,7 +73,7 @@ export function normalizeProviderCatalogs(allModels: Model<any>[]): Record<strin
 		compat: {
 			supportsStore: false,
 			supportsDeveloperRole: false,
-			supportsReasoningEffort: false,
+			supportsReasoningEffort: true,
 			thinkingFormat: "deepseek",
 			maxTokensField: "max_tokens",
 		},
@@ -81,6 +81,11 @@ export function normalizeProviderCatalogs(allModels: Model<any>[]): Record<strin
 
 	// Temporary overrides until upstream model metadata is corrected.
 	for (const candidate of allModels) {
+		if (candidate.provider === "opencode-go" && candidate.id === "deepseek-v4.1-flash") {
+			// 包括旧冻结输入：V4.1 的命名强度为 low/high/max，且需要发送 reasoning_effort。
+			candidate.thinkingLevelMap = { minimal: null, low: "low", medium: null, high: "high", xhigh: null, max: "max" };
+			candidate.compat = { ...candidate.compat, supportsReasoningEffort: true };
+		}
 		if (candidate.provider === "github-copilot" && GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS.has(candidate.id)) {
 			candidate.contextWindow = 1000000;
 		}

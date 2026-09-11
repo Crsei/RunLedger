@@ -6,6 +6,9 @@
 
 ## OpenCode Go 套餐范围修正（2026-09-11，当前合同）
 
+- Thinking 补正：上次新增 `deepseek-v4.1-flash` 时漏配 `thinkingLevelMap` 且误设 `supportsReasoningEffort: false`，导致 `/thinking` 不显示 max、请求只切换 thinking 开关。按 [DeepSeek 官方 thinking 文档](https://api-docs.deepseek.com/guides/thinking_mode/) 与 [V4.1 编码规范](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/main/encoding/README.md) 补齐 `off / low / high / max`，发送对应 `reasoning_effort`；生成器同时修正旧冻结输入中的该模型。测试覆盖静态/刷新后档位、各强度与 off 参数、simple stream 的 max 参数，未修改其它模型档位。
+- Thinking 验证：重新生成后只有 Go 的 V4.1 Flash 元数据变化；`npm run check`（610 consumers / 0 diagnostics）与 build 通过。隔离目录中的真实 linked CLI / tmux 显示 max 选项，键盘选中后底栏为 `think:max`，退出码 0、active owners 0。simple stream 参数由本地 HTTP fixture 验证，未发起付费推理。临时证据：`/tmp/runledger-go-thinking-fix/`，真实 TUI 结果在 `tui2/result.json`。
+- Thinking 全量回归：`npm test` 退出码 0；Vitest 516 files / 3389 tests passed，3 tests skipped；Bun 156 tests passed / 0 failed。
 - 用户复现：Go 实际套餐为 27 个模型，TUI 却显示 37 个并允许选择 GLM-5。此前将 `/zen/go/v1/models` 的裸 ID 列表等同于套餐范围，判断错误；刷新成功也会重新引入套餐外模型。
 - 当前来源对账：[Go 产品页](https://opencode.ai/go) 明确标注 27；[How it works 与 Estimated requests](https://opencode.ai/docs/go/) 均列出 27 个模型。`/models` 返回 37 个路由 ID；同页 Endpoints/价格表还保留 MiniMax M2.5，因此不能把路由表、兼容别名、套餐模型数混为一谈。本次按用户确认及产品页/套餐清单的 27 项收敛。
 - 独立对账：models.dev 当前 Go 目录为 36 项，其中 9 项 `status: deprecated`，非弃用项恰为同一组 27 项。旧生成链虽然在 models.dev 归一化时跳过 deprecated，随后仍会合并旧 vendored 快照；没有完整套餐范围约束就会把旧 ID 带回。

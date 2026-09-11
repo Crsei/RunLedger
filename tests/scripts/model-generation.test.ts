@@ -25,6 +25,17 @@ function completionsModel(id: string, provider: string, baseUrl: string): Model<
 }
 
 describe("OpenCode Go plan generation", () => {
+	it("repairs V4.1 Flash effort metadata from an older frozen input", () => {
+		const stale = completionsModel("deepseek-v4.1-flash", "opencode-go", "https://opencode.ai/zen/go/v1");
+		stale.reasoning = true;
+		stale.compat = { thinkingFormat: "deepseek", supportsReasoningEffort: false };
+		const model = normalizeProviderCatalogs([stale])["opencode-go"]?.[stale.id];
+		expect(model).toMatchObject({
+			thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high", xhigh: null, max: "max" },
+			compat: { thinkingFormat: "deepseek", supportsReasoningEffort: true },
+		});
+	});
+
 	it("removes routing-only IDs from every source without pruning other providers", () => {
 		const input = [
 			completionsModel("glm-5", "opencode-go", "https://opencode.ai/zen/go/v1"),

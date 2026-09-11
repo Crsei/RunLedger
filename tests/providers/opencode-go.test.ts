@@ -1,6 +1,7 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createModels, type Provider } from "../../src/models.ts";
+import { createModels, getSupportedThinkingLevels, type Provider } from "../../src/models.ts";
+import { buildParams } from "../../src/api/openai-completions/params.ts";
 import { InMemoryModelsStore, type ProviderModelsStore } from "../../src/models-store.ts";
 import { opencodeGoProvider } from "../../src/providers/opencode-go.ts";
 import { createSessionModelStreamFn } from "../../src/runtime/agents/child-model-runtime.ts";
@@ -56,6 +57,19 @@ async function endpoint(api: GoApi) {
 const APIs: readonly GoApi[] = ["openai-completions", "anthropic-messages", "openai-responses"];
 const RETENTIONS: readonly CacheRetention[] = ["none", "short"];
 describe("OpenCode Go conversation routing", () => {
+	it("keeps max through the simple stream request path for V4.1 Flash", async () => {
+		const { provider, model: localModel } = await endpoint("openai-completions");
+		const source = provider.getModels().find((model) => model.id === "deepseek-v4.1-flash");
+		if (!source) throw new Error("missing V4.1 Flash model");
+		let payload: unknown;
+		const result = await provider.streamSimple({ ...source, baseUrl: localModel.baseUrl }, { messages: [] }, {
+			apiKey: "fixture-key", sessionId: "thinking-max-session", reasoning: "max",
+			onPayload: (value) => { payload = value; },
+		}).result();
+		expect(result.stopReason, result.errorMessage).toBe("stop");
+		expect(payload).toMatchObject({ thinking: { type: "enabled" }, reasoning_effort: "max" });
+	});
+
 	for (const api of APIs) {
 		it.each(RETENTIONS)(`${api} preserves Session Owner identity with cache retention %s`, async (cacheRetention) => {
 			const { requests, provider, model } = await endpoint(api);
@@ -117,6 +131,24 @@ async function refresh(provider: Provider<GoApi>, credential: boolean) {
  * 静态、网络与旧缓存都必须收敛到已核对的套餐范围。
  */
 describe("OpenCode Go model discovery", () => {
+	it("preserves V4.1 Flash effort choices and serializes max after discovery", async () => {
+		const provider = opencodeGoProvider({ fetch: async () => catalogResponse([{ id: "deepseek-v4.1-flash" }]) });
+		for (const online of [false, true]) {
+			if (online) await refresh(provider, true);
+			const model = provider.getModels().find((candidate) => candidate.id === "deepseek-v4.1-flash");
+			if (!model || model.api !== "openai-completions") throw new Error("missing V4.1 Flash completions model");
+			const completionsModel: Model<"openai-completions"> = { ...model, api: "openai-completions" };
+			expect(getSupportedThinkingLevels(model)).toEqual(["off", "low", "high", "max"]);
+			for (const reasoningEffort of ["low", "high", "max"] as const) {
+				expect(buildParams(completionsModel, { messages: [] }, { reasoningEffort })).toMatchObject({
+					thinking: { type: "enabled" }, reasoning_effort: reasoningEffort,
+				});
+			}
+			expect(buildParams(completionsModel, { messages: [] })).toMatchObject({ thinking: { type: "disabled" } });
+			expect(buildParams(completionsModel, { messages: [] })).not.toHaveProperty("reasoning_effort");
+		}
+	});
+
 	it("gates discovery behind an API key", async () => {
 		const fetchImpl = vi.fn(async () => catalogResponse([]));
 		const provider = opencodeGoProvider({ fetch: fetchImpl });
