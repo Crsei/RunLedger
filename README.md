@@ -1,165 +1,197 @@
 # RunLedger
 
-> Provider 当前状态（2026-09-05）：72 个 builtin provider、70 份静态 catalog、4,710 个模型；本次新增 Abliteration、ClinePass、DeepInfra、Yolo-Auto。实现、验证与 CLI compatibility profile 前置条件见 [provider 增量同步记录](development-doc/providers/02-oh-my-pi-provider-port-execution-checklist.md#04-增量同步2026-09-05当前)。下方 pi-ai 移植数量为早期快照。
+**在终端里完成开发任务，让每次 Agent 执行都有账可查。**
 
-企业级 **可审计** Agent Runtime 的最小可运行脚手架,本期已接入 pi-ai 全量移植层(provider 抽象 + 凭据 + OAuth 流 + 模型 catalog),并在其上**复活了 agent-loop + Agent + ledger + echo tool + mock-stream** 的最小可运行形态,经真实 LLM(deepseek-v4-pro)端到端验证。
+RunLedger 是面向可审计执行的 AI 编程 Agent 与运行时。你可以在终端中阅读代码、修改文件、运行命令、审阅计划，并继续或派生已有会话。模型调用、工具执行和会话状态由同一个 Session Runtime 管理，权限决策与执行回执为排查问题和恢复工作提供依据。
 
-> 名字来源:`Run` + `Ledger`,即"运行账本"。每次 agent 启动 → LLM 调用 → 工具执行 → 结束的全程事件,以 append-only JSONL 落盘,形成不可篡改的审计线索。
+名字来自 **Run + Ledger（运行账本）**：既关注 Agent 如何完成任务，也关注它执行了什么、在什么权限下执行，以及中断后如何继续。
 
-## 项目目标
+[快速开始](#快速开始) · [日常使用](#日常使用) · [Agent 模式](#agent-模式) · [文档](docs/README.md) · [架构](docs/architecture.md)
 
-1. **可审计**:全程事件入账,JSONL 单文件 append-only,易于排查、回放、合规;
-2. **pi-ai 全量移植**:30 个 API 适配 + 36 个 builtin provider(35 份自动生成 catalog,1061 个模型)+ 完整 OAuth/pkce/凭据流;
-3. **agent-loop 已复活**(`src/runtime/`):`runAgentLoop` + `Agent` + `MemoryLedger` + `echoTool` + `mockStreamFn`,
-   `tests/agent-loop.test.ts` 2/2 通过;`examples/run.ts` 用 `asset/api-key.json` 中 deepseek-v4-pro
-   走现有 pi-ai `openai-completions` adapter 跑通 turn-1 toolUse → turn-2 stop 全链路。
+## 为什么使用 RunLedger
 
-详细架构与对照(参考 `pi` 项目)见 [`docs/pi-architecture.md`](./docs/pi-architecture.md)。
+### 在终端中完成开发闭环
+
+OpenTUI 界面支持流式回答、工具执行状态、代码与 Diff 展示，以及模型、思考等级和主题设置。会话历史可以恢复或分叉；运行中的任务可以中断，受管进程可通过 `/processes` 查看。
+
+### 让工具执行受权限约束
+
+文件、Shell 和外部工具调用经过统一的权限检查与执行治理。你可以通过 `/permissions` 查看和调整权限，处理需要批准的操作；执行尝试与回执关联到会话，便于定位失败和审阅副作用。
+
+### 把会话作为持久工作单元
+
+SQLite 保存会话目录、事件、执行回执和恢复状态。每个活跃会话由一个 Session Owner 管理；同一主机的多个客户端可以连接同一会话，由一个控制连接提交变更，其他连接观察。恢复时会核对工作区身份和执行状态，遇到未决执行可通过 `/recovery` 检查。
+
+### 选择模型，按需接入扩展
+
+统一的 Provider 层提供模型目录、流式请求、API key 与 OAuth 认证。标准模式可按配置与信任策略接入 Skills、声明式 Plugins、Hooks、MCP 和 LSP。实际可用模型取决于凭据、Provider 能力与兼容检查；扩展以当前会话暴露的能力为准。
+
+### 追踪一次任务的运行过程
+
+本地 Runtime Trace 关联 run、模型请求、工具调用、上下文及用量信息，支持事件记录和可选的正文工件。它补充 SQLite 中的会话事实，帮助分析一次任务的执行过程。事件哈希链提供完整性校验；这不等于存储无法被篡改。
 
 ## 快速开始
 
-```bash
+当前仓库按源码构建使用，`package.json` 标记为 `private`。
+
+准备以下环境：
+
+- Node.js **≥ 22.19.0**、npm 与 Bun **≥ 1.3.0**。
+- Git、Rust/Cargo 工具链与本机链接器，用于源码获取及原生语法高亮构建；Linux 构建还需要 `cc`。
+- 支持交互的终端。平台适配与验收情况见[平台证据与缺口](development-doc/worktree-sandbox-permisson/evidence-verification-gaps.md)。
+
+```sh
+git clone https://github.com/Crsei/RunLedger.git
+cd RunLedger
 npm install
-npm run check          # TypeScript 完整 typecheck(本期已通过)
-npm run demo           # catalog 摘要 + mock loop demo + 真实 deepseek-v4-pro demo(需 asset/api-key.json)
-npm run generate-models  # 重新生成 src/providers/data/*.json、src/providers/*.models.ts 与 src/models.generated.ts
-npm run build          # 编译到 dist/
-npm test               # vitest,当前测试全绿
-npm link               # 注册 dist CLI 到 PATH(可 `npm unlink -g runledger` 撤销)
-runledger --version    # 打印版本
-runledger --help       # 看 CLI 旗标
-ANTHROPIC_API_KEY=sk-ant-... runledger --provider anthropic --model claude-haiku-4-5
-runledger                              # 无凭据进入 /provider、/login onboarding
-runledger -c                          # continueRecent 续最近会话
-runledger --resume                    # TUI 选择历史会话
-runledger --session <path>.jsonl      # 直接打开 canonical home 内的 session 文件
-runledger --fork <path>.jsonl         # fork canonical home 内的 session
-runledger migrate --source <path> --confirm-delete  # 显式破坏性迁移旧 source
+npm run build
+npm link
+runledger --version
+runledger --help
 ```
 
-Agent mode 使用 `runledger --mode default|minimal|plan` 新建会话，TUI 使用 `/mode` 或 `/mode <name>`，`/minimal` 直接选择 minimal。选择不同模式会新建空会话并保留当前模型/thinking，原会话仍可恢复；有未发送草稿或正在执行时拒绝切换。Footer 显示当前实际模式与工具摘要，权限仍由 `/permissions` 独立管理。
+`runledger` 通过 Bun 加载构建后的 `dist/cli/cli.js`。更新源码后需重新执行 `npm run build`。
 
-- `default`：标准工具集，按当前策略装配扩展等能力。
-- `minimal`：新会话为 `minimal@2`，模型只见 governed `bash`；旧 `minimal@1` 恢复/fork 保留 bash/edit。shell-only 不代表只读，shell 分类与权限拒绝规则保持生效。
-- `plan`：只提供 read/glob/ls 和 plan_read/plan_write；只能修改 Session 内的计划工件，禁止 shell、网络和工作区写入。`/plan` 审阅正文并请求/批准/拒绝/取消/结束工作流；批准不会放开工作区写入，实施时用 `/mode default` 新建会话。
+然后在你要处理的项目目录中启动：
 
-可在用户级 `settings.json` 设置 `"agentMode": "minimal"`（也接受 `default` / `plan`）。新建优先级为 CLI > 用户设置 > default；workspace 设置不接受此项。恢复、attach、continue、fork 使用已有 durable profile，拒绝 CLI 覆盖。旧 `--harness-profile standard|minimal` 保留为兼容入口，新建 minimal 同样选 `minimal@2`。详见 [Agent Mode 实施与验收](development-doc/runtime/10-agent-mode-entry-implementation-plan.md)。
-
-Storage/CLI 当前只写单一用户级 home：`RUNLEDGER_DIR`（必须是预创建的绝对目录）或默认 `~/.runledger`；session 位于 `sessions/YYYY/MM/DD/`，workspace settings 位于 `projects/<workspace-key>/settings.json`。旧项目级 `.runledger/`、`~/.runledger/agent/` 与任意 `sessionDir` 只可作为显式迁移 source；不提供只读 import、dry-run、fallback 或物理 rollback。详见 [`development-doc/storage-cli/02-user-home-migration-handoff.md`](./development-doc/storage-cli/02-user-home-migration-handoff.md)。
-
-## 架构(本期)
-
-```
-RunLedger
-├── pi-ai 移植层(本期完成)
-│   ├── src/api/        30 个 provider 适配实现
-│   ├── src/auth/       凭据类型 + 8 个 OAuth 流
-│   ├── src/providers/  36 个 builtin provider + 35 份 data/*.json catalog(1061 个模型)
-│   ├── src/storage/    auth.json + lockfile + runtime override + 路径解析
-│   ├── src/utils/      uuid / overflow / retry / diagnostics / event-stream / ... 21 个
-│   ├── src/types.ts    中心类型
-│   ├── src/models.ts   Provider/Models factory
-│   ├── src/index.ts    pi-style barrel
-│   └── scripts/generate-models.ts  模型 catalog 生成器
-│
-└── agent-loop 层(本期已复活,在 src/runtime/)
-    ├── agent-loop.ts   runAgentLoop 双层循环(outer turn / inner stream)
-    ├── agent.ts        Agent 类(subscribe / on / prompt)
-    ├── types.ts        复用 pi-ai 类型并补 LlmContext / AgentEvent / AgentTool 等
-    ├── ledger/         memory-ledger / jsonl-ledger(append-only,失败不抛错)
-    ├── tools/echo.ts   echo 工具(回显 text,验证 tool 调用链路)
-    └── providers/mock-stream.ts  mock provider(对齐 pi-ai AssistantMessageEvent 协议)
+```sh
+cd /path/to/your/project
+runledger
 ```
 
-## 目录结构
+首次使用可在 TUI 中通过 `/provider` 配置 Provider、`/login` 完成认证，再用 `/model` 选择模型。也可以使用对应 Provider 支持的环境凭据，并显式指定模型：
 
-```
-RunLedger/
-├── src/
-│   ├── index.ts            # pi-style barrel
-│   ├── types.ts            # 中心类型
-│   ├── models.ts           # Provider / Models factory
-│   ├── models-store.ts     # InMemoryModelsStore / 凭据入出
-│   ├── models.generated.ts # 自动生成(1061 个模型)
-│   ├── oauth.ts            # OAuth 入口
-│   ├── bun-oauth.ts        # Bun runtime OAuth 桥
-│   ├── bedrock-provider.ts
-│   ├── session-resources.ts
-│   ├── image-models.ts / image-models.generated.ts / images.ts / images-api-registry.ts / images-models.ts
-│   ├── api/                # 30 个 provider 适配
-│   ├── auth/               # 凭据 + 8 个 OAuth 流(github-copilot / openai-codex / anthropic / xai / radius / device-code / pkce / oauth-page)
-│   ├── providers/          # 36 个 builtin provider + 35 份 data/*.json catalog
-│   ├── storage/            # auth-storage / runtime-credentials / paths / resolve-config-value
-│   ├── utils/             # 21 个工具文件
-│   ├── compat/             # extension-oauth-types.ts
-│   ├── runtime/            # 本期已复活:agent-loop / agent / ledger / tools / mock-stream
-├── scripts/
-│   └── generate-models.ts  # 2420 行硬编码模型数据,跑 npm run generate-models 重新生成
-├── examples/
-│   └── run.ts              # demo:catalog 摘要 + mock loop + 真实 deepseek-v4-pro
-├── tests/
-│   └── agent-loop.test.ts  # vitest,2/2 通过
-├── docs/
-│   └── pi-architecture.md  # 参考架构说明
-└── AGENTS.md              # 开发规则(范围 / 风格 / 工作流)
+```sh
+# 替换为实际的 Provider ID 与模型 ID；凭据需事先配置
+runledger --provider <provider-id> --model <model-id>
 ```
 
-## 核心概念
+进入界面后直接输入任务，例如“梳理这个仓库的启动流程，并标出关键入口文件”。认证方式和模型路由详见[模型与认证](docs/subsystems/models.md)。
 
-### pi-ai 移植层
+## 日常使用
 
-- **`Models`** 是 pi 的核心工厂(`src/models.ts:createModels()`),绑定 `credentialStore` + `modelsStore` + `provider factories`,提供 `getProvider` / `getAuth` / `stream` / `streamSimple` 接口。
-- **`Provider<TApi>`** 是 provider 的统一抽象;生产 TUI 当前注册 36 个 builtin provider,其中 35 份 catalog 由 `data/*.json` 自动生成,`*.models.ts` 只通过 `flattenModelCatalog` 从 JSON 的 api 分组键派生类型。
-- **`auth-storage.ts`** 用 `proper-lockfile` 加锁写 canonical home 的 `auth.json`,mode 0600。
-- **`runtime-credentials.ts`** overlay 模式,允许在不修改 auth.json 的情况下注入运行时 API key。
-- **`oauth/*`** 8 个 provider 的 OAuth 流(anthropic / openai-codex / github-copilot / xai / radius / 通用 device-code / 通用 pkce / oauth-page)。
+### 继续和派生会话
 
-### 生成模型 catalog
+以下命令在原工作区内执行；`<session-id>` 为已有会话的 ID：
 
-```bash
-npm run generate-models
-# → 抓取 models.dev / OpenRouter / Vercel AI Gateway / NVIDIA NIM 等源
-# → 生成 src/providers/data/*.json(按 api 分组的模型值)
-# → 生成 src/providers/*.models.ts(仅导入 data JSON 并派生类型的 shard)
-# → 生成 src/models.generated.ts(provider → catalog 聚合器)
+```sh
+runledger --continue                       # 继续当前工作区最近的可恢复会话
+runledger --session-id <session-id>         # 打开指定会话
+runledger --fork <session-id>               # 从已有会话派生新会话
+runledger --worktree my-task                # 在受管 Git worktree 中新建会话
 ```
 
-## 模块路线图
+TUI 中用 `/resume` 浏览历史会话、`/fork` 派生当前会话、`/rename` 修改标题。CLI 的 `--resume` 当前与 `--continue` 一样选择最近会话；`--fork` 接受会话 ID。旧 JSONL 文件需要[显式迁移](development-doc/storage-cli/02-user-home-migration-handoff.md)，不能通过 `--session <path>` 直接打开。
 
-### 已完成
+### 常用交互入口
 
-- [x] pi-ai **全量移植**(api / auth / providers / storage / utils / catalog 生成器)
-- [x] `tsconfig.base.json` 与 pi 对齐(NodeNext + allowImportingTsExtensions + rewriteRelativeImportExtensions + erasableSyntaxOnly)
-- [x] `examples/run.ts` demo 跑 pi-ai 移植层(36 builtin providers / 1061 models 列表 + cost 解析)
-- [x] agent-loop / Agent 类:在 `src/runtime/` 复活并对接 pi-ai `AssistantMessageEventStream`(本期)
-- [x] Ledger:`src/runtime/ledger/{memory-ledger,jsonl-ledger}.ts` 复活并接入 typecheck
-- [x] `tools/echo.ts` 重新实现并对接 pi-ai `AgentTool` 抽象(typebox `Type.Object` parameters)
-- [x] `providers/mock-stream.ts` 复活并直接复用 pi-ai `createAssistantMessageEventStream`(放弃骨架自研 EventStream)
-- [x] `tests/agent-loop.test.ts` 恢复(vitest **2/2 通过**)
-- [x] `examples/run.ts` 真实 LLM 串通:用 `asset/api-key.json` 中 deepseek-v4-pro 走现有 pi-ai `openai-completions` adapter 完成 turn-1 toolUse → turn-2 stop 全链路
-- [x] `npm run check` 通过
-- [x] agent-runtime 底座(M8 §A-§G):ToolRegistry/ToolContext + ExecutionEnv(FileSystem/Shell) + git-bash 探测 + stdlib 工具集(read/write/edit/bash/grep/find/ls)+ createAnthropicAgent + stdlibStreamFn 桥接
-- [x] **Storage/CLI 单一用户级 home 迁移**(S0–S5, 2026-08-02):canonical settings/auth/session writer、`sessionDir`/旧环境与 CLI authority fail closed，以及显式 source deletion manifest 迁移；未对真实用户目录执行迁移
-- [x] **M2 stdlib 工具集升级**(glob + read cat -n 缓存 + edit replaceAll/findActualString + bash run_in_background + grep -A/-B/-U/-output_format):192 tests pass
-- [x] **M3 Task 系统 + lockfile + high-water mark**(2026-04-28):`src/runtime/tasks/{types,task-tools}.ts` `Task/TaskUpdate/TaskList` 三工具 + `src/runtime/ledger/lockfile.ts` `acquireLedgerLock`/`LedgerLockError` + `LedgerSink.highWaterMark()`;208 tests pass;`examples/m3-demo.ts` 可跑 `npx tsx examples/m3-demo.ts`
-- [x] **M4 5 新占位工具**(2026-04-28):`MultiEdit` / `WebFetch` / `Skill` / `NotebookEdit` / `TodoWrite`;219 tests pass;`createStdlibTools()` 注册数 8 → 13
-- [x] **M5 TUI 三态组件升级**(2026-04-28):`DiffPreviewComponent` 加 status 字段 + `BashExecutionComponent` 新组件(pending/running/ok/error + stdout/stderr tail + run_in_background + exitCode+duration);234 tests pass
-- [x] **M6 examples + mock-stream phase + doc sync**(2026-04-28):`mockStreamFn` 加 phase 0/1/2 + `detectMockPhase` + `MAX_TOOL_TURNS_PER_SESSION=4` + `options.onPhase` 钩子;`AGENTS.md` 与 `development-doc/tui/02-component-spec.md` §10 同步 M3/M4/M5/M6 变更;237 tests pass
-- [x] **M7 TUI 补强 + integration**(2026-04-28):`tests/tui/m7-components.test.ts` 9 用例覆盖 ToolResult/AbortButton/BackgroundTask/Footer/DiffPreview 边界;`tests/integration/m7-e2e.test.ts` e2e 串 mockStreamFn → BashExecution tail → ToolCall 三态
-- [x] **生产 TUI client 收口**(2026-07-21):36 builtin provider + API key/OAuth、provider/model/thinking 持久化、多轮对话与 stdlib tool、steer/follow-up、Ctrl+C interrupt、空编辑器 Ctrl+D/`/quit` 退出、resume/fork/整场锁;33 files / 264 tests 全绿
+| 入口 | 用途 |
+|---|---|
+| `/help` | 查看帮助 |
+| `/provider`、`/login`、`/model` | 配置服务、认证与选择模型 |
+| `/thinking`、`/hide-thinking` | 调整思考等级与思考内容展示 |
+| `/mode` | 选择 Agent 模式 |
+| `/permissions` | 查看和配置权限 |
+| `/plan` | 查看计划及审阅工作流 |
+| `/processes`、`/terminal <executionId>` | 查看受管进程及终端输出 |
+| `/mcp`、`/skills`、`/plugins`、`/hooks` | 查看当前会话的扩展资源 |
+| `/dump` | 查看组装后的系统提示词与工具描述 |
+| `/theme` | 切换主题 |
+| `/quit` | 退出 |
 
-### 待填实(独立任务)
+任务执行期间部分命令不可用，扩展入口也受当前模式与能力限制。`Ctrl+C` 可中断当前任务；先用 `Esc` 关闭弹窗，空输入框下用 `Ctrl+D` 退出。更多参数见 [CLI 文档](docs/cli.md)。
 
-- [ ] `providers/mock-stream.ts` 与 pi `faux` provider 合并(消除重复);
-- [ ] `// TODO(pi):` 真实 LLM 调用串通用 anthropic-messages stream(本期实测走 openai-completions adapter 已通);
-- [ ] `// TODO(pi):` Session 树(分叉/重放);
-- [ ] `// TODO(pi):` Compaction / 摘要;
-- [ ] `// TODO(pi):` Skills / Prompt templates;
-- [ ] `// TODO(pi):` AgentHarness;
-- [ ] `// TODO(pi):` streamProxy (browser → backend);
-- [ ] `// TODO(pi):` OpenTelemetry / metrics;
-- [ ] `// TODO(pi):` RBAC / 多租户。
+## Agent 模式
+
+| 模式 | 适用场景 | 模型可用工具 |
+|---|---|---|
+| `default` | 日常代码阅读、修改与验证 | 标准工具集，按策略装配扩展 |
+| `minimal` | 用 Shell 完成任务，保持精简工具入口 | 新会话为 `minimal@2`，仅 governed `bash` |
+| `plan` | 先分析代码并整理可审阅的计划 | `read`、`glob`、`ls`、`plan_read`、`plan_write` |
+
+```sh
+runledger --mode default
+runledger --mode minimal
+runledger --mode plan
+```
+
+TUI 中可用 `/mode <name>` 切换，`/minimal` 是 minimal 的快捷入口。选择不同模式会新建空会话，保留当前模型与思考等级，原会话仍可恢复；有草稿或任务正在执行时不能切换。
+
+模式不会授予额外权限。minimal 的 Shell 仍受权限检查；plan 只允许修改会话内的计划工件，禁止 Shell、网络与工作区写入。计划获批后不会自动开放写权限，实施时需用 `/mode default` 新建会话并提供任务上下文。
+
+模式在会话创建时冻结，恢复和 fork 继承原有 Profile。旧 `minimal@1` 会话保留 `bash` / `edit`，不会自动升级。配置与兼容细节见 [Agent Mode 专题](development-doc/runtime/10-agent-mode-entry-implementation-plan.md)。
+
+## 配置与数据
+
+默认用户目录为 `~/.runledger`。设置 `RUNLEDGER_DIR` 可指定另一用户目录，值必须是**预先创建的绝对路径**。
+
+| 位置（相对用户目录） | 内容 |
+|---|---|
+| `settings.json` | 用户设置，如默认模型、Agent 模式和 recording 策略 |
+| `auth.json` | Provider 凭据 |
+| `state.db` | SQLite 会话权威状态、事件与执行回执 |
+| `projects/<workspace-key>/settings.json` | 按工作区保存的设置 |
+
+项目下的 `.runledger/` 不是隐式配置或会话存储入口。详细布局与迁移见[持久化文档](docs/subsystems/persistence.md)。
+
+例如，在用户级 `settings.json` 中合并以下配置可默认新建 minimal 会话，并关闭可选的本地 Trace：
+
+```json
+{
+  "agentMode": "minimal",
+  "recording": {
+    "mode": "off"
+  }
+}
+```
+
+recording 默认是 `events + best_effort`；可选择 `events_and_artifacts` 保存经清洗的正文工件，或使用 `fail_closed` 在记录失败时阻止运行继续。关闭 Trace 不会关闭 SQLite 会话持久化。配置语义见 [Runtime Trace](docs/subsystems/trace.md)。
+
+## 运行架构
+
+```text
+CLI / OpenTUI
+      │ command · query · subscription
+      ▼
+Session Owner Runtime（每个会话独立）
+      ├── Agent loop → Models / Provider
+      ├── Tools → 权限与批准 → ExecutionGateway → 文件 / 进程 / 外部调用
+      ├── Skills / Plugins / Hooks / MCP / LSP
+      ├── SQLite Session Store → 事件 / 回执 / 恢复状态
+      └── Local Runtime Trace → 观测事件 / 工件
+```
+
+TUI 通过本机协议消费会话状态。Session Owner 负责执行与生命周期，SQLite 中的所有权代次用于阻止过期 Owner 继续写入。详见[当前生产架构](docs/architecture.md)与[子系统索引](docs/subsystems/README.md)。
+
+当前能力边界：
+
+- 多客户端连接限于本机；同一时刻只有一个控制连接可提交变更。
+- 有界子 Agent 为实验能力，默认关闭；仅支持根会话拥有的串行、只读、单层委派，同一根会话最多一个活跃 child。
+- Runtime Trace 当前提供本地存储与投影，远程 Opik / OTLP exporter 尚未接通。
+- 外部 Provider、人工交互与跨平台验收分别记录在对应专题中，不能由本地自动化结果替代。
+
+## 开发与文档
+
+```sh
+npm run check             # 类型、架构边界与原生组件检查
+npm test                  # 本地测试分桶入口
+npm run build             # 构建原生组件、TypeScript 与 TUI 资源
+npm run generate-models   # 更新模型 catalog；按需运行并审阅生成差异
+```
+
+开发前阅读 [AGENTS.md](AGENTS.md)。测试使用隔离的 `RUNLEDGER_DIR`，测试策略与真实 CLI/TUI 验证方法见[测试专题](development-doc/test/README.md)。
+
+| 文档 | 内容 |
+|---|---|
+| [文档总览](docs/README.md) | 按使用场景查找文档 |
+| [CLI 参数表](docs/cli.md) | 启动、控制命令、环境变量与限制 |
+| [架构总览](docs/architecture.md) | 生产入口、运行流与模块协作 |
+| [子系统参考](docs/subsystems/README.md) | 模型、会话、存储、工具、扩展与 Trace |
+| [开发索引](development-doc/00-index.md) | 专项设计、实施与验收记录 |
+| [审计入口](development-doc/audit/README.md) | 问题分析、修复与复验记录 |
+
+RunLedger 的 Provider 与 Agent Core 包含来自 pi 生态的移植与适配，背景见 [pi 参考架构](docs/pi-architecture.md)与 [Provider 移植清单](development-doc/providers/02-oh-my-pi-provider-port-execution-checklist.md)。本 README 的介绍组织参考了 oh-my-pi；功能范围以 RunLedger 当前实现为准。
 
 ## License
 
-MIT
+MIT（见 `package.json` 的 license 声明）；引入组件的许可见相应源码与许可清单。
