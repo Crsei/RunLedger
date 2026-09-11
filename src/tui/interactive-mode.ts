@@ -97,12 +97,13 @@ import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import type { TuiBootstrapSnapshot } from "./presentation/types.ts";
 import { messageText } from "./interactive/input-helpers.ts";
-import type { InteractiveModePorts, WorkflowKey, WorkflowResult } from "./interactive/types.ts";
+import type { InteractiveModePorts, PromptDumpPort, WorkflowKey, WorkflowResult } from "./interactive/types.ts";
 import { SessionWorkflow } from "./interactive/session-workflow.ts";
 import { ModelWorkflow } from "./interactive/model-workflow.ts";
 import { AuthWorkflow } from "./interactive/auth-workflow.ts";
 import { ExtensionWorkflow } from "./interactive/extension-workflow.ts";
 import { PlanWorkflow } from "./interactive/plan-workflow.ts";
+import { PromptDumpWorkflow } from "./interactive/prompt-dump-workflow.ts";
 import { ProcessWorkflow } from "./interactive/process-workflow.ts";
 import { ApprovalWorkflow } from "./interactive/approval-workflow.ts";
 import { PermissionsWorkflow } from "./permissions/workflow.ts";
@@ -149,6 +150,8 @@ export interface InteractiveModeOptions {
   initialPreferences?: TuiPreferencesDocument;
   /** 只负责 presentation preference 的持久化；TUI 不接触 layout/path。 */
   preferencesPort?: TuiPreferencesPort;
+  /** `/dump` 侧车写盘端口（CLI 组合层持有 layout/fs）。 */
+  promptDumpPort?: PromptDumpPort;
   /** `hideThinkingBlock` 的 canonical settings 写端口；TUI 不持有 layout/path。 */
   hideThinkingSettingsPort?: HideThinkingSettingsPort;
   /** thinking blocks 的启动展示状态；仅影响 projection。 */
@@ -251,6 +254,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private processOverlayComponent: ProcessOverlayComponent | undefined;
   private readonly initialBootstrap?: TuiBootstrapSnapshot;
   private readonly preferencesPort?: TuiPreferencesPort;
+  private readonly promptDumpPort?: PromptDumpPort;
   private readonly shimmerMode: TuiShimmerMode;
   private readonly hideThinkingSettingsPort?: HideThinkingSettingsPort;
 	private hideThinkingBlock: boolean;
@@ -274,6 +278,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly authWorkflow: AuthWorkflow;
   private readonly extensionWorkflow: ExtensionWorkflow;
   private readonly planWorkflow: PlanWorkflow;
+  private readonly promptDumpWorkflow: PromptDumpWorkflow;
   private readonly processWorkflow: ProcessWorkflow;
   private readonly approvalWorkflow: ApprovalWorkflow;
   private readonly permissionsWorkflow: PermissionsWorkflow;
@@ -300,6 +305,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.gitBranchLabel = opts.gitBranchLabel;
     this.initialBootstrap = opts.initialBootstrap;
     this.preferencesPort = opts.preferencesPort;
+    this.promptDumpPort = opts.promptDumpPort;
     this.shimmerMode = opts.initialPreferences?.display.shimmer ?? "classic";
     this.hideThinkingSettingsPort = opts.hideThinkingSettingsPort;
     this.hideThinkingBlock = opts.hideThinkingBlock ?? false;
@@ -371,6 +377,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.authWorkflow = new AuthWorkflow(port);
     this.extensionWorkflow = new ExtensionWorkflow(port);
     this.planWorkflow = new PlanWorkflow(port);
+    this.promptDumpWorkflow = new PromptDumpWorkflow(port);
     this.processWorkflow = new ProcessWorkflow(port);
     this.approvalWorkflow = new ApprovalWorkflow(port);
     this.permissionsWorkflow = new PermissionsWorkflow({
@@ -479,6 +486,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
       syntaxThemeSettingsPort: this.syntaxThemeSettingsPort,
       get processOverlayComponent(): ProcessOverlayComponent | undefined { return instance.processOverlayComponent; },
       get hostConnectionState(): HostConnectionUiState { return instance.hostConnectionState; },
+      promptDumpPort: this.promptDumpPort,
+      harnessProfile: this.harnessProfile,
+      get permissionProfile(): string | undefined { return instance.permissionProfile; },
+      writeClipboard: (text) => this.ui.writeClipboard(text),
       sessionPort: this.ports.session,
       showNotice: (text, kind) => this.showNotice(text, kind),
       showOverlayModal: (component, options, kind) => this.showOverlayModal(component, options, kind),
@@ -585,6 +596,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** slash 弹窗实例读取(弹窗状态机测试)。 */
   get slashPopup(): SlashCommandPopup | undefined {
     return this.inputController.slashPopup;
+  }
+
+  /** 当前 overlay 组件读取(只读 pager 测试)。 */
+  get overlayComponent(): Component | undefined {
+    return this.ui.getOverlay();
   }
 
   /** Esc dismiss 记忆读取(slash 弹窗测试)。 */
@@ -1253,6 +1269,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         this.streaming.resetRows();
         this.refs.chat.clear();
         this.ui.requestRender();
+        return;
+      case "ui.dump":
+        void this.promptDumpWorkflow.run(arg);
         return;
       case "ui.scrollbar.toggle":
         void this.inputController.toggleTranscriptScrollbar();

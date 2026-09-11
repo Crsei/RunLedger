@@ -77,6 +77,8 @@ export interface OpenTuiComponentRuntime {
   update(frame: OpenTuiComponentFrame): void;
   /** 仅更新时间驱动的状态行与页脚；布局变化时返回 false，由调用方补完整帧。 */
   updateStatusFrame?(frame: Pick<OpenTuiComponentFrame, "statusIndicator" | "statusIndicatorShimmer" | "footer">): boolean;
+  /** 主动写出 OSC 52 剪贴板序列；返回 false 表示文本为空（终端是否接受不可观测）。 */
+  copyText(text: string): boolean;
   getLastDirtyPartIds(): readonly string[];
   destroy(): void;
 }

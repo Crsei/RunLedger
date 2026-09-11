@@ -28,6 +28,7 @@ export interface SlashCommandContext {
 export type SlashCommandActionType =
   | "ui.help"
   | "ui.clear"
+  | "ui.dump"
   | "ui.scrollbar.toggle"
   | "ui.trajectory"
   | "ui.quit"
@@ -311,6 +312,14 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       actionType: "ui.scrollbar.toggle",
       category: "ui",
       policy: READONLY_POLICY,
+    }),
+    command("dump", "Dump the assembled system prompt", 28, {
+      actionType: "ui.dump",
+      category: "ui",
+      policy: READONLY_POLICY,
+      // 只读投影：turn 进行中读到的就是本次请求实际使用的提示词,不设 idle 门控。
+      requiredOperation: "session.prompt.inspect",
+      unavailableHint: "Use /trajectory to inspect recorded runtime events instead.",
     }),
   ];
 }

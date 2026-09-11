@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntimeHarness, type RuntimeHarness } from "./harness.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
-import { SessionDomainRouter } from "../../../src/runtime/session-runtime/domain-router.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
+import { SessionDomainRouter, SESSION_PROMPT_INSPECTION_MAX_BYTES } from "../../../src/runtime/session-runtime/domain-router.ts";
 import type { SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { resolveSessionWorkspaceIdentity } from "../../../src/cli/session-workspace-identity.ts";
 
@@ -111,6 +112,109 @@ describe("S1 Session Domain Router", () => {
 			},
 		});
 		expect(calls).toEqual(["inspect"]);
+	});
+
+	it("publishes only the read-only prompt inspection supplied by real domain composition", () => {
+		const router = new SessionDomainRouter(
+			createRuntimeId("session", "prompt-inspect"),
+			3,
+			{
+				listSessions: () => [],
+			} as unknown as RuntimeHarness["store"],
+			{
+				beginAttempt: () => ({ error: "recovery_barrier_active" as const }),
+				settleAttempt: () => ({ ok: false as const, code: "not_used" }),
+			},
+			{
+				promptInspection: () => ({
+					systemPrompt: "assembled prompt",
+					tools: [{ name: "read", description: "Read a file", parameters: { type: "object" } }],
+					source: "assembled",
+					turn: 2,
+					capturedAtMs: 1_700_000_000_000,
+					assembledPromptDigest: runtimeDigest("assembled prompt"),
+				}),
+			},
+		);
+
+		expect(router.operationManifest).toContainEqual({
+			operation: "session.prompt.inspect",
+			capability: "session.core",
+			access: "read",
+		});
+		expect(router.query({
+			sessionId: createRuntimeId("session", "prompt-inspect"),
+			generation: 3,
+			correlationId: "correlation_prompt_inspect",
+			effectId: "effect_prompt_inspect",
+			operation: "session.prompt.inspect",
+			payload: {},
+		})).toMatchObject({
+			ok: true,
+			status: "ok",
+			operation: "session.prompt.inspect",
+			value: {
+				systemPrompt: "assembled prompt",
+				source: "assembled",
+				turn: 2,
+				tools: [{ name: "read" }],
+			},
+		});
+	});
+
+	it("keeps prompt inspection unavailable and unadvertised without a composition authority", () => {
+		const router = new SessionDomainRouter(
+			createRuntimeId("session", "prompt-inspect-absent"),
+			1,
+			{
+				listSessions: () => [],
+			} as unknown as RuntimeHarness["store"],
+			{
+				beginAttempt: () => ({ error: "recovery_barrier_active" as const }),
+				settleAttempt: () => ({ ok: false as const, code: "not_used" }),
+			},
+		);
+
+		expect(router.operationManifest.some((entry) => entry.operation === "session.prompt.inspect")).toBe(false);
+		expect(router.query({
+			sessionId: createRuntimeId("session", "prompt-inspect-absent"),
+			generation: 1,
+			correlationId: "correlation_prompt_inspect_absent",
+			effectId: "effect_prompt_inspect_absent",
+			operation: "session.prompt.inspect",
+			payload: {},
+		})).toEqual({ ok: false, status: "unavailable", code: "operation_unavailable", operation: "session.prompt.inspect" });
+	});
+
+	it("fails closed when the prompt exceeds the single-frame budget", () => {
+		const router = new SessionDomainRouter(
+			createRuntimeId("session", "prompt-inspect-oversize"),
+			1,
+			{
+				listSessions: () => [],
+			} as unknown as RuntimeHarness["store"],
+			{
+				beginAttempt: () => ({ error: "recovery_barrier_active" as const }),
+				settleAttempt: () => ({ ok: false as const, code: "not_used" }),
+			},
+			{
+				promptInspection: () => ({
+					systemPrompt: "x".repeat(SESSION_PROMPT_INSPECTION_MAX_BYTES + 1),
+					tools: [],
+					source: "base",
+					assembledPromptDigest: runtimeDigest("oversize prompt"),
+				}),
+			},
+		);
+
+		expect(router.query({
+			sessionId: createRuntimeId("session", "prompt-inspect-oversize"),
+			generation: 1,
+			correlationId: "correlation_prompt_inspect_oversize",
+			effectId: "effect_prompt_inspect_oversize",
+			operation: "session.prompt.inspect",
+			payload: {},
+		})).toEqual({ ok: false, status: "failed", code: "prompt_inspect_too_large", operation: "session.prompt.inspect" });
 	});
 
 	it("rejects malformed correlation/effect envelopes before reading the catalog", async () => {

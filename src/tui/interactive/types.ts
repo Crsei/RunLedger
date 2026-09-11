@@ -27,6 +27,27 @@ import type { TimelineEvent } from "../timeline/types.ts";
 import type { TuiPreferencesPort, TuiShimmerMode } from "../preferences/types.ts";
 import type { InteractiveSessionAdapter } from "../adapters/interactive-session.ts";
 import type { InteractiveExitIntent } from "../interactive-mode.ts";
+import type { PromptInspection } from "../../runtime/types.ts";
+
+/**
+ * `/dump` 侧车文档：与 overlay 文本同源，但保留原始文本（不做终端清洗）。
+ * 以 `kind` 作为格式判别，不引入数字 schema 字段（见 `scripts/check-current-format.ts`）；
+ * `docs/system-prompts.json` 是另一套手工抓取口径，不共用。
+ */
+export interface PromptDumpDocument {
+	readonly kind: "runledger.prompt-dump";
+	readonly sessionId: string;
+	readonly capturedAtMs: number;
+	readonly harnessProfile?: { readonly id: string; readonly version: number };
+	readonly permissionProfile?: string;
+	readonly selection: { readonly provider?: string; readonly model?: string; readonly thinkingLevel: string };
+	readonly prompt: PromptInspection;
+}
+
+/** CLI 组合层注入的写盘端口；TUI 不持有 layout/fs。 */
+export interface PromptDumpPort {
+	write(doc: PromptDumpDocument): Promise<{ readonly ok: true; readonly path: string } | { readonly ok: false; readonly code: string }>;
+}
 
 export type WorkflowKey =
 	| "sessionWorkflow"
@@ -78,6 +99,14 @@ export interface InteractiveModePorts {
 	readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
 	readonly processOverlayComponent: ProcessOverlayComponent | undefined;
 	readonly hostConnectionState: HostConnectionUiState;
+	/** `/dump` 侧车写盘端口（CLI 组合层注入；缺失时只输出 overlay 与剪贴板）。 */
+	readonly promptDumpPort?: PromptDumpPort;
+	/** 当前 Session 的 durable Harness ref；只读展示，不提供 mutation。 */
+	readonly harnessProfile?: { readonly id: "standard" | "minimal" | "plan"; readonly version: 1 | 2 };
+	/** 当前 Session Security 的 effective profile；与 Harness 分栏展示。 */
+	readonly permissionProfile?: string;
+	/** OSC 52 剪贴板出口；返回 false 表示文本为空或终端运行时不可用。 */
+	writeClipboard?(text: string): boolean;
 	/** session domain port(session.create/resume/fork 等 mutation 经它派发)。 */
 	readonly sessionPort?: unknown;
 

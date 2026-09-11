@@ -441,6 +441,12 @@ export async function assembleSessionDomain(
 			}
 		},
 		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan", "session.trajectory"],
+		// `/dump` 只读投影：provider 面文本取自 controller 捕获点，digest 取自 harness composition。
+		promptInspection: () => ({
+			...controller.promptInspection,
+			basePromptDigest: finalComposition.promptDigest,
+			compositionDigest: finalComposition.compositionDigest,
+		}),
 		securityInspection: () => ({
 			ownerGeneration: fence.generation,
 			securityRevision: security.snapshot.securityRevision,

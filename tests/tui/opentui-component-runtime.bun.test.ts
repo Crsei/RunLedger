@@ -487,6 +487,31 @@ describe("OpenTUI component projection", () => {
     }
   });
 
+  test("writes an explicit OSC 52 copy for caller-supplied text", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true);
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({ body: ["copy target"], editorText: "", footer: ["idle"] });
+      await setup.renderOnce();
+
+      // `/dump` 的剪贴板通道：不依赖鼠标选区，空文本必须失败且不写出序列。
+      expect(setup.renderer.getSelection()?.getSelectedText() ?? "").toBe("");
+      expect(runtime.copyText("")).toBe(false);
+      expect(copy).not.toHaveBeenCalled();
+
+      expect(runtime.copyText("## System Prompt\nassembled body")).toBe(true);
+      expect(copy).toHaveBeenCalledWith("## System Prompt\nassembled body");
+      expect(setup.renderer.getSelection()?.getSelectedText() ?? "").toBe("");
+    } finally {
+      copy.mockRestore();
+      runtime.destroy();
+    }
+  });
+
   test("copies a native conversation selection when mouse selection finishes", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const inputs: string[] = [];

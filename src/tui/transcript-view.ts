@@ -36,6 +36,10 @@ export interface TranscriptOverlayOptions {
 	readonly onClose?: () => void;
 	readonly getViewportHeight?: () => number;
 	readonly maxBlocks?: number;
+	/** 头部标签；缺省保持 transcript 文案（`/dump` 复用同一 pager）。 */
+	readonly title?: string;
+	/** 底部提示；缺省保持 transcript 文案。 */
+	readonly closeHint?: string;
 }
 
 interface CommittedTranscriptProjection {
@@ -154,6 +158,8 @@ export class TranscriptOverlayComponent implements Component {
 	private readonly onClose?: () => void;
 	private readonly getViewportHeight: () => number;
 	private readonly maxBlocks: number;
+	private readonly title: string;
+	private readonly closeHint: string;
 	private offset = 0;
 	private version = 0;
 	private readonly settledLineCache = new SettledPartCache<readonly string[]>({
@@ -169,6 +175,8 @@ export class TranscriptOverlayComponent implements Component {
 		this.theme = options.theme;
 		this.getViewportHeight = options.getViewportHeight ?? (() => 24);
 		this.maxBlocks = Math.max(1, Math.floor(options.maxBlocks ?? TRANSCRIPT_MAX_BLOCKS));
+		this.title = options.title ?? "Transcript";
+		this.closeHint = options.closeHint ?? "Read-only transcript · Ctrl+T close";
 		this.themeGeneration = normalizedGeneration(view.themeGeneration);
 	}
 
@@ -240,8 +248,8 @@ export class TranscriptOverlayComponent implements Component {
 		this.offset = start;
 		const end = Math.min(allLines.length, start + pageSize);
 		const range = allLines.length === 0 ? "empty" : `${start + 1}-${end}/${allLines.length}`;
-		const header = truncateDisplayWidth(`Transcript ${range} · j/k move · PgUp/PgDn page · Esc close`, safeWidth, true);
-		const footer = truncateDisplayWidth("Read-only transcript · Ctrl+T close", safeWidth, true);
+		const header = truncateDisplayWidth(`${this.title} ${range} · j/k move · PgUp/PgDn page · Esc close`, safeWidth, true);
+		const footer = truncateDisplayWidth(this.closeHint, safeWidth, true);
 		return [header, ...allLines.slice(start, end), footer];
 	}
 

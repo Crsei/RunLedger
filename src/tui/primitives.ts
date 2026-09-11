@@ -568,6 +568,10 @@ export class TUI extends Container {
     } else this.frameScheduler.markDirty(backlog);
   }
   invalidate(): void { super.invalidate(); this.requestRender(true); }
+  /** 主动写出 OSC 52 剪贴板序列；返回 false 表示运行时不可用或文本为空。 */
+  writeClipboard(text: string): boolean {
+    return this.runtime?.copyText(text) ?? false;
+  }
   handlePaste(text: string): void {
     const captures = this.hasCapturingOverlay();
     const target = captures ? this.overlay : this.focusedComponent;

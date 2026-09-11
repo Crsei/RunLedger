@@ -56,6 +56,7 @@ import type { SessionSecurityConfigSource } from "../security/session-compositio
 import { SESSION_PROTOCOL_VERSION } from "../runtime/session-server/protocol.ts";
 import { runSessionTransitionLoop } from "./session-transition-loop.ts";
 import { createCliTuiPreferences } from "./tui-preferences.ts";
+import { createCliPromptDumpPort } from "./prompt-dump-artifacts.ts";
 import { composeCliTraceRecorderFactory } from "./trace-config.ts";
 import { createSessionWorkspaceFactory } from "../runtime/session-runtime/worktree-composition.ts";
 import { createWorkspaceAdaptersForCurrentPlatform } from "../workspace/factory.ts";
@@ -405,6 +406,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       processOverlayClient: view.processOverlayClient,
       initialPreferences: tuiPreferences.current(),
       preferencesPort: tuiPreferences.port,
+      promptDumpPort: createCliPromptDumpPort(layout),
       hideThinkingBlock: resolveHideThinkingBlock(args.hideThinking, settings.hideThinkingBlock),
       hideThinkingSettingsPort: createCliHideThinkingSettings(layout),
       showWelcome,

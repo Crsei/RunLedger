@@ -359,6 +359,31 @@ export type ModelContextAssembler = (
 	input: ModelContextAssemblyInput,
 ) => ModelContextAssemblyResult | Promise<ModelContextAssemblyResult>;
 
+/** `/dump` 的 provider 面工具描述：runtime 形态（非 provider wire 形态）。 */
+export interface PromptInspectionTool {
+	readonly name: string;
+	readonly description: string;
+	readonly parameters: unknown;
+}
+
+/**
+ * 最近一次 provider 面系统提示词与工具的只读投影（`session.prompt.inspect`）。
+ * 值取自 assembler 之后的 `LlmContext`，不是渲染层重建。
+ */
+export interface PromptInspection {
+	readonly systemPrompt: string;
+	readonly tools: readonly PromptInspectionTool[];
+	/** assembled = 真实 turn 的 assembler 输出；base = 尚未发生 turn，回退 harness 基座提示词。 */
+	readonly source: "assembled" | "base";
+	readonly turn?: number;
+	readonly capturedAtMs?: number;
+	readonly assembledPromptDigest: RuntimeDigest;
+	/** harness 基座提示词 digest（不含 per-turn fragment 注入）。 */
+	readonly basePromptDigest?: RuntimeDigest;
+	/** 当前 harness composition digest；与 provider 面文本不同层。 */
+	readonly compositionDigest?: RuntimeDigest;
+}
+
 export type ContextAssemblySink = (input: {
 	readonly sessionId: string;
 	readonly turn: number;

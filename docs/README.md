@@ -24,7 +24,7 @@ RunLedger 是面向可审计 Agent 执行的运行时。标准 CLI 通过 Sessio
 |---|---|
 | [CLI 参数表](cli.md) | 启动参数、会话选择、模型与权限设置、控制子命令、网关、迁移、环境变量、示例及当前限制 |
 | [架构总览](architecture.md) | 生产入口、Session Owner 组合、跨子系统数据流、生命周期、执行治理与新增行为的归属 |
-| [真实 session 上下文快照](system-prompts.md) | 本项目真实 CLI/TUI 捕获的最终提示词、用户消息及完整工具 schema；AGENTS 正文刻意省略；附 JSON |
+| [真实 session 上下文快照](system-prompts.md) | 本项目真实 CLI/TUI 捕获的最终提示词、用户消息及完整工具 schema；AGENTS 正文刻意省略；附 JSON。活会话的实时获取用 TUI `/dump` 或 `runledger dump` |
 | [子系统索引](subsystems/README.md) | 各子系统职责与详细参考入口 |
 
 ## 子系统参考

@@ -19,6 +19,7 @@ export type ControlGroup =
 	| "plan"
 	| "compact"
 	| "context"
+	| "dump"
 	| "memory"
 	| "remember";
 
@@ -57,6 +58,7 @@ const GROUPS: ReadonlySet<string> = new Set<ControlGroup>([
 	"plan",
 	"compact",
 	"context",
+	"dump",
 	"memory",
 	"remember",
 ]);
@@ -71,6 +73,7 @@ const DEFAULT_ACTIONS: Readonly<Record<ControlGroup, string>> = {
 	plan: "inspect",
 	compact: "run",
 	context: "inspect",
+	dump: "inspect",
 	memory: "search",
 	remember: "propose",
 };
@@ -85,6 +88,7 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	plan: new Set(["inspect", "enter", "activate", "write", "request_approval", "approve", "reject", "cancel", "settle_exit"]),
 	compact: new Set(["run", "list"]),
 	context: new Set(["inspect", "assemble"]),
+	dump: new Set(["inspect"]),
 	memory: new Set(["search", "get", "projection", "approve", "reject", "revoke"]),
 	remember: new Set(["propose"]),
 };
@@ -235,6 +239,7 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 	}
 	return {
 		operation: key === "security.inspect" ? "session.security.inspect"
+			: key === "dump.inspect" ? "session.prompt.inspect"
 			: key === "plugin.reload" ? "extension.reload"
 			: key === "remember.propose" ? "memory.propose"
 			: (key === "plan.approve" || key === "plan.reject") ? "plan.resolve_approval"
@@ -299,6 +304,7 @@ export function controlCommandHelp(): string {
 		"    plugin inspect / mcp inspect are unavailable in standard Sessions; use plugin list / mcp list|doctor.",
 		"  runledger plan inspect|enter|activate|write|request_approval|approve|reject <approval-id>|cancel|settle_exit",
 		"  runledger compact list|run '<source-range-json>' <transcript>",
+		"  runledger dump   (assembled system prompt + tool descriptors as JSON)",
 		"  runledger memory search|get|approve|reject|revoke   runledger remember <text>",
 		"    worktree, compact, context, memory/remember and plan mutations are unavailable in standard Sessions.",
 	].join("\n");

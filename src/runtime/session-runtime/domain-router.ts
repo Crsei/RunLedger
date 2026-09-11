@@ -8,6 +8,13 @@ import { SessionWorkspaceAdmission } from "../../workspace/session-identity.ts";
 import type { SessionPlanInspection } from "./plan-composition.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
 import { resolveHarnessProfileId } from "../harness-profiles/index.ts";
+import type { PromptInspection } from "../types.ts";
+
+/**
+ * `/dump` 单帧预算：传输上限是 `SESSION_PROTOCOL_BOUNDS.maxFrameBytes`(256 KiB)，
+ * 这里留出 envelope 余量后 fail closed，不做静默截断。
+ */
+export const SESSION_PROMPT_INSPECTION_MAX_BYTES = 192 * 1024;
 
 export const SESSION_DOMAIN_RESULT_STATUSES = [
 	"ok",
@@ -44,6 +51,8 @@ export interface SessionDomainRouterOptions {
 	readonly securityInspection?: () => Record<string, unknown>;
 	/** 只由 Session-owned Plan projection 注入的只读状态。 */
 	readonly planInspection?: () => SessionPlanInspection;
+	/** `/dump` 只读投影：assembler 之后的 provider 面系统提示词与工具。 */
+	readonly promptInspection?: () => PromptInspection;
 	/** Async domain consumers register their exact manifest here; execution is routed by SessionRuntime. */
 	readonly additionalOperations?: readonly SessionProtocolOperationDescriptor[];
 }
@@ -79,6 +88,7 @@ export class SessionDomainRouter {
 	private readonly attempts: AttemptPort;
 	private readonly securityInspection: SessionDomainRouterOptions["securityInspection"];
 	private readonly planInspection: SessionDomainRouterOptions["planInspection"];
+	private readonly promptInspection: SessionDomainRouterOptions["promptInspection"];
 	private readonly ownerFence: OwnerFence | undefined;
 
 	public readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
@@ -90,6 +100,7 @@ export class SessionDomainRouter {
 		this.attempts = attempts;
 		this.securityInspection = options.securityInspection;
 		this.planInspection = options.planInspection;
+		this.promptInspection = options.promptInspection;
 		this.ownerFence = options.ownerFence;
 		this.operationManifest = Object.freeze([
 			Object.freeze({ operation: "session.catalog.list", capability: "session.catalog", access: "read" }),
@@ -103,6 +114,9 @@ export class SessionDomainRouter {
 			...(this.planInspection === undefined
 				? []
 				: [Object.freeze({ operation: "plan.inspect", capability: "session.plan", access: "read" })]),
+			...(this.promptInspection === undefined
+				? []
+				: [Object.freeze({ operation: "session.prompt.inspect", capability: "session.core", access: "read" })]),
 			...(options.additionalOperations ?? []).map((entry) => Object.freeze({ ...entry })),
 		]);
 	}
@@ -167,6 +181,20 @@ export class SessionDomainRouter {
 				operation,
 				domainRevision: value.state.revision,
 				value,
+			};
+		}
+		if (operation === "session.prompt.inspect" && this.promptInspection !== undefined) {
+			const inspection = this.promptInspection();
+			const bytes = Buffer.byteLength(JSON.stringify(inspection), "utf8");
+			if (bytes > SESSION_PROMPT_INSPECTION_MAX_BYTES) {
+				return { ok: false, status: "failed", code: "prompt_inspect_too_large", operation };
+			}
+			return {
+				ok: true,
+				status: "ok",
+				operation,
+				domainRevision: this.generation,
+				value: { ...inspection },
 			};
 		}
 		return {

@@ -114,6 +114,7 @@ runledger --session-id <session-id> mcp doctor
 | `plan enter / activate / write / approve / cancel` | `activate [text]`；`write <text>`；`approve <approval-id>` | plan mutation 当前未接通 |
 | `compact list / run` | 默认 `run`；`run '<source-range-json>' <transcript>` | 未接通；source range 必须符合 `RuntimeEventRangeRef` |
 | `context inspect / assemble` | 默认 `inspect`；`assemble '<request-json>' '<sources-json-array>'` | 未接通 |
+| `dump [inspect]` | 默认 `inspect` | 返回组装后的 provider 面系统提示词与工具描述（JSON）；TUI 侧同一数据源见 `/dump` |
 | `memory search / get / projection / approve / reject / revoke` | 默认 `search` 且需 query；`get <memory-id>`；`approve <proposal-id> '<approval-ref-json>'`；`reject <proposal-id>`；`revoke <memory-id>` | Memory 未接通 |
 | `remember [propose] <text>` | text 必填 | Memory proposal 未接通 |
 

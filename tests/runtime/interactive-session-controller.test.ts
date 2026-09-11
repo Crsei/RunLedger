@@ -15,6 +15,7 @@ import { createAssistantMessageEventStream } from "../../src/utils/event-stream.
 import type { ExtensionHookRuntime } from "../../src/extensions/turn-lifecycle.ts";
 import { Type } from "typebox";
 import type { AgentEvent, AgentTool } from "../../src/runtime/types.ts";
+import { assembleAgentModelContext } from "../../src/runtime/context/model-request-adapter.ts";
 import type { ToolCall } from "../../src/types.ts";
 
 const cleanup: string[] = [];
@@ -704,6 +705,78 @@ describe("InteractiveSessionController", () => {
 		expect(result).toContain("Summarize the next action");
 		expect(controller.messages).toEqual(before);
 		expect(events).toEqual([]);
+		controller.dispose();
+	});
+
+	it("records the assembled provider-face prompt and tools after a turn", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const readTool = {
+			name: "read",
+			description: "Read a file",
+			parameters: Type.Object({ path: Type.String() }),
+			execute: async () => ({ content: [], details: undefined }),
+		} as unknown as AgentTool;
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "base prompt",
+			models,
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [readTool],
+			// 与生产 domain 同构：assembler 在基座之后追加权限 fragment。
+			modelContextAssembler: (input) => assembleAgentModelContext({
+				...input,
+				sources: [{
+					fragmentId: "session-effective-permissions",
+					key: "session-effective-permissions",
+					layer: "policy",
+					trust: "trusted",
+					taint: "none",
+					priority: "required",
+					content: "permissions: workspace-write",
+				}],
+			}),
+		});
+		await controller.login("p1", "api_key", INTERACTION);
+		await controller.selectModel(p1);
+		await controller.prompt("hi");
+
+		const inspection = controller.promptInspection;
+		expect(inspection.source).toBe("assembled");
+		expect(inspection.turn).toBe(1);
+		expect(inspection.systemPrompt).toContain("base prompt");
+		expect(inspection.systemPrompt).toContain("permissions: workspace-write");
+		expect(inspection.assembledPromptDigest.algorithm).toBe("sha256");
+		expect(inspection.tools.map((tool) => tool.name)).toEqual(["read"]);
+		expect(inspection.tools[0]?.description).toBe("Read a file");
+		controller.dispose();
+	});
+
+	it("falls back to the base prompt before any turn", async () => {
+		const cwd = await tempDir();
+		const { models } = fixtureModels();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "base prompt",
+			models,
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [
+				{ name: "read", description: "Read a file", parameters: Type.Object({ path: Type.String() }) },
+				{ name: "edit", description: "Edit a file", parameters: Type.Object({ path: Type.String() }) },
+			] as unknown as AgentTool[],
+		});
+
+		const inspection = controller.promptInspection;
+		expect(inspection.source).toBe("base");
+		expect(inspection.systemPrompt).toBe("base prompt");
+		expect(inspection.turn).toBeUndefined();
+		expect(inspection.tools.map((tool) => tool.name)).toEqual(["read", "edit"]);
 		controller.dispose();
 	});
 });

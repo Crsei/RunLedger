@@ -1,6 +1,6 @@
 # `/dump` 命令实施计划（输出组装后的完整系统提示词）
 
-> **状态：** `planned`（仅冻结设计与验收口径，尚未写任何生产代码）
+> **状态：** `implemented`（P0–P6 已落地；自动门禁、构建后 CLI 与隔离 `RUNLEDGER_DIR` 的真实 TTY 验收见 §8，`npm run check` 的 current-format 环节被 §8.4 记录的既有缺陷阻塞）
 >
 > **创建日期：** 2026-09-10
 >
@@ -173,7 +173,7 @@ public get promptInspection(): PromptInspection {
 - `src/runtime/session-runtime/domain-router.ts`：
   - 新增常量 `export const SESSION_PROMPT_INSPECTION_MAX_BYTES = 192 * 1024;`（注释写明 framed under `SESSION_PROTOCOL_BOUNDS.maxFrameBytes`）。
   - `SessionDomainRouterOptions` 增加 `readonly promptInspection?: () => PromptInspection;`
-  - `operationManifest`（`:94-108`）追加条件项：`{ operation: "session.prompt.inspect", capability: "session.prompt.inspect", access: "read" }`（`promptInspection === undefined` 时不登记）。
+  - `operationManifest`（`:94-108`）追加条件项：`{ operation: "session.prompt.inspect", capability: "session.core", access: "read" }`（`promptInspection === undefined` 时不登记）。**实现修正（2026-09-10）**：capability 取 `session.core` 而不是新建 `session.prompt.inspect` capability —— `SESSION_PROTOCOL_CAPABILITIES`（`src/runtime/session-server/protocol.ts:18-37`）是闭合联合，而本操作与 `session.snapshot` 属同一「本会话自身状态」语义，无需扩张协议契约。
   - `query()` 增加分支（与 `session.security.inspect` / `plan.inspect` 同形）：
 
 ```ts
@@ -253,6 +253,8 @@ export class PromptDumpWorkflow {
 - `src/tui/transcript-view.ts`：`TranscriptOverlayOptions` 增加可选 `title?: string` 与 `closeHint?: string`，`render()` 的 header/footer 用它们替换硬编码的 `Transcript …` / `Read-only transcript · Ctrl+T close`（默认值保持现状，零回归）。
 - `src/tui/interactive/types.ts`：`InteractiveModePorts` 增加 `readonly promptDumpPort?: PromptDumpPort;` 与 `writeClipboard?(text: string): boolean;`。
 
+**实现修正（2026-09-11）**：overlay 槽 kind 取 `"transcript"` 而不是草稿里的 `"prompt-dump"` —— `TuiOverlayState`（`src/tui/application/state.ts:27-43`）是闭合联合，`/trajectory` 复用同一槽，`"prompt-dump"` 无法通过类型检查。workflow 另加 `parsePromptInspection` 校验 domain 返回值（字段缺失/类型不符时按 malformed 报错，不做类型断言）。
+
 **验证：** `tests/tui/prompt-dump.test.ts`（照 `tests/tui/command-capabilities.test.ts` 的 `withMode` + `notices()` 范式）：① contract controller 声明 `session.prompt.inspect` 时，`/dump` 产生包含 `## System Prompt` 的 notice；② 未声明时给 `unavailableCommandMessage` 文案；③ 带参数给 usage；④ 结果 `code: "prompt_inspect_too_large"` 时给超限文案。`tests/tui/commands/registry.test.ts` 断言新命令无重复名与顺序稳定。
 
 ### P3 剪贴板通道
@@ -277,7 +279,6 @@ export class PromptDumpWorkflow {
 
 ```ts
 export interface PromptDumpDocument {
-  readonly schemaVersion: 1;
   readonly kind: "runledger.prompt-dump";
   readonly sessionId: string;
   readonly harnessProfile?: { readonly id: string; readonly version: number };
@@ -299,7 +300,6 @@ export interface PromptDumpPort {
 
 ```jsonc
 {
-  "schemaVersion": 1,
   "kind": "runledger.prompt-dump",
   "sessionId": "sess_…",
   "harnessProfile": { "id": "standard", "version": 1 },
@@ -318,7 +318,8 @@ export interface PromptDumpPort {
 }
 ```
 
-与 `docs/system-prompts.json`（`schemaVersion: 2`）**不共用**：那份记录的是 legacy Host / 本地 HTTP 端点的手工抓取，字段语义（`capture`/`redactions`/`findings`）不同；本计划只在自己的 JSON 里给出 source 引用，跨文档关系在 §P6 补一句交叉链接。
+与 `docs/system-prompts.json` **不共用**：那份记录的是 legacy Host / 本地 HTTP 端点的手工抓取，字段语义（`capture`/`redactions`/`findings`）不同；本计划只在自己的 JSON 里给出 source 引用，跨文档关系见 §P6。
+**实现修正（2026-09-10）**：文档以 `kind` 作为格式判别，**不带数字版本字段** —— `npm run check:current-format` 禁止第一方代码/测试/文档出现该字段名（`scripts/check-current-format.ts` 的 `MARKER_PATTERNS`），侧车格式身份由 `kind` 承担。
 
 **验证：** `tests/cli/prompt-dump-artifacts.test.ts`：① 写入成功返回 0600 文件、目录 0700、内容可 `JSON.parse`；② `layout.tmp` 存在 symlink 时返回 `{ ok: false }` 而非跟随。`npm run check`。
 
@@ -375,4 +376,52 @@ export interface PromptDumpPort {
 
 ## 8. 实现记录与证据
 
-（待实现后按阶段回填：日期、commit、命令、证据路径、以及未关闭的门禁。）
+**状态：** P0–P6 已落地（实现 2026-09-10；2026-09-11 补齐 P3 剪贴板测试与本节证据）。真实 TTY 已完成；human-verified 与跨平台未关闭。
+
+### 8.1 交付清单
+
+| 阶段 | 关键路径 |
+|---|---|
+| P0 捕获点 | `src/runtime/types.ts`（`PromptInspection` / `PromptInspectionTool`）、`src/runtime/interactive-session-controller.ts`（`providerInspection` + `promptInspection` getter + `ensureAgent` 内包裹 assembler） |
+| P1 operation | `src/runtime/session-runtime/domain-router.ts`（`SESSION_PROMPT_INSPECTION_MAX_BYTES`、manifest 条件项、query 分支）、`domain.ts`（`promptInspection` 端口补 `basePromptDigest`/`compositionDigest`）、`session-runtime.ts`（端口透传） |
+| P2 TUI | `src/tui/commands/registry.ts`（`ui.dump` / order 28）、`src/tui/interactive-mode.ts`、`src/tui/interactive/prompt-dump-workflow.ts`（新增）、`src/tui/transcript-view.ts`（`title`/`closeHint`）、`src/tui/interactive/types.ts` |
+| P3 剪贴板 | `src/tui/opentui/component-runtime/{index,types}.ts`（`copyText`）、`src/tui/primitives.ts`（`TUI.writeClipboard`） |
+| P4 侧车 | `src/cli/prompt-dump-artifacts.ts`（新增，`layout.tmp/dump` 原子写 0600）、`src/cli/main.ts` 注入 |
+| P5 headless | `src/cli/control-commands.ts`（`dump` 组）、`docs/cli.md` |
+| P6 文档 | `development-doc/tui/00-overview.md`、`development-doc/00-index.md`、`docs/{README,cli,system-prompts}.md`、本文 |
+
+两处实现修正已就地记录：P1 的 capability 取 `session.core`、P4 的 JSON 不带数字版本字段（由 `kind` 承担）；另见 P2 的 overlay 槽 kind 说明。
+
+### 8.2 自动门禁（2026-09-11，工作树含本计划全部改动）
+
+- **聚焦测试**：`npx vitest run tests/tui/prompt-dump.test.ts tests/runtime/session-runtime/domain-router.test.ts tests/runtime/interactive-session-controller.test.ts tests/cli/prompt-dump-artifacts.test.ts tests/cli/dump-control-command.test.ts tests/tui/commands/registry.test.ts` → **6 files / 70 tests passed**。`npx bun test tests/tui/opentui-component-runtime.bun.test.ts` → **46 pass / 0 fail**（含本次新增的 `copyText` 用例：非空文本写出 OSC 52、空文本返回 `false` 且不触发）。
+- **`npm run check`**：`check:current-format` 在第一步失败（既有缺陷，见 §8.4）。其余 10 个 stage 单独执行全部 `EXIT=0`：`storage-boundaries`、`runtime-boundaries`、`contract-consumers`、`execution-boundaries`、`platform-boundaries`、`tui-boundaries`、`session-owner-boundaries`、`bash-ast-assets`、`package-boundaries`、`consumers`（含全量 `tsc` 与 tests/bun-tests/scripts/examples 的 typecheck）。
+- **`npm test`（`test:local`）**：`fast`（80+80+74 files passed）、`singleton`（9 chunks passed）、`runtime`（12+12 files passed）通过；runtime 的第三个 chunk 因 `tests/runtime/current-format-boundary.test.ts` 命中 §8.4 缺陷而 1 failed，`scripts/run-test-buckets.ts` 在首个失败 chunk 处 early-return，后续 bucket 未执行。为避免跳过，单独补跑：`npm run test:security-storage` **EXIT=0**、`npm run test:integration` **EXIT=0**、`npm run test:tui-native` **EXIT=0**。
+- `npm run test:inventory`：536 owned files / 0 diagnostics（新增测试文件均被既有 discovery 规则覆盖）。
+
+### 8.3 构建后真实 CLI 与真实 TTY（隔离 `RUNLEDGER_DIR`）
+
+- `npm run build` **EXIT=0**（native + tsc + tui-assets + host manifest）。
+- 入口核对：`command -v runledger` → `/home/nzq/.npm-global/bin/runledger`；`readlink -f` → 本仓 `bin/runledger.js`；`npm ls -g --depth=0` 显示 `runledger@0.0.1 -> <repo>`。
+- **headless**（隔离 `RUNLEDGER_DIR`/`HOME`/XDG 临时目录）：`runledger dump` exit 0；stdout JSON 为 `ok:true / status:"ok" / operation:"session.prompt.inspect"`，`value.systemPrompt` 175 字符、`value.tools` 21 项、`source:"base"`（尚未发生 turn）、`assembledPromptDigest`/`basePromptDigest`/`compositionDigest` 齐备。
+- **真实 TTY**（tmux 独立会话，`TERM=screen-256color`，隔离 `RUNLEDGER_DIR`）：
+  - `/du` popup 出现 `→ /dump  Dump the assembled system prompt`；
+  - `/dump` → overlay 头部 `Prompt dump · claude-opus-4-8 1-36/40 · j/k move · PgUp/PgDn page · Esc close`、脚部 `Read-only prompt dump · Esc close`，正文含 `## System Prompt` / `## Configuration`（Harness `standard@1`、Permissions、provider/model/thinking、`Prompt source: base`、三个 digest 前缀）/ `## Tools (21)`；
+  - 翻页：`j`×2 → `3-38/40`，`k` → `2-37/40`，`G` → `5-40/40`；
+  - Esc 关闭后 notice：`/dump: base prompt (no turn yet) · 2.6 KiB`、`Clipboard: OSC 52 sequence written (terminal support varies).`、`JSON: <RUNLEDGER_DIR>/tmp/dump/prompt-dump-<session>-<ts>.json`；
+  - 侧车文件权限 `0600`、目录 `0700`，JSON 可解析且含 `kind/sessionId/capturedAtMs/harnessProfile/permissionProfile/selection/prompt`（含 tools 与 digests）；
+  - `/dump now` → `⚠ error: Usage: /dump`；
+  - `Ctrl+D` → `TUI_EXIT=0`，tmux 会话随进程退出消失。
+  - **只读证明（D6）**：同一 owner 会话内在 `/dump` 前后读 SQLite，`session_events` 6 → 6，`session_checkpoints` 0 → 0，`command_attempt_receipts` 0 → 0。
+  - **未闭合项**：`PgUp`/`PgDn` 在本机 tmux 2.6 + `TERM=screen-256color` 下不可观测 —— 依次尝试 tmux 键名 `PageUp/PageDown`、`PPage/NPage`、原始 `\x1b[5~`/`\x1b[6~` 与 kitty 编码 `\x1b[57354u`/`\x1b[57355u`，overlay 均未移动，而 `j`/`k`/`G` 正常。组件层的 `pageUp`/`pageDown` 处理已有既有覆盖（`tests/tui/blocks/transcript-view.test.ts` 直接投喂归一化键名），故当前归因于输入层/终端能力，未在本计划范围内改动。human-verified 与跨平台仍未关闭。
+
+### 8.4 既有缺陷：`check:current-format` 与 `npm test` 首环节被文档阻塞
+
+- 现象：`docs/system-prompts.json:2` 的 `"schemaVersion": 2` 命中 `scripts/check-current-format.ts:44` 的 `schemaVersion` 规则，`npm run check` 第一步即失败；同一原因使 `tests/runtime/current-format-boundary.test.ts` 失败，进而中断 `npm test` 的 bucket 编排。
+- 归属：该文件由本计划之外的提交 `3fa5ceb`（docs: replace prompt inventory with captured session context）引入；工作树对该文件无改动，本计划也不拥有它的内容与分享口径（§P4 与 §6 的 deferred 表）。
+- 影响：`npm run check` 与 `npm test` 不能端到端全绿；本计划用「逐 stage 执行 + 补齐其余 bucket」的方式隔离影响，未伪造通过状态。
+- 最小修复（留给该文件的 owner 决策）：删除该 JSON 的 `schemaVersion` 字段 —— 仓内无消费者（`grep` 仅命中该文件与检查脚本），`docs/*.md` 也未引用该字段。
+
+### 8.5 本计划待提交路径
+
+`src/runtime/types.ts`、`src/runtime/interactive-session-controller.ts`、`src/runtime/session-runtime/{domain-router,domain,session-runtime}.ts`、`src/tui/commands/registry.ts`、`src/tui/interactive-mode.ts`、`src/tui/interactive/{types.ts,prompt-dump-workflow.ts}`、`src/tui/transcript-view.ts`、`src/tui/primitives.ts`、`src/tui/opentui/component-runtime/{index,types}.ts`、`src/cli/{main.ts,control-commands.ts,prompt-dump-artifacts.ts}`、`tests/runtime/interactive-session-controller.test.ts`、`tests/runtime/session-runtime/domain-router.test.ts`、`tests/tui/opentui-component-runtime.bun.test.ts`、`tests/tui/prompt-dump.test.ts`、`tests/cli/{dump-control-command,prompt-dump-artifacts}.test.ts`、`docs/{README,cli,system-prompts}.md`、`development-doc/{00-index.md,tui/00-overview.md,tui/28-system-prompt-dump-plan.md}`。

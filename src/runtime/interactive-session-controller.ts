@@ -25,7 +25,8 @@ import type {
 } from "./types.ts";
 import { DEFAULT_AGENT_RUN_BUDGET } from "./types.ts";
 import type { ExtensionHookRuntime, ExtensionHookRuntimeResult } from "../extensions/turn-lifecycle.ts";
-import type { ContextAssemblySink, ModelContextAssembler } from "./types.ts";
+import type { ContextAssemblySink, ModelContextAssembler, PromptInspection } from "./types.ts";
+import { runtimeDigest } from "./protocol/foundation.ts";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { SessionDomainMutationContext, SessionDomainRequestContext, SessionDomainResult } from "./session-runtime/domain-router.ts";
 import type { AgentRunSummary } from "./session-runtime/run-timing.ts";
@@ -242,6 +243,8 @@ export class InteractiveSessionController {
   private readonly initialThinkingLevel: ModelThinkingLevel | undefined;
   private agent: Agent | undefined;
   private unsubscribeAgent: (() => void) | undefined;
+  /** `/dump` 捕获点：最近一次真实装配的 provider 面投影；未发生 turn 时保持 undefined。 */
+  private providerInspection: PromptInspection | undefined;
   private selectionChangePending = false;
   private promptPending = false;
   private selectionPersistenceWarning: string | undefined;
@@ -340,6 +343,17 @@ export class InteractiveSessionController {
 
   get toolCount(): number {
     return this.tools.length;
+  }
+
+  /** 无真实 turn 时回退 harness 基座提示词；调用方据 `source` 字段区分。 */
+  get promptInspection(): PromptInspection {
+    if (this.providerInspection !== undefined) return this.providerInspection;
+    return {
+      systemPrompt: this.systemPrompt,
+      tools: this.tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+      source: "base",
+      assembledPromptDigest: runtimeDigest(this.systemPrompt),
+    };
   }
 
   /** 在 policy receipt/root registration 完成后加入 Session-owned tools。 */
@@ -524,6 +538,24 @@ export class InteractiveSessionController {
       ...(this.modelRequestRouter === undefined ? {} : { modelRequestRouter: this.modelRequestRouter }),
     });
     const authorization = authorizationBeforeToolCall(this.policy);
+    // `/dump` 捕获点：包裹 assembler 记录本 turn 真实发出的 provider 面内容。
+    // 只在 assembler 存在时成立；无 assembler 的低层 fixture 由 getter 回退基座提示词。
+    const assembler = this.modelContextAssembler;
+    const wrappedAssembler: ModelContextAssembler | undefined = assembler === undefined
+      ? undefined
+      : async (input) => {
+        const assembled = await assembler(input);
+        const systemPrompt = assembled.context.systemPrompt ?? this.systemPrompt;
+        this.providerInspection = {
+          systemPrompt,
+          tools: (assembled.context.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+          source: "assembled",
+          turn: input.turn,
+          capturedAtMs: Date.now(),
+          assembledPromptDigest: runtimeDigest(systemPrompt),
+        };
+        return assembled;
+      };
     const beforeToolCall = async (request: Parameters<NonNullable<AgentLoopConfig["beforeToolCall"]>>[0], signal?: AbortSignal) => {
       const hook = await this.runExtensionHook("PreToolUse", request.args, request.toolCall.name, signal);
       if (hook?.blocked || hook?.decision === "deny" || hook?.decision === "aborted") return { block: true, reason: "PreToolUse hook denied the tool call" };
@@ -555,7 +587,7 @@ export class InteractiveSessionController {
         runBudget: this.runBudget,
         ...(this.runBudgetUsage === undefined ? {} : { runBudgetUsage: this.runBudgetUsage }),
         ...(this.toolResultOverflowStore === undefined ? {} : { toolResultOverflowStore: this.toolResultOverflowStore }),
-        ...(this.modelContextAssembler === undefined ? {} : { modelContextAssembler: this.modelContextAssembler }),
+        ...(wrappedAssembler === undefined ? {} : { modelContextAssembler: wrappedAssembler }),
         ...(this.contextAssemblySink === undefined ? {} : { contextAssemblySink: this.contextAssemblySink }),
       },
       toolExecution: "sequential",

@@ -26,7 +26,7 @@ import type { LateBoundAttemptPort, StableAttemptRequest, AttemptPortBeginResult
 import type { RuntimeDigest } from "../protocol/foundation.ts";
 import type { AttemptId, SessionId, ConnectionId } from "../protocol/ids.ts";
 import type { CommandAttemptOutcome, CommandEffectClass, OwnerFence, SessionCheckpointBoundary } from "../session-owner/types.ts";
-import type { AgentEvent, AgentMessage } from "../types.ts";
+import type { AgentEvent, AgentMessage, PromptInspection } from "../types.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection, SessionTitleChangedEvent } from "../interactive-session-controller.ts";
 import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolCapability, type SessionProtocolManifest, type SessionProtocolOperationDescriptor, type SessionStatus } from "../session-server/protocol.ts";
@@ -64,6 +64,8 @@ export interface SessionDomainPort {
 	readonly protocolCapabilities?: readonly SessionProtocolCapability[];
 	readonly securityInspection?: () => Record<string, unknown>;
 	readonly planInspection?: () => SessionPlanInspection;
+	/** `/dump` 只读投影：assembler 之后的 provider 面系统提示词与工具。 */
+	readonly promptInspection?: () => PromptInspection;
 	readonly process?: SessionProcessDomainPort;
 	readonly resources?: SessionResourceDomainPort;
 	readonly trajectory?: TrajectoryService;
@@ -180,6 +182,7 @@ export class SessionRuntime implements SessionController {
 			ownerFence: options.fence,
 			...(options.domain?.securityInspection === undefined ? {} : { securityInspection: options.domain.securityInspection }),
 			...(options.domain?.planInspection === undefined ? {} : { planInspection: options.domain.planInspection }),
+			...(options.domain?.promptInspection === undefined ? {} : { promptInspection: options.domain.promptInspection }),
 			additionalOperations: [...(options.domain?.multiAgent?.operationManifest ?? []), ...(options.domain?.trajectory?.operationManifest ?? [])],
 		});
 		this.lifecycleCleanup = options.lifecycleCleanup;
