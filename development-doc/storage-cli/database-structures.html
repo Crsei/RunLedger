@@ -1,0 +1,304 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RunLedger · 数据库结构图</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f5f5f5;--ink:#2d3142;--muted:#4f5d75;--accent:#eb6c36;--rule:#bfc0c0}*{box-sizing:border-box}body{overflow-wrap:anywhere;margin:0;background:var(--paper);color:var(--ink);font-family:'Geist','Noto Sans SC','Microsoft YaHei',sans-serif;line-height:1.7}main{max-width:1360px;margin:auto;padding:48px 40px}h1{font:400 40px 'Instrument Serif','Noto Serif CJK SC',serif;margin:12px 0}h2{font-size:24px;margin:0 0 12px}h3{font-size:20px}p{max-width:1000px;color:var(--muted)}.eyebrow,code,pre,.mono{font-family:'Geist Mono',monospace}.eyebrow{font-size:12px;letter-spacing:.12em}nav{display:flex;flex-wrap:wrap;gap:12px 24px;margin:28px 0}a{color:#2e5aa8;text-underline-offset:4px}section{padding:36px 0;border-top:1px solid var(--rule)}figure{margin:0;overflow-x:auto}svg{display:block;width:100%;min-width:960px;height:auto}svg text{font-family:'Geist','Noto Sans SC','Microsoft YaHei',sans-serif;fill:#2d3142;font-size:12px}svg .mono{font-family:'Geist Mono',monospace}figcaption{color:var(--muted);margin:12px 0 24px}table{table-layout:fixed;border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #d9dbdf;vertical-align:top}th{background:#ececec}td code{overflow-wrap:anywhere}details{margin:16px 0;border:1px solid var(--rule);padding:16px;border-radius:4px}summary{cursor:pointer;font-weight:600}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.7;background:#ececec;padding:20px}.scroll{overflow-x:auto}.note{border-left:4px solid var(--accent);padding-left:20px}footer{border-top:1px solid var(--rule);margin-top:32px;padding-top:24px;color:var(--muted);font-size:12px}@media(max-width:700px){main{padding:24px 16px}h1{font-size:32px}}@media print{main{padding:0}section{break-before:page}svg{min-width:0}details{break-inside:avoid}}
+</style></head><body><main><header><div class="eyebrow">RUNLEDGER / PHYSICAL DATABASE SCHEMA / 2026-09-12</div><h1>数据库结构与数据载体</h1><p>以当前源码中的 DDL 为准：主库 <code>&lt;home&gt;/state.db</code>（schema 6，8 张表）；每个 Session 的轨迹缓存 <code>&lt;home&gt;/projections/trajectory/&lt;canonicalDigest(sessionId)&gt;.sqlite</code>（缓存版本 2，3 张表）。home 由 RUNLEDGER_DIR 或默认 ~/.runledger 解析。</p><p class="note">主库保存会话事实与执行证据；检查点和轨迹索引可重建。图中只将 DDL 声明的关系画为外键。此次仅检查源码，并在内存 SQLite 安装 schema 验证结构，未读取真实用户数据库。</p></header><nav><a href="#control">01 库控制</a><a href="#owner">02 会话与 Owner</a><a href="#events">03 事件与检查点</a><a href="#commands">04 命令与回执</a><a href="#trajectory">05 轨迹缓存</a><a href="#payloads">06 JSON 数据结构</a><a href="#dictionary">完整字段清单</a></nav>
+<section id="control"><h2>01 / 库版本与迁移准入</h2><figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="control-title control-desc"><title id="control-title">01 / 库版本与迁移准入</title><desc id="control-desc">schema_meta 记录版本与摘要，store_control 保存单例迁移和写入准入状态，两表不声明外键。</desc><defs><marker id="control-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#4f5d75"/></marker><marker id="control-arrow-accent" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#eb6c36"/></marker><marker id="control-arrow-link" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2e5aa8"/></marker></defs>
+<g data-table="schema_meta"><rect x="160" y="200" width="360" height="136" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="160" y="200" width="360" height="56" rx="4" fill="#ececec"/><text x="172" y="224" class="" style="font-size:16px">schema_meta</text><text x="172" y="244" class="" style="font-size:12px">Schema 版本记录</text><rect x="161" y="256" width="358" height="24" fill="#f5f5f5"/><text x="172" y="272" class="" style="font-size:12px">schema_version</text><text x="412" y="272" class="mono" style="font-size:8px">PK1 </text><text x="464" y="272" class="mono" style="font-size:8px">INTEGER</text><text x="172" y="296" class="" style="font-size:12px">format_digest</text><text x="412" y="296" class="mono" style="font-size:8px"></text><text x="464" y="296" class="mono" style="font-size:8px">TEXT</text><rect x="161" y="304" width="358" height="24" fill="#f5f5f5"/><text x="172" y="320" class="" style="font-size:12px">applied_at_ms</text><text x="412" y="320" class="mono" style="font-size:8px"></text><text x="464" y="320" class="mono" style="font-size:8px">INTEGER</text></g>
+<g data-table="store_control"><rect x="760" y="200" width="360" height="184" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="760" y="200" width="360" height="56" rx="4" fill="#ececec"/><text x="772" y="224" class="" style="font-size:16px">store_control</text><text x="772" y="244" class="" style="font-size:12px">迁移与写入准入</text><rect x="761" y="256" width="358" height="24" fill="#f5f5f5"/><text x="772" y="272" class="" style="font-size:12px">singleton_id</text><text x="1012" y="272" class="mono" style="font-size:8px">PK1 </text><text x="1064" y="272" class="mono" style="font-size:8px">INTEGER</text><text x="772" y="296" class="" style="font-size:12px">admission</text><text x="1012" y="296" class="mono" style="font-size:8px"></text><text x="1064" y="296" class="mono" style="font-size:8px">TEXT</text><rect x="761" y="304" width="358" height="24" fill="#f5f5f5"/><text x="772" y="320" class="" style="font-size:12px">migration_epoch</text><text x="1012" y="320" class="mono" style="font-size:8px"></text><text x="1064" y="320" class="mono" style="font-size:8px">INTEGER</text><text x="772" y="344" class="" style="font-size:12px">catalog_revision</text><text x="1012" y="344" class="mono" style="font-size:8px"></text><text x="1064" y="344" class="mono" style="font-size:8px">INTEGER</text><rect x="761" y="352" width="358" height="24" fill="#f5f5f5"/><text x="772" y="368" class="" style="font-size:12px">updated_at_ms</text><text x="1012" y="368" class="mono" style="font-size:8px"></text><text x="1064" y="368" class="mono" style="font-size:8px">INTEGER</text></g>
+<path d="M40 644 H1240" stroke="#bfc0c0"/><text x="40" y="672" class="mono" style="font-size:12px">PKn = primary-key position · FK = declared foreign key · full constraints below</text></svg><figcaption>这两张表没有会话外键。store_control 的 singleton_id 必须为 1；admission 为 ready 或 migration_blocked，catalog_revision ≥ 0。</figcaption></figure></section>
+<section id="owner"><h2>02 / 会话目录与运行时所有权</h2><figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="owner-title owner-desc"><title id="owner-title">02 / 会话目录与运行时所有权</title><desc id="owner-desc">session_owners.session_id 是指向 sessions.session_id 的主键兼外键，删除会话会级联删除 Owner 行。</desc><defs><marker id="owner-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#4f5d75"/></marker><marker id="owner-arrow-accent" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#eb6c36"/></marker><marker id="owner-arrow-link" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2e5aa8"/></marker></defs>
+<path d="M520 268 H760" fill="none" stroke="#eb6c36" stroke-width="1.2"/><rect x="588" y="244" width="104" height="16" fill="#f5f5f5"/><text x="596" y="256" class="mono" style="font-size:8px">ON DELETE CASCADE</text>
+<g data-table="sessions"><rect x="160" y="200" width="360" height="280" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="160" y="200" width="360" height="56" rx="4" fill="#ececec"/><text x="172" y="224" class="" style="font-size:16px">sessions</text><text x="172" y="244" class="" style="font-size:12px">会话目录</text><rect x="161" y="256" width="358" height="24" fill="#f5f5f5"/><text x="172" y="272" class="" style="font-size:12px">session_id</text><text x="412" y="272" class="mono" style="font-size:8px">PK1 </text><text x="464" y="272" class="mono" style="font-size:8px">TEXT</text><text x="172" y="296" class="" style="font-size:12px">workspace_id</text><text x="412" y="296" class="mono" style="font-size:8px"></text><text x="464" y="296" class="mono" style="font-size:8px">TEXT</text><rect x="161" y="304" width="358" height="24" fill="#f5f5f5"/><text x="172" y="320" class="" style="font-size:12px">repository_id</text><text x="412" y="320" class="mono" style="font-size:8px"></text><text x="464" y="320" class="mono" style="font-size:8px">TEXT</text><text x="172" y="344" class="" style="font-size:12px">status</text><text x="412" y="344" class="mono" style="font-size:8px"></text><text x="464" y="344" class="mono" style="font-size:8px">TEXT</text><rect x="161" y="352" width="358" height="24" fill="#f5f5f5"/><text x="172" y="368" class="" style="font-size:12px">head_sequence</text><text x="412" y="368" class="mono" style="font-size:8px"></text><text x="464" y="368" class="mono" style="font-size:8px">INTEGER</text><text x="172" y="392" class="" style="font-size:12px">current_checkpoint_id</text><text x="412" y="392" class="mono" style="font-size:8px"></text><text x="464" y="392" class="mono" style="font-size:8px">TEXT</text><rect x="161" y="400" width="358" height="24" fill="#f5f5f5"/><text x="172" y="416" class="" style="font-size:12px">harness_profile_id</text><text x="412" y="416" class="mono" style="font-size:8px"></text><text x="464" y="416" class="mono" style="font-size:8px">TEXT</text><text x="172" y="440" class="" style="font-size:12px">harness_profile_version</text><text x="412" y="440" class="mono" style="font-size:8px"></text><text x="464" y="440" class="mono" style="font-size:8px">INTEGER</text><text x="172" y="464" class="mono" style="font-size:12px">+ 11 more columns — see dictionary</text></g>
+<g data-table="session_owners"><rect x="760" y="200" width="360" height="280" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="760" y="200" width="360" height="56" rx="4" fill="#fce9e0"/><text x="772" y="224" class="" style="font-size:16px">session_owners</text><text x="772" y="244" class="" style="font-size:12px">运行时所有权</text><rect x="761" y="256" width="358" height="24" fill="#f5f5f5"/><text x="772" y="272" class="" style="font-size:12px">session_id</text><text x="1012" y="272" class="mono" style="font-size:8px">PK1 FK </text><text x="1064" y="272" class="mono" style="font-size:8px">TEXT</text><text x="772" y="296" class="" style="font-size:12px">runtime_id</text><text x="1012" y="296" class="mono" style="font-size:8px"></text><text x="1064" y="296" class="mono" style="font-size:8px">TEXT</text><rect x="761" y="304" width="358" height="24" fill="#f5f5f5"/><text x="772" y="320" class="" style="font-size:12px">generation</text><text x="1012" y="320" class="mono" style="font-size:8px"></text><text x="1064" y="320" class="mono" style="font-size:8px">INTEGER</text><text x="772" y="344" class="" style="font-size:12px">state</text><text x="1012" y="344" class="mono" style="font-size:8px"></text><text x="1064" y="344" class="mono" style="font-size:8px">TEXT</text><rect x="761" y="352" width="358" height="24" fill="#f5f5f5"/><text x="772" y="368" class="" style="font-size:12px">port</text><text x="1012" y="368" class="mono" style="font-size:8px"></text><text x="1064" y="368" class="mono" style="font-size:8px">INTEGER</text><text x="772" y="392" class="" style="font-size:12px">auth_token</text><text x="1012" y="392" class="mono" style="font-size:8px"></text><text x="1064" y="392" class="mono" style="font-size:8px">BLOB</text><rect x="761" y="400" width="358" height="24" fill="#f5f5f5"/><text x="772" y="416" class="" style="font-size:12px">heartbeat_at_ms</text><text x="1012" y="416" class="mono" style="font-size:8px"></text><text x="1064" y="416" class="mono" style="font-size:8px">INTEGER</text><text x="772" y="440" class="" style="font-size:12px">owner_started_at_ms</text><text x="1012" y="440" class="mono" style="font-size:8px"></text><text x="1064" y="440" class="mono" style="font-size:8px">INTEGER</text><text x="772" y="464" class="mono" style="font-size:12px">+ 1 more columns — see dictionary</text></g>
+<path d="M40 644 H1240" stroke="#bfc0c0"/><text x="40" y="672" class="mono" style="font-size:12px">PKn = primary-key position · FK = declared foreign key · full constraints below</text></svg><figcaption>sessions 1 → session_owners 0..1。runtime_id、generation 与 state 描述所有权；auth_token 是 BLOB 凭据列，这里仅展示字段名。workspace_id、repository_id 没有对应 SQL 外键表。</figcaption></figure></section>
+<section id="events"><h2>03 / 事件账本与恢复检查点</h2><figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="events-title events-desc"><title id="events-title">03 / 事件账本与恢复检查点</title><desc id="events-desc">事件和检查点各自通过 session_id 外键关联会话；事件以会话加序号为复合主键，检查点不是独立事实来源。</desc><defs><marker id="events-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#4f5d75"/></marker><marker id="events-arrow-accent" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#eb6c36"/></marker><marker id="events-arrow-link" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2e5aa8"/></marker></defs>
+<path d="M400 196 H460" fill="none" stroke="#eb6c36" stroke-width="1.2"/><rect x="404" y="172" width="52" height="16" fill="#f5f5f5"/><text x="412" y="184" class="mono" style="font-size:8px">CASCADE</text>
+<path d="M820 196 H880" fill="none" stroke="#4f5d75" stroke-width="1.2"/><rect x="824" y="172" width="52" height="16" fill="#f5f5f5"/><text x="832" y="184" class="mono" style="font-size:8px">CASCADE</text>
+<g data-table="session_events"><rect x="40" y="128" width="360" height="280" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="40" y="128" width="360" height="56" rx="4" fill="#fce9e0"/><text x="52" y="152" class="" style="font-size:16px">session_events</text><text x="52" y="172" class="" style="font-size:12px">追加事件与哈希链</text><rect x="41" y="184" width="358" height="24" fill="#f5f5f5"/><text x="52" y="200" class="" style="font-size:12px">session_id</text><text x="292" y="200" class="mono" style="font-size:8px">PK1 FK </text><text x="344" y="200" class="mono" style="font-size:8px">TEXT</text><text x="52" y="224" class="" style="font-size:12px">sequence</text><text x="292" y="224" class="mono" style="font-size:8px">PK2 </text><text x="344" y="224" class="mono" style="font-size:8px">INTEGER</text><rect x="41" y="232" width="358" height="24" fill="#f5f5f5"/><text x="52" y="248" class="" style="font-size:12px">event_id</text><text x="292" y="248" class="mono" style="font-size:8px"></text><text x="344" y="248" class="mono" style="font-size:8px">TEXT</text><text x="52" y="272" class="" style="font-size:12px">owner_generation</text><text x="292" y="272" class="mono" style="font-size:8px"></text><text x="344" y="272" class="mono" style="font-size:8px">INTEGER</text><rect x="41" y="280" width="358" height="24" fill="#f5f5f5"/><text x="52" y="296" class="" style="font-size:12px">event_type</text><text x="292" y="296" class="mono" style="font-size:8px"></text><text x="344" y="296" class="mono" style="font-size:8px">TEXT</text><text x="52" y="320" class="" style="font-size:12px">payload_json</text><text x="292" y="320" class="mono" style="font-size:8px"></text><text x="344" y="320" class="mono" style="font-size:8px">TEXT</text><rect x="41" y="328" width="358" height="24" fill="#f5f5f5"/><text x="52" y="344" class="" style="font-size:12px">previous_event_hash</text><text x="292" y="344" class="mono" style="font-size:8px"></text><text x="344" y="344" class="mono" style="font-size:8px">TEXT</text><text x="52" y="368" class="" style="font-size:12px">current_event_hash</text><text x="292" y="368" class="mono" style="font-size:8px"></text><text x="344" y="368" class="mono" style="font-size:8px">TEXT</text><text x="52" y="392" class="mono" style="font-size:12px">+ 1 more columns — see dictionary</text></g>
+<g data-table="sessions"><rect x="460" y="128" width="360" height="184" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="460" y="128" width="360" height="56" rx="4" fill="#ececec"/><text x="472" y="152" class="" style="font-size:16px">sessions</text><text x="472" y="172" class="" style="font-size:12px">会话目录</text><rect x="461" y="184" width="358" height="24" fill="#f5f5f5"/><text x="472" y="200" class="" style="font-size:12px">session_id</text><text x="712" y="200" class="mono" style="font-size:8px">PK1 </text><text x="764" y="200" class="mono" style="font-size:8px">TEXT</text><text x="472" y="224" class="" style="font-size:12px">head_sequence</text><text x="712" y="224" class="mono" style="font-size:8px"></text><text x="764" y="224" class="mono" style="font-size:8px">INTEGER</text><rect x="461" y="232" width="358" height="24" fill="#f5f5f5"/><text x="472" y="248" class="" style="font-size:12px">current_checkpoint_id</text><text x="712" y="248" class="mono" style="font-size:8px"></text><text x="764" y="248" class="mono" style="font-size:8px">TEXT</text><text x="472" y="272" class="" style="font-size:12px">status</text><text x="712" y="272" class="mono" style="font-size:8px"></text><text x="764" y="272" class="mono" style="font-size:8px">TEXT</text><text x="472" y="296" class="mono" style="font-size:12px">+ 15 more columns — see dictionary</text></g>
+<g data-table="session_checkpoints"><rect x="880" y="104" width="360" height="256" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="880" y="104" width="360" height="56" rx="4" fill="#ececec"/><text x="892" y="128" class="" style="font-size:16px">session_checkpoints</text><text x="892" y="148" class="" style="font-size:12px">可重建检查点</text><rect x="881" y="160" width="358" height="24" fill="#f5f5f5"/><text x="892" y="176" class="" style="font-size:12px">checkpoint_id</text><text x="1132" y="176" class="mono" style="font-size:8px">PK1 </text><text x="1184" y="176" class="mono" style="font-size:8px">TEXT</text><text x="892" y="200" class="" style="font-size:12px">session_id</text><text x="1132" y="200" class="mono" style="font-size:8px">FK </text><text x="1184" y="200" class="mono" style="font-size:8px">TEXT</text><rect x="881" y="208" width="358" height="24" fill="#f5f5f5"/><text x="892" y="224" class="" style="font-size:12px">owner_generation</text><text x="1132" y="224" class="mono" style="font-size:8px"></text><text x="1184" y="224" class="mono" style="font-size:8px">INTEGER</text><text x="892" y="248" class="" style="font-size:12px">boundary</text><text x="1132" y="248" class="mono" style="font-size:8px"></text><text x="1184" y="248" class="mono" style="font-size:8px">TEXT</text><rect x="881" y="256" width="358" height="24" fill="#f5f5f5"/><text x="892" y="272" class="" style="font-size:12px">source_sequence</text><text x="1132" y="272" class="mono" style="font-size:8px"></text><text x="1184" y="272" class="mono" style="font-size:8px">INTEGER</text><text x="892" y="296" class="" style="font-size:12px">snapshot_json</text><text x="1132" y="296" class="mono" style="font-size:8px"></text><text x="1184" y="296" class="mono" style="font-size:8px">TEXT</text><rect x="881" y="304" width="358" height="24" fill="#f5f5f5"/><text x="892" y="320" class="" style="font-size:12px">snapshot_digest</text><text x="1132" y="320" class="mono" style="font-size:8px"></text><text x="1184" y="320" class="mono" style="font-size:8px">TEXT</text><text x="892" y="344" class="" style="font-size:12px">created_at_ms</text><text x="1132" y="344" class="mono" style="font-size:8px"></text><text x="1184" y="344" class="mono" style="font-size:8px">INTEGER</text></g>
+<path d="M40 644 H1240" stroke="#bfc0c0"/><text x="40" y="672" class="mono" style="font-size:12px">CASCADE = ON DELETE CASCADE · PKn = composite-key position · FK = declared foreign key</text></svg><figcaption>两条关系均为 ON DELETE CASCADE，sessions 1 → 子表 0..N。events 的 PK=(session_id, sequence)，event_id 另有 UNIQUE；哈希字段串联事件。current_checkpoint_id → checkpoint_id、source_sequence → sequence 是代码层引用，DDL 未声明外键。</figcaption></figure></section>
+<section id="commands"><h2>04 / 命令幂等与尝试回执</h2><figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="commands-title commands-desc"><title id="commands-title">04 / 命令幂等与尝试回执</title><desc id="commands-desc">commands 通过 session_id 关联 sessions；回执通过 session_id 与 command_id 组成的一个复合外键关联 commands。</desc><defs><marker id="commands-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#4f5d75"/></marker><marker id="commands-arrow-accent" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#eb6c36"/></marker><marker id="commands-arrow-link" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2e5aa8"/></marker></defs>
+<path d="M400 220 H460" fill="none" stroke="#4f5d75" stroke-width="1.2"/><rect x="404" y="196" width="52" height="16" fill="#f5f5f5"/><text x="412" y="208" class="mono" style="font-size:8px">CASCADE</text>
+<path d="M820 220 H880" fill="none" stroke="#eb6c36" stroke-width="1.2"/><rect x="824" y="196" width="52" height="16" fill="#f5f5f5"/><text x="832" y="208" class="mono" style="font-size:8px">CASCADE</text>
+<path d="M820 244 H880" fill="none" stroke="#eb6c36" stroke-width="1.2"/>
+<g data-table="sessions"><rect x="40" y="152" width="360" height="160" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="40" y="152" width="360" height="56" rx="4" fill="#ececec"/><text x="52" y="176" class="" style="font-size:16px">sessions</text><text x="52" y="196" class="" style="font-size:12px">会话目录</text><rect x="41" y="208" width="358" height="24" fill="#f5f5f5"/><text x="52" y="224" class="" style="font-size:12px">session_id</text><text x="292" y="224" class="mono" style="font-size:8px">PK1 </text><text x="344" y="224" class="mono" style="font-size:8px">TEXT</text><text x="52" y="248" class="" style="font-size:12px">status</text><text x="292" y="248" class="mono" style="font-size:8px"></text><text x="344" y="248" class="mono" style="font-size:8px">TEXT</text><rect x="41" y="256" width="358" height="24" fill="#f5f5f5"/><text x="52" y="272" class="" style="font-size:12px">head_sequence</text><text x="292" y="272" class="mono" style="font-size:8px"></text><text x="344" y="272" class="mono" style="font-size:8px">INTEGER</text><text x="52" y="296" class="mono" style="font-size:12px">+ 16 more columns — see dictionary</text></g>
+<g data-table="commands"><rect x="460" y="152" width="360" height="184" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="460" y="152" width="360" height="56" rx="4" fill="#ececec"/><text x="472" y="176" class="" style="font-size:16px">commands</text><text x="472" y="196" class="" style="font-size:12px">命令幂等身份</text><rect x="461" y="208" width="358" height="24" fill="#f5f5f5"/><text x="472" y="224" class="" style="font-size:12px">session_id</text><text x="712" y="224" class="mono" style="font-size:8px">PK1 FK </text><text x="764" y="224" class="mono" style="font-size:8px">TEXT</text><text x="472" y="248" class="" style="font-size:12px">command_id</text><text x="712" y="248" class="mono" style="font-size:8px">PK2 </text><text x="764" y="248" class="mono" style="font-size:8px">TEXT</text><rect x="461" y="256" width="358" height="24" fill="#f5f5f5"/><text x="472" y="272" class="" style="font-size:12px">request_digest</text><text x="712" y="272" class="mono" style="font-size:8px"></text><text x="764" y="272" class="mono" style="font-size:8px">TEXT</text><text x="472" y="296" class="" style="font-size:12px">origin_generation</text><text x="712" y="296" class="mono" style="font-size:8px"></text><text x="764" y="296" class="mono" style="font-size:8px">INTEGER</text><rect x="461" y="304" width="358" height="24" fill="#f5f5f5"/><text x="472" y="320" class="" style="font-size:12px">created_at_ms</text><text x="712" y="320" class="mono" style="font-size:8px"></text><text x="764" y="320" class="mono" style="font-size:8px">INTEGER</text></g>
+<g data-table="command_attempt_receipts"><rect x="880" y="128" width="360" height="280" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="880" y="128" width="360" height="56" rx="4" fill="#fce9e0"/><text x="892" y="152" class="" style="font-size:16px">command_attempt_receipts</text><text x="892" y="172" class="" style="font-size:12px">尝试结果与证据</text><rect x="881" y="184" width="358" height="24" fill="#f5f5f5"/><text x="892" y="200" class="" style="font-size:12px">receipt_id</text><text x="1132" y="200" class="mono" style="font-size:8px">PK1 </text><text x="1184" y="200" class="mono" style="font-size:8px">TEXT</text><text x="892" y="224" class="" style="font-size:12px">session_id</text><text x="1132" y="224" class="mono" style="font-size:8px">FK </text><text x="1184" y="224" class="mono" style="font-size:8px">TEXT</text><rect x="881" y="232" width="358" height="24" fill="#f5f5f5"/><text x="892" y="248" class="" style="font-size:12px">command_id</text><text x="1132" y="248" class="mono" style="font-size:8px">FK </text><text x="1184" y="248" class="mono" style="font-size:8px">TEXT</text><text x="892" y="272" class="" style="font-size:12px">attempt_id</text><text x="1132" y="272" class="mono" style="font-size:8px"></text><text x="1184" y="272" class="mono" style="font-size:8px">TEXT</text><rect x="881" y="280" width="358" height="24" fill="#f5f5f5"/><text x="892" y="296" class="" style="font-size:12px">origin_generation</text><text x="1132" y="296" class="mono" style="font-size:8px"></text><text x="1184" y="296" class="mono" style="font-size:8px">INTEGER</text><text x="892" y="320" class="" style="font-size:12px">settled_generation</text><text x="1132" y="320" class="mono" style="font-size:8px"></text><text x="1184" y="320" class="mono" style="font-size:8px">INTEGER</text><rect x="881" y="328" width="358" height="24" fill="#f5f5f5"/><text x="892" y="344" class="" style="font-size:12px">effect_class</text><text x="1132" y="344" class="mono" style="font-size:8px"></text><text x="1184" y="344" class="mono" style="font-size:8px">TEXT</text><text x="892" y="368" class="" style="font-size:12px">outcome</text><text x="1132" y="368" class="mono" style="font-size:8px"></text><text x="1184" y="368" class="mono" style="font-size:8px">TEXT</text><text x="892" y="392" class="mono" style="font-size:12px">+ 4 more columns — see dictionary</text></g>
+<path d="M40 644 H1240" stroke="#bfc0c0"/><text x="40" y="672" class="mono" style="font-size:12px">CASCADE = ON DELETE CASCADE · two right-hand lines = one composite FK</text></svg><figcaption>sessions 1 → commands 0..N → command_attempt_receipts 0..N。右侧两条字段连线共同表示一个复合 FK，并非两个独立外键。attempt_id 没有 UNIQUE 约束；一次尝试可产生多条状态回执。</figcaption></figure></section>
+<section id="trajectory"><h2>05 / 轨迹查询缓存</h2><figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="trajectory-title trajectory-desc"><title id="trajectory-title">05 / 轨迹查询缓存</title><desc id="trajectory-desc">trajectory_meta、trajectory_records、trajectory_sources 构成独立可重建缓存，三张表没有 SQL 外键。</desc><defs><marker id="trajectory-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#4f5d75"/></marker><marker id="trajectory-arrow-accent" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#eb6c36"/></marker><marker id="trajectory-arrow-link" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#2e5aa8"/></marker></defs>
+<g data-table="trajectory_meta"><rect x="40" y="160" width="360" height="112" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="40" y="160" width="360" height="56" rx="4" fill="#ececec"/><text x="52" y="184" class="" style="font-size:16px">trajectory_meta</text><text x="52" y="204" class="" style="font-size:12px">缓存版本与水位</text><rect x="41" y="216" width="358" height="24" fill="#f5f5f5"/><text x="52" y="232" class="" style="font-size:12px">key</text><text x="292" y="232" class="mono" style="font-size:8px">PK1 </text><text x="344" y="232" class="mono" style="font-size:8px">TEXT</text><text x="52" y="256" class="" style="font-size:12px">value</text><text x="292" y="256" class="mono" style="font-size:8px"></text><text x="344" y="256" class="mono" style="font-size:8px">TEXT</text></g>
+<g data-table="trajectory_records"><rect x="460" y="160" width="360" height="232" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="460" y="160" width="360" height="56" rx="4" fill="#ececec"/><text x="472" y="184" class="" style="font-size:16px">trajectory_records</text><text x="472" y="204" class="" style="font-size:12px">可查询轨迹记录</text><rect x="461" y="216" width="358" height="24" fill="#f5f5f5"/><text x="472" y="232" class="" style="font-size:12px">id</text><text x="712" y="232" class="mono" style="font-size:8px">PK1 </text><text x="764" y="232" class="mono" style="font-size:8px">TEXT</text><text x="472" y="256" class="" style="font-size:12px">ordinal</text><text x="712" y="256" class="mono" style="font-size:8px"></text><text x="764" y="256" class="mono" style="font-size:8px">INTEGER</text><rect x="461" y="264" width="358" height="24" fill="#f5f5f5"/><text x="472" y="280" class="" style="font-size:12px">parent_id</text><text x="712" y="280" class="mono" style="font-size:8px"></text><text x="764" y="280" class="mono" style="font-size:8px">TEXT</text><text x="472" y="304" class="" style="font-size:12px">run_id</text><text x="712" y="304" class="mono" style="font-size:8px"></text><text x="764" y="304" class="mono" style="font-size:8px">TEXT</text><rect x="461" y="312" width="358" height="24" fill="#f5f5f5"/><text x="472" y="328" class="" style="font-size:12px">kind</text><text x="712" y="328" class="mono" style="font-size:8px"></text><text x="764" y="328" class="mono" style="font-size:8px">TEXT</text><text x="472" y="352" class="" style="font-size:12px">search_text</text><text x="712" y="352" class="mono" style="font-size:8px"></text><text x="764" y="352" class="mono" style="font-size:8px">TEXT</text><rect x="461" y="360" width="358" height="24" fill="#f5f5f5"/><text x="472" y="376" class="" style="font-size:12px">json</text><text x="712" y="376" class="mono" style="font-size:8px"></text><text x="764" y="376" class="mono" style="font-size:8px">TEXT</text></g>
+<g data-table="trajectory_sources"><rect x="880" y="160" width="360" height="232" rx="4" fill="#ffffff" stroke="#4f5d75"/><rect x="880" y="160" width="360" height="56" rx="4" fill="#ececec"/><text x="892" y="184" class="" style="font-size:16px">trajectory_sources</text><text x="892" y="204" class="" style="font-size:12px">Trace 读取游标</text><rect x="881" y="216" width="358" height="24" fill="#f5f5f5"/><text x="892" y="232" class="" style="font-size:12px">trace_id</text><text x="1132" y="232" class="mono" style="font-size:8px">PK1 </text><text x="1184" y="232" class="mono" style="font-size:8px">TEXT</text><text x="892" y="256" class="" style="font-size:12px">locator</text><text x="1132" y="256" class="mono" style="font-size:8px"></text><text x="1184" y="256" class="mono" style="font-size:8px">TEXT</text><rect x="881" y="264" width="358" height="24" fill="#f5f5f5"/><text x="892" y="280" class="" style="font-size:12px">offset</text><text x="1132" y="280" class="mono" style="font-size:8px"></text><text x="1184" y="280" class="mono" style="font-size:8px">INTEGER</text><text x="892" y="304" class="" style="font-size:12px">sequence</text><text x="1132" y="304" class="mono" style="font-size:8px"></text><text x="1184" y="304" class="mono" style="font-size:8px">INTEGER</text><rect x="881" y="312" width="358" height="24" fill="#f5f5f5"/><text x="892" y="328" class="" style="font-size:12px">hash</text><text x="1132" y="328" class="mono" style="font-size:8px"></text><text x="1184" y="328" class="mono" style="font-size:8px">TEXT</text><text x="892" y="352" class="" style="font-size:12px">run_id</text><text x="1132" y="352" class="mono" style="font-size:8px"></text><text x="1184" y="352" class="mono" style="font-size:8px">TEXT</text><rect x="881" y="360" width="358" height="24" fill="#f5f5f5"/><text x="892" y="376" class="" style="font-size:12px">generation</text><text x="1132" y="376" class="mono" style="font-size:8px"></text><text x="1184" y="376" class="mono" style="font-size:8px">INTEGER</text></g>
+<path d="M40 644 H1240" stroke="#bfc0c0"/><text x="40" y="672" class="mono" style="font-size:12px">PKn = primary-key position · FK = declared foreign key · full constraints below</text></svg><figcaption>没有 SQL 外键。parent_id → records.id 是逻辑父子关系，run_id 用于关联同一运行；sources 用 trace_id、offset、sequence、hash 跟踪 Trace 导入进度。records.ordinal 唯一；search_text 是普通 TEXT，并非 FTS 虚拟表。</figcaption></figure></section>
+<section id="payloads"><h2>06 / JSON 字段内部结构</h2><p>JSON 在 SQLite 中均保存为 TEXT。下列是代码约定；DDL 没有通过 json_valid 或 JSON Schema 对这些列作通用验证。事件、检查点与轨迹记录不是同一个数据结构。</p><table><thead><tr><th>载体</th><th>结构与语义</th><th>源码</th></tr></thead><tbody>
+<tr><td><code>session_events.payload_json</code></td><td>由 event_type 决定。对 <code>ledger.*</code>，保存 LedgerEntry：<code>{ id, sessionId, parentId, timestamp, type, payload }</code>；type 为 session / message / tool_call / tool_result / turn / agent_event / custom。其他事件不能一概解释为 LedgerEntry。</td><td><code>src/runtime/session-runtime/sqlite-ledger.ts</code><br><code>src/runtime/ledger/types.ts</code></td></tr>
+<tr><td><code>session_checkpoints.snapshot_json</code></td><td>CheckpointSnapshot：<code>{ cacheSchema: 1, boundary, sourceSequence, state: Record&lt;string, unknown&gt; }</code>。读取时校验摘要、版本、边界与源序号；不合格则回退重放。</td><td><code>src/runtime/session-runtime/checkpoint.ts</code></td></tr>
+<tr><td><code>command_attempt_receipts.result_json</code></td><td>可空的结果 JSON 字符串；关联 result_digest / evidence_digest。结构取决于命令结果，SQL 层未固定统一字段。</td><td><code>src/storage/session-store/attempt-repository.ts</code></td></tr>
+<tr><td><code>sessions.*locator_json</code></td><td>工作区 locator 的 JSON；worktree_locator_json 与 source_workspace_locator_json 区分 worktree 和源工作区绑定。不是另一张 workspace 表。</td><td><code>src/storage/session-store/catalog-repository.ts</code></td></tr>
+<tr><td><code>trajectory_records.json</code></td><td>IndexedTrajectoryRecord = TrajectoryRecord + 可选 sessionInputSeq / sessionOutputSeq / traceInput / traceOutput。详见下方结构清单。</td><td><code>src/runtime/trajectory/index-store.ts</code></td></tr>
+</tbody></table><h3>TrajectoryRecord 的字段分组</h3><table><tr><th>分组</th><th>字段</th></tr><tr><td>身份与层级</td><td><code>id, parentId?, runId, stepId?, kind, name, summary</code></td></tr><tr><td>模型标识</td><td><code>provider?, model?, api?</code></td></tr><tr><td>状态与时间</td><td><code>state, startedAtMs?, endedAtMs?, durationMs?, activeDurationMs?, ttftMs?</code></td></tr><tr><td>用量与成本</td><td><code>inputTokens?, outputTokens?, cacheReadTokens?, costUsd?, usageSource?, costSource?</code></td></tr><tr><td>来源与顺序</td><td><code>source, generation, revision, ordinal, input, output</code></td></tr></table><p>kind：run / step / model / tool / attempt / context / wait / message。state：running / waiting / succeeded / failed / cancelled / interrupted / unknown。source：session / trace。input、output：session / artifact / digest_only / unavailable。</p><p>TraceContentDescriptor 为 <code>{ storage: "digest_only", digest, mediaType, size }</code> 或 <code>{ storage: "artifact", artifactId, digest, mediaType, size }</code>。Trace 事件与 Artifact 正文分别保存在 home 下的 events 与 artifacts 文件目录，未作为额外 SQLite 表计入。</p></section><section id="dictionary"><h2>全部 11 张表 · 完整字段与约束</h2><p>字段与最终 DDL 从源码 schema 在内存 SQLite 中执行后提取，含历史迁移最终结果。NN 表示显式 NOT NULL；PKn 表示主键内序号。SQLite 普通 rowid 表的 TEXT PRIMARY KEY 不等于显式 NOT NULL，以下按实际 PRAGMA 标注。</p>
+<details id="table-schema_meta"><summary>schema_meta · Schema 版本记录 · 3 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>schema_version</code></td><td><code>INTEGER</code></td><td><code>PK1</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>format_digest</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>applied_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE schema_meta (
+  schema_version INTEGER PRIMARY KEY,
+  format_digest TEXT NOT NULL,
+  applied_at_ms INTEGER NOT NULL
+);</pre>
+<h3>索引</h3><pre>无独立索引；INTEGER PRIMARY KEY 使用 rowid。</pre></details>
+<details id="table-store_control"><summary>store_control · 迁移与写入准入 · 5 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>singleton_id</code></td><td><code>INTEGER</code></td><td><code>PK1</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>admission</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>migration_epoch</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>catalog_revision</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>0</code></td></tr>
+<tr><td><code>updated_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE store_control (
+  singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+  admission TEXT NOT NULL,
+  migration_epoch INTEGER NOT NULL,
+  catalog_revision INTEGER NOT NULL DEFAULT 0 CHECK (catalog_revision &gt;= 0),
+  updated_at_ms INTEGER NOT NULL,
+  CHECK (admission IN (&#x27;ready&#x27;, &#x27;migration_blocked&#x27;))
+);</pre>
+<h3>索引</h3><pre>无独立索引；INTEGER PRIMARY KEY 使用 rowid。</pre></details>
+<details id="table-sessions"><summary>sessions · 会话目录 · 19 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>session_id</code></td><td><code>TEXT</code></td><td><code>PK1</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>workspace_id</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>repository_id</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>status</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>created_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>updated_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>head_sequence</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>0</code></td></tr>
+<tr><td><code>current_checkpoint_id</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>last_driver_client_id</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>driver_revision</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>0</code></td></tr>
+<tr><td><code>worktree_locator_json</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>settings_digest</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>title</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>title_source</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>title_updated_at_ms</code></td><td><code>INTEGER</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>source_workspace_locator_json</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>harness_profile_digest</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>&#x27;377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9d25de6238&#x27;</code></td></tr>
+<tr><td><code>harness_profile_id</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>&#x27;standard&#x27;</code></td></tr>
+<tr><td><code>harness_profile_version</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>1</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE sessions (
+  session_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  repository_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  head_sequence INTEGER NOT NULL DEFAULT 0,
+  current_checkpoint_id TEXT,
+  last_driver_client_id TEXT,
+  driver_revision INTEGER NOT NULL DEFAULT 0,
+  worktree_locator_json TEXT,
+  settings_digest TEXT NOT NULL,
+  title TEXT NULL,
+  title_source TEXT NULL,
+  title_updated_at_ms INTEGER NULL, source_workspace_locator_json TEXT, harness_profile_digest TEXT NOT NULL DEFAULT &#x27;377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9d25de6238&#x27;
+  CHECK (length(harness_profile_digest) = 64 AND harness_profile_digest NOT GLOB &#x27;*[^0-9a-f]*&#x27;), harness_profile_id TEXT NOT NULL DEFAULT &#x27;standard&#x27; CHECK (harness_profile_id IN (&#x27;standard&#x27;, &#x27;minimal&#x27;, &#x27;plan&#x27;)), harness_profile_version INTEGER NOT NULL DEFAULT 1 CHECK (typeof(harness_profile_version) = &#x27;integer&#x27; AND harness_profile_version IN (1, 2)),
+  CHECK (status IN (&#x27;active&#x27;, &#x27;recovery_required&#x27;, &#x27;paused&#x27;, &#x27;completed&#x27;, &#x27;failed&#x27;, &#x27;archived&#x27;)),
+  CHECK (title IS NULL OR (length(CAST(title AS BLOB)) BETWEEN 1 AND 160)),
+  CHECK (title_source IS NULL OR title_source IN (&#x27;auto&#x27;, &#x27;user&#x27;)),
+  CHECK (title_updated_at_ms IS NULL OR (typeof(title_updated_at_ms) = &#x27;integer&#x27; AND title_updated_at_ms &gt;= 0)),
+  CHECK (
+    (title IS NULL AND title_source IS NULL AND title_updated_at_ms IS NULL)
+    OR (title IS NOT NULL AND title_source IS NOT NULL AND title_updated_at_ms IS NOT NULL)
+  )
+);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_sessions_1 — SQLite 自动主键 / UNIQUE 索引
+CREATE INDEX idx_sessions_title_updated ON sessions(title_updated_at_ms, session_id);</pre></details>
+<details id="table-session_owners"><summary>session_owners · 运行时所有权 · 9 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>session_id</code></td><td><code>TEXT</code></td><td><code>PK1, FK → sessions.session_id</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>runtime_id</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>generation</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>state</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>port</code></td><td><code>INTEGER</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>auth_token</code></td><td><code>BLOB</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>heartbeat_at_ms</code></td><td><code>INTEGER</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>owner_started_at_ms</code></td><td><code>INTEGER</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>updated_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE session_owners (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+  runtime_id TEXT,
+  generation INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  port INTEGER,
+  auth_token BLOB,
+  heartbeat_at_ms INTEGER,
+  owner_started_at_ms INTEGER,
+  updated_at_ms INTEGER NOT NULL,
+  CHECK (state IN (&#x27;unowned&#x27;, &#x27;starting&#x27;, &#x27;recovery_required&#x27;, &#x27;running&#x27;, &#x27;stopping&#x27;)),
+  CHECK (port IS NULL OR (port &gt;= 1 AND port &lt;= 65535))
+);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_session_owners_1 — SQLite 自动主键 / UNIQUE 索引</pre></details>
+<details id="table-session_events"><summary>session_events · 追加事件与哈希链 · 9 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>session_id</code></td><td><code>TEXT</code></td><td><code>PK1, NN, FK → sessions.session_id</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>sequence</code></td><td><code>INTEGER</code></td><td><code>PK2, NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>owner_generation</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>payload_json</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>previous_event_hash</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>current_event_hash</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>created_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE session_events (
+  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  event_id TEXT NOT NULL UNIQUE,
+  owner_generation INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  previous_event_hash TEXT,
+  current_event_hash TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (session_id, sequence)
+);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_session_events_1 — SQLite 自动主键 / UNIQUE 索引
+sqlite_autoindex_session_events_2 — SQLite 自动主键 / UNIQUE 索引
+CREATE INDEX idx_session_events_lookup ON session_events(session_id, sequence);</pre></details>
+<details id="table-session_checkpoints"><summary>session_checkpoints · 可重建检查点 · 8 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>checkpoint_id</code></td><td><code>TEXT</code></td><td><code>PK1</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>session_id</code></td><td><code>TEXT</code></td><td><code>NN, FK → sessions.session_id</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>owner_generation</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>boundary</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>source_sequence</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>snapshot_json</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>snapshot_digest</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>created_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE session_checkpoints (
+  checkpoint_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  owner_generation INTEGER NOT NULL,
+  boundary TEXT NOT NULL,
+  source_sequence INTEGER NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  snapshot_digest TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  CHECK (boundary IN (&#x27;before_model&#x27;, &#x27;after_model&#x27;, &#x27;before_tool&#x27;, &#x27;after_tool&#x27;, &#x27;turn_completed&#x27;, &#x27;paused&#x27;))
+);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_session_checkpoints_1 — SQLite 自动主键 / UNIQUE 索引
+CREATE INDEX idx_session_checkpoints_lookup ON session_checkpoints(session_id, source_sequence);</pre></details>
+<details id="table-commands"><summary>commands · 命令幂等身份 · 5 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>session_id</code></td><td><code>TEXT</code></td><td><code>PK1, NN, FK → sessions.session_id</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>command_id</code></td><td><code>TEXT</code></td><td><code>PK2, NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>request_digest</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>origin_generation</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>created_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE commands (
+  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  command_id TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  origin_generation INTEGER NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (session_id, command_id)
+);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_commands_1 — SQLite 自动主键 / UNIQUE 索引</pre></details>
+<details id="table-command_attempt_receipts"><summary>command_attempt_receipts · 尝试结果与证据 · 12 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>receipt_id</code></td><td><code>TEXT</code></td><td><code>PK1</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>session_id</code></td><td><code>TEXT</code></td><td><code>NN, FK → commands.session_id</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>command_id</code></td><td><code>TEXT</code></td><td><code>NN, FK → commands.command_id</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>attempt_id</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>origin_generation</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>settled_generation</code></td><td><code>INTEGER</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>effect_class</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>outcome</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>result_json</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>result_digest</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>evidence_digest</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>created_at_ms</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE command_attempt_receipts (
+  receipt_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  origin_generation INTEGER NOT NULL,
+  settled_generation INTEGER,
+  effect_class TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  result_json TEXT,
+  result_digest TEXT,
+  evidence_digest TEXT,
+  created_at_ms INTEGER NOT NULL,
+  FOREIGN KEY (session_id, command_id) REFERENCES commands(session_id, command_id) ON DELETE CASCADE,
+  CHECK (outcome IN (&#x27;started&#x27;, &#x27;committed&#x27;, &#x27;rejected&#x27;, &#x27;interrupted&#x27;, &#x27;uncertain&#x27;, &#x27;verified&#x27;))
+);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_command_attempt_receipts_1 — SQLite 自动主键 / UNIQUE 索引
+CREATE INDEX idx_command_receipts_lookup ON command_attempt_receipts(session_id, command_id);</pre></details>
+<details id="table-trajectory_meta"><summary>trajectory_meta · 缓存版本与水位 · 2 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>key</code></td><td><code>TEXT</code></td><td><code>PK1</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>value</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE trajectory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_trajectory_meta_1 — SQLite 自动主键 / UNIQUE 索引</pre></details>
+<details id="table-trajectory_records"><summary>trajectory_records · 可查询轨迹记录 · 7 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>id</code></td><td><code>TEXT</code></td><td><code>PK1</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>ordinal</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>parent_id</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>run_id</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>kind</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>search_text</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>json</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE trajectory_records (id TEXT PRIMARY KEY, ordinal INTEGER NOT NULL UNIQUE,
+        parent_id TEXT, run_id TEXT NOT NULL, kind TEXT NOT NULL, search_text TEXT NOT NULL, json TEXT NOT NULL);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_trajectory_records_1 — SQLite 自动主键 / UNIQUE 索引
+sqlite_autoindex_trajectory_records_2 — SQLite 自动主键 / UNIQUE 索引
+CREATE INDEX trajectory_order ON trajectory_records(ordinal);
+CREATE INDEX trajectory_parent ON trajectory_records(parent_id);
+CREATE INDEX trajectory_kind ON trajectory_records(kind);</pre></details>
+<details id="table-trajectory_sources"><summary>trajectory_sources · Trace 读取游标 · 7 列</summary><div class="scroll"><table><thead><tr><th>列名</th><th>SQL 类型</th><th>约束</th><th>默认值</th></tr></thead><tbody>
+<tr><td><code>trace_id</code></td><td><code>TEXT</code></td><td><code>PK1</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>locator</code></td><td><code>TEXT</code></td><td><code>NN</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>offset</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>0</code></td></tr>
+<tr><td><code>sequence</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>0</code></td></tr>
+<tr><td><code>hash</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>run_id</code></td><td><code>TEXT</code></td><td><code>—</code></td><td><code>无显式默认值</code></td></tr>
+<tr><td><code>generation</code></td><td><code>INTEGER</code></td><td><code>NN</code></td><td><code>0</code></td></tr>
+</tbody></table></div><h3>最终建表 DDL</h3><pre>CREATE TABLE trajectory_sources (trace_id TEXT PRIMARY KEY, locator TEXT NOT NULL,
+        offset INTEGER NOT NULL DEFAULT 0, sequence INTEGER NOT NULL DEFAULT 0, hash TEXT, run_id TEXT, generation INTEGER NOT NULL DEFAULT 0);</pre>
+<h3>索引</h3><pre>sqlite_autoindex_trajectory_sources_1 — SQLite 自动主键 / UNIQUE 索引
+CREATE INDEX trajectory_source_run ON trajectory_sources(run_id);</pre></details>
+<details><summary>sessions 的 4 个触发器：标题完整性与 Harness Profile 白名单</summary><p>标题三列必须同为空或同为非空。Profile 白名单允许 standard@1、standard@2、minimal@1、minimal@2、plan@1，并校验精确 digest；版本与摘要是 Session 的持久化身份。</p><pre>CREATE TRIGGER sessions_title_invariant_insert
+BEFORE INSERT ON sessions
+WHEN NOT ((NEW.title IS NULL AND NEW.title_source IS NULL AND NEW.title_updated_at_ms IS NULL)
+       OR (NEW.title IS NOT NULL AND NEW.title_source IS NOT NULL AND NEW.title_updated_at_ms IS NOT NULL))
+BEGIN
+  SELECT RAISE(ABORT, &#x27;sessions title state is incomplete&#x27;);
+END;
+
+CREATE TRIGGER sessions_title_invariant_update
+BEFORE UPDATE OF title, title_source, title_updated_at_ms ON sessions
+WHEN NOT ((NEW.title IS NULL AND NEW.title_source IS NULL AND NEW.title_updated_at_ms IS NULL)
+       OR (NEW.title IS NOT NULL AND NEW.title_source IS NOT NULL AND NEW.title_updated_at_ms IS NOT NULL))
+BEGIN
+  SELECT RAISE(ABORT, &#x27;sessions title state is incomplete&#x27;);
+END;
+
+CREATE TRIGGER sessions_harness_profile_invariant_insert
+BEFORE INSERT ON sessions
+WHEN NOT (
+  (NEW.harness_profile_id = &#x27;standard&#x27; AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = &#x27;377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9d25de6238&#x27;)
+  OR   (NEW.harness_profile_id = &#x27;standard&#x27; AND NEW.harness_profile_version = 2 AND NEW.harness_profile_digest = &#x27;a75de0135aed387912ae6beeb76df4ad317a4aa829579b39c1194c1865aa9527&#x27;)
+  OR   (NEW.harness_profile_id = &#x27;minimal&#x27; AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = &#x27;f77ad882678905487fc76b109d8c88dac16622174553ae7bd08772f8a1a15fa7&#x27;)
+  OR   (NEW.harness_profile_id = &#x27;minimal&#x27; AND NEW.harness_profile_version = 2 AND NEW.harness_profile_digest = &#x27;0d18e14a2e47e0789512a711a1f7f38444660754a45382e10fa97e65bc978908&#x27;)
+  OR   (NEW.harness_profile_id = &#x27;plan&#x27; AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = &#x27;3fe1eb82eb0b4f8f111e072a9a62c20960f2e0950e36ecb5b2191544d22de2b2&#x27;)
+)
+BEGIN
+  SELECT RAISE(ABORT, &#x27;sessions harness profile ref is invalid&#x27;);
+END;
+
+CREATE TRIGGER sessions_harness_profile_invariant_update
+BEFORE UPDATE OF harness_profile_id, harness_profile_version, harness_profile_digest ON sessions
+WHEN NOT (
+  (NEW.harness_profile_id = &#x27;standard&#x27; AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = &#x27;377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9d25de6238&#x27;)
+  OR   (NEW.harness_profile_id = &#x27;standard&#x27; AND NEW.harness_profile_version = 2 AND NEW.harness_profile_digest = &#x27;a75de0135aed387912ae6beeb76df4ad317a4aa829579b39c1194c1865aa9527&#x27;)
+  OR   (NEW.harness_profile_id = &#x27;minimal&#x27; AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = &#x27;f77ad882678905487fc76b109d8c88dac16622174553ae7bd08772f8a1a15fa7&#x27;)
+  OR   (NEW.harness_profile_id = &#x27;minimal&#x27; AND NEW.harness_profile_version = 2 AND NEW.harness_profile_digest = &#x27;0d18e14a2e47e0789512a711a1f7f38444660754a45382e10fa97e65bc978908&#x27;)
+  OR   (NEW.harness_profile_id = &#x27;plan&#x27; AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = &#x27;3fe1eb82eb0b4f8f111e072a9a62c20960f2e0950e36ecb5b2191544d22de2b2&#x27;)
+)
+BEGIN
+  SELECT RAISE(ABORT, &#x27;sessions harness profile ref is invalid&#x27;);
+END;</pre></details></section><footer>来源：src/storage/session-store/schema.ts · src/storage/session-store/database.ts · src/runtime/trajectory/index-store.ts · src/runtime/trajectory/service.ts · src/runtime/contracts/storage-layout.ts · src/runtime/contracts/trajectory.ts · src/runtime/trace/types.ts。<br>使用 diagram-design 插件 · 默认浅色配色 · 5 张 1280×720 分图 · 图内最多显示 8 列，所有列、索引、CHECK 和触发器保留于完整清单。字体使用 Geist / Instrument Serif；离线时回退到本机字体。</footer></main></body></html>
