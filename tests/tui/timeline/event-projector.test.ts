@@ -82,6 +82,23 @@ describe("B2 timeline event-projector", () => {
 		expect(toolStarts[0]!.row).toMatchObject({ kind: "tool", toolCallId: "call-1" });
 	});
 
+	it("renders the bounded assistant error when a replayed response has no text", () => {
+		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		const events = projector.project(assistantMessage({
+			content: [],
+			stopReason: "error",
+			errorMessage: "model route denied (profile_unknown)",
+		}));
+		const start = events.find((event) => event.type === "message_start");
+		const end = events.find((event) => event.type === "message_end");
+
+		expect(start).toMatchObject({
+			type: "message_start",
+			row: { status: "failed", text: { text: "Error: model route denied (profile_unknown)" } },
+		});
+		expect(end).toMatchObject({ type: "message_end", status: "failed" });
+	});
+
 	it("retains assistant cache, cost, and timing in replayable timeline usage", () => {
 		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
 		const events = projector.project(assistantMessage({

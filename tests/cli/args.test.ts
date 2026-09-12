@@ -6,6 +6,20 @@ import { describe, expect, it } from "vitest";
 
 import { parseArgs, USAGE } from "../../src/cli/args.ts";
 
+describe("skill provider scope forwarding", () => {
+	for (const scope of [["--scope", "workspace"], ["--scope=workspace"]]) {
+		it(`preserves ${scope.join(" ")} for the control parser`, () => {
+			const result = parseArgs(["skill", "provider", "disable", "runledger-user", ...scope]);
+			expect(result.error).toBeUndefined();
+			expect(result.args.positional).toEqual(["skill", "provider", "disable", "runledger-user", "--scope=workspace"]);
+			expect(result.args.unknown.has("scope")).toBe(false);
+		});
+	}
+	it("rejects a missing scope value instead of silently selecting user scope", () => {
+		expect(parseArgs(["skill", "provider", "disable", "runledger-user", "--scope"]).error).toEqual(expect.stringContaining("缺少值"));
+	});
+});
+
 describe("parseArgs 帮助/版本", () => {
   it("-h / --help 都设 help=true", () => {
     expect(parseArgs(["-h"]).args.help).toBe(true);

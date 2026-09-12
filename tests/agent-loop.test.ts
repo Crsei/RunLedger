@@ -41,6 +41,31 @@ function assistantMessageFor(
 }
 
 describe("runAgentLoop with mockStreamFn + echoTool", () => {
+	it.each(["error", "aborted"] as const)("opens an assistant message when the provider reports %s before stream start", async (stopReason) => {
+		const ledger = new MemoryLedger();
+		const agent = new Agent({
+			initialState: { systemPrompt: "system", model: mockModel },
+			ledger,
+			streamFn: (model) => {
+				const stream = createAssistantMessageEventStream();
+				const error = { ...assistantMessageFor(model, [], stopReason), errorMessage: "provider failed before headers" };
+				stream.push({ type: "error", reason: stopReason, error });
+				stream.end(error);
+				return stream;
+			},
+		});
+		const events: AgentEvent[] = [];
+		agent.subscribe((event) => { events.push(event); });
+
+		await agent.prompt("hello");
+
+		const assistantEvents = events.filter((event) => (event.type === "message_start" || event.type === "message_end") && event.role === "assistant");
+		expect(assistantEvents.map((event) => event.type)).toEqual(["message_start", "message_end"]);
+		expect(assistantEvents[1]).toMatchObject({ stopReason, message: { content: [], errorMessage: "provider failed before headers" } });
+		expect(agent.state.messages.at(-1)).toMatchObject({ role: "assistant", stopReason, errorMessage: "provider failed before headers" });
+		expect(ledger.entries().filter((entry) => entry.type === "message" && entry.payload.role === "assistant")).toHaveLength(1);
+	});
+
 	it("runs an ephemeral recap without mutating Agent state, ledger, events, or tools", async () => {
 		const ledger = new MemoryLedger();
 		const initialMessages = [{ role: "user" as const, content: [{ type: "text" as const, text: "ship the feature" }] }];

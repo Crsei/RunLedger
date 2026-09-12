@@ -19,6 +19,8 @@ tsconfig.tsbuildinfo
 coverage/
 tmp/
 .cache/
+__pycache__/
+*.pyc
 
 # Logs
 *.log

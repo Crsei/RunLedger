@@ -8,6 +8,26 @@ import {
 } from "../../src/cli/control-commands.ts";
 
 describe("Host control command parsing", () => {
+	it.each([
+		[{ group: "security", action: "inspect", args: [], mutation: false }, "session.security.inspect"],
+		[{ group: "plugin", action: "reload", args: [], mutation: true }, "extension.reload"],
+	] satisfies readonly (readonly [ControlCommand, string])[])("maps %j to %s", (command, operation) => {
+		expect(controlCommandRequest(command).operation).toBe(operation);
+	});
+
+	it("accepts the documented remember text and preserves the explicit propose spelling", () => {
+		for (const words of [["remember", "Keep", "release", "checks"], ["remember", "propose", "Keep", "release", "checks"]]) {
+			const parsed = parseControlCommand(words);
+			expect(parsed).toEqual({ ok: true, command: { group: "remember", action: "propose", args: ["Keep", "release", "checks"], mutation: true } });
+			if (parsed?.ok) expect(controlCommandRequest(parsed.command).body.content).toBe("Keep release checks");
+		}
+		expect(parseControlCommand(["remember"])).toMatchObject({ ok: false, error: expect.stringContaining("proposal text") });
+	});
+
+	it("classifies MCP restart as a fenced mutation", () => {
+		expect(parseControlCommand(["mcp", "restart", "missing-server"])).toMatchObject({ ok: true, command: { mutation: true } });
+	});
+
 	it("maps read-only resource and security commands to Host queries", () => {
 		expect(parseControlCommand(["security", "inspect"])).toEqual({
 			ok: true,

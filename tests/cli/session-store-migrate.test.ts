@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
+import { parsePruneLegacyArgs } from "../../src/cli/session-store-migrate.ts";
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 const cleanup: string[] = [];
@@ -113,6 +114,12 @@ describe("runledger migrate session-store", () => {
 });
 
 describe("runledger storage prune-legacy", () => {
+	it("accepts the documented spaced manifest value and still requires confirmation", () => {
+		const digest = "a".repeat(64);
+		expect(parsePruneLegacyArgs(["--manifest", digest, "--confirm-delete"])).toEqual({ args: { manifestDigest: digest, confirmDelete: true } });
+		expect(parsePruneLegacyArgs(["--manifest", digest]).error).toContain("需要显式 --confirm-delete");
+		expect(parsePruneLegacyArgs(["--manifest", "--confirm-delete"]).error).toContain("--manifest 需要值");
+	});
 	it("requires manifest digest and explicit confirmation", () => {
 		const { home } = setupHome();
 		const noManifest = runCli(["storage", "prune-legacy", "--confirm-delete"], { RUNLEDGER_DIR: home });
@@ -133,7 +140,7 @@ describe("runledger storage prune-legacy", () => {
 		expect(digestMatch).not.toBeNull();
 		const digest = digestMatch![1]!;
 
-		const pruned = runCli(["storage", "prune-legacy", `--manifest=${digest}`, "--confirm-delete"], { RUNLEDGER_DIR: home });
+		const pruned = runCli(["storage", "prune-legacy", "--manifest", digest, "--confirm-delete"], { RUNLEDGER_DIR: home });
 		expect(pruned.status).toBe(0);
 		expect(pruned.stdout).toContain("files=1");
 		expect(existsSync(join(home, "migration-backup", "session-store", digest))).toBe(false);

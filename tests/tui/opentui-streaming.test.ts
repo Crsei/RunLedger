@@ -329,7 +329,7 @@ describe("Plan 18 streaming state", () => {
     const update = vi.fn();
     const updateStatusFrame = vi.fn<NonNullable<OpenTuiComponentRuntime["updateStatusFrame"]>>(() => true);
     (tui as unknown as { runtime: OpenTuiComponentRuntime }).runtime = {
-      update, updateStatusFrame, getLastDirtyPartIds: () => [], destroy: () => {},
+      update, updateStatusFrame, copyText: () => true, getLastDirtyPartIds: () => [], destroy: () => {},
     };
     let content = "old output";
     const render = vi.fn(() => [content]);

@@ -63,6 +63,19 @@ describe("WelcomeComponent", () => {
 		expect(welcome.render(80)).toBe(first);
 	});
 
+	test("fits the available body height and reflows when only terminal height changes", () => {
+		let availableHeight = 18;
+		const welcome = makeWelcome({ getAvailableHeight: () => availableHeight });
+		const compact = welcome.render(80);
+		expect(compact.length).toBeLessThanOrEqual(availableHeight);
+		expect(compact.join("\n")).toContain("RunLedger v0.0.1-test");
+		expect(compact.join("\n")).toContain("Quick keys");
+		availableHeight = 30;
+		const expanded = welcome.render(80);
+		expect(expanded.length).toBeGreaterThan(compact.length);
+		expect(expanded.join("\n")).toContain("fix auth");
+	});
+
 	test("setRecentSessions and setModel invalidate the cache", () => {
 		const welcome = makeWelcome();
 		const first = welcome.render(80);

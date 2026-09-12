@@ -152,6 +152,43 @@ describe("B2 timeline selectors", () => {
 		});
 	});
 
+	it("shows a rejected shell reason instead of reporting no output", () => {
+		const error = { text: "tool execution denied by policy", truncated: false, byteLength: 31 };
+		const blocks = rowToBlocks(row({
+			kind: "tool",
+			id: "tool:denied-shell",
+			toolCallId: "denied-shell",
+			toolName: { text: "bash", truncated: false, byteLength: 4 },
+			status: "failed",
+			presentation: {
+				state: "known",
+				value: {
+					renderer: "shell",
+					title: { text: "bash", truncated: false, byteLength: 4 },
+					input: { kind: "shell", commandLabel: { text: "echo denied", truncated: false, byteLength: 11 } },
+					chips: [],
+					body: [],
+					result: {
+						kind: "shell",
+						chunks: [],
+						truncated: false,
+						exitCode: { state: "unknown", reason: "not-reported" },
+						durationMs: { state: "unknown", reason: "not-reported" },
+						background: false,
+					},
+					error,
+					timestamps: { startedAt: "2026-08-06T00:00:00.000Z" },
+				},
+			},
+		}));
+
+		expect(blocks).toMatchObject([{
+			kind: "exec",
+			status: "failed",
+			output: [{ channel: "stderr", text: "tool execution denied by policy" }],
+		}]);
+	});
+
 	it("preserves safe edit diffs as a structured presentation block", () => {
 		const document = {
 			kind: "document" as const,

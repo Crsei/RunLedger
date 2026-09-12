@@ -1,0 +1,619 @@
+{
+  "date": "2026-09-06",
+  "scope": "Assisted end-to-end RunLedger development diagnostics; not unattended model benchmark",
+  "configured_settings_source": "/home/nzq/.runledger/settings.json",
+  "live_protocol_verification": "/tmp/runledger-user-model-probe-_n08der8/verification.json",
+  "executable": "/home/nzq/.npm-global/bin/runledger",
+  "resolved_executable": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger/bin/runledger.js",
+  "dist_entry_sha256": "10f270636822cde18dcb7f7099bb2b73864bd9f42674a51068a34b390e749fa7",
+  "dist_entry_mtime": "2026-09-05T10:47:41.656054+00:00",
+  "notes": [
+    "Only model/thinking/auth selection inherited; isolated session homes and explicitly chosen test permission profiles.",
+    "Pro admitted only into isolated homes after a real tool-call/return protocol probe; user manifest unchanged.",
+    "Wrong gateway attempt, fallback-to-Flash preflight, never-policy attempt ykzgy6kt and superseded bj9xvv95 JSONL/CSV attempts excluded from selected scores and timings.",
+    "Approvals and environment assistance affect wall time; tool failures count isError=true events, separate from failed assertions.",
+    "Case 2 first-round cli_exit=0 in old raw report was a premature placeholder; do not treat it as measured. Final recovery CLI exit was measured.",
+    "Case 6 forced-exit recovery is separate evidence, not normal Ctrl+C success.",
+    "CLI ran existing September 5 dist. Static trace read concurrent current source tree. No production build or code repair was performed for this task."
+  ],
+  "results": [
+    {
+      "case": "01-jsonl",
+      "artifact_dir": "/tmp/runledger-dev-suite-ne64z210/01-jsonl",
+      "workspace": "/tmp/runledger-dev-suite-ne64z210/01-jsonl/workspace",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "observed_message_models": [
+        "deepseek-v4-pro"
+      ],
+      "thinking": "high",
+      "mode": "default",
+      "permission_profile": "workspace-write",
+      "approval_policy": "on-request",
+      "wall_seconds_sum_of_attempt_phases": 919.044,
+      "active_duration_by_run": {
+        "run-6729e076": {
+          "active_duration_ms_lower_bound": 225630,
+          "terminal": null
+        }
+      },
+      "tool_calls_completed": 39,
+      "tool_failures": 17,
+      "foreground_process_rejected": 17,
+      "agent_stop_reasons": [],
+      "execution_status": "failed_execution",
+      "recovery_status": null,
+      "full_case_passed": false,
+      "score_dimensions": [
+        "correctness",
+        "constraints",
+        "evidence",
+        "interaction_stability"
+      ],
+      "scores": [
+        1,
+        1,
+        2,
+        0
+      ],
+      "score_total": 4,
+      "findings": [
+        "核心统计、过滤、坏行行号、中文、并列 Top 5、空文件通过独立验证。",
+        "声明支持的 stdin 报错；文件通过 Bun.file(...).text() 全量读取，并非流式逐行读取。",
+        "本轮达到 900 秒等待上限，未观察到 agent_end；清理耗时另计。"
+      ],
+      "acceptance": {
+        "case": "01-jsonl",
+        "checks": [
+          {
+            "name": "counts and Chinese fields match manual totals",
+            "passed": true
+          },
+          {
+            "name": "top five and equal-duration order",
+            "passed": true
+          },
+          {
+            "name": "bad line reported on stderr and processing continues",
+            "passed": true
+          },
+          {
+            "name": "service filter",
+            "passed": true
+          },
+          {
+            "name": "empty file",
+            "passed": true
+          },
+          {
+            "name": "missing input is an explicit error",
+            "passed": true
+          },
+          {
+            "name": "advertised stdin mode",
+            "passed": false
+          }
+        ],
+        "passed": false,
+        "tested_source_sha256": {
+          "cli.ts": "4d820c23fd0bcd123f91170dd4ca8529f0c9b520e494c5e0a861172c02c780b3"
+        },
+        "validation_environment": "independent host subprocesses; distinct from RunLedger tool environment",
+        "full_command_output_artifact": "/tmp/runledger-dev-suite-ne64z210/01-jsonl/independent-acceptance.json"
+      },
+      "runtime_synthetic_messages_without_model": 0,
+      "termination_reasons": []
+    },
+    {
+      "case": "02-tasks",
+      "artifact_dir": "/tmp/runledger-dev-suite-bj9xvv95/02-tasks",
+      "workspace": "/tmp/runledger-dev-suite-bj9xvv95/02-tasks/workspace",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "observed_message_models": [
+        "deepseek-v4-pro"
+      ],
+      "thinking": "high",
+      "mode": "default",
+      "permission_profile": "workspace-write",
+      "approval_policy": "on-request",
+      "wall_seconds_sum_of_attempt_phases": 1161.672,
+      "active_duration_by_run": {
+        "run-23d9ebb8": {
+          "active_duration_ms_lower_bound": 150806,
+          "terminal": "length"
+        },
+        "run-50de9244": {
+          "active_duration_ms_lower_bound": 8203,
+          "terminal": null
+        },
+        "run-c53c8a6e": {
+          "active_duration_ms_lower_bound": 178482,
+          "terminal": "stop"
+        }
+      },
+      "tool_calls_completed": 53,
+      "tool_failures": 18,
+      "foreground_process_rejected": 16,
+      "agent_stop_reasons": [
+        "length",
+        "stop"
+      ],
+      "execution_status": "failed_execution",
+      "recovery_status": "awaiting_independent_verification",
+      "full_case_passed": false,
+      "score_dimensions": [
+        "correctness",
+        "constraints",
+        "evidence",
+        "interaction_stability"
+      ],
+      "scores": [
+        1,
+        2,
+        2,
+        0
+      ],
+      "score_total": 5,
+      "findings": [
+        "原模块增量修改；17 项自带测试及 18 项常规独立检查通过，旧格式由第一轮 CLI 实际生成。",
+        "add new --tag \"\" 返回成功，但写入空 tags 元素；随后 list 报数据损坏。",
+        "第一轮 length 后经同 Session 重启、recovery assess 才完成第二轮；不是不中断的两轮成功。",
+        "agent_end 明确 terminationReason=repeated_tool_failure；length 并非模型输出 token 上限。"
+      ],
+      "acceptance": {
+        "case": "02-tasks",
+        "checks": [
+          {
+            "name": "generated round-two tests",
+            "passed": true
+          },
+          {
+            "name": "round-one fixture: add 买 牛奶 和面包",
+            "passed": true
+          },
+          {
+            "name": "round-one fixture: add second task",
+            "passed": true
+          },
+          {
+            "name": "round-one fixture: remove 1",
+            "passed": true
+          },
+          {
+            "name": "fixture really predates tags",
+            "passed": true
+          },
+          {
+            "name": "legacy data readable without rewrite",
+            "passed": true
+          },
+          {
+            "name": "deleted IDs not reused across upgrade",
+            "passed": true
+          },
+          {
+            "name": "Chinese and spaces persist",
+            "passed": true
+          },
+          {
+            "name": "tag filter and parseable JSON",
+            "passed": true
+          },
+          {
+            "name": "done works on legacy task",
+            "passed": true
+          },
+          {
+            "name": "corrupt file preserved: add new",
+            "passed": true
+          },
+          {
+            "name": "corrupt file preserved: list --json",
+            "passed": true
+          },
+          {
+            "name": "corrupt file preserved: done 2",
+            "passed": true
+          },
+          {
+            "name": "corrupt file preserved: remove 2",
+            "passed": true
+          },
+          {
+            "name": "corrupt file preserved: add new",
+            "passed": true
+          },
+          {
+            "name": "corrupt file preserved: list --json",
+            "passed": true
+          },
+          {
+            "name": "corrupt file preserved: done 2",
+            "passed": true
+          },
+          {
+            "name": "corrupt file preserved: remove 2",
+            "passed": true
+          },
+          {
+            "name": "empty tag is rejected without corrupting valid data",
+            "passed": false
+          }
+        ],
+        "passed": false,
+        "tested_source_sha256": {
+          "tests/taskStore.test.ts": "e7bd35ae0c7807fd288222509dda786e1e0831ec62b0544d4b51450c3964dfdf",
+          "src/cli.ts": "ddc9c2226fba5a8c8f57a0ac5be04ddcc47f79e1dd2e57c923b282337b5ca66e",
+          "src/taskStore.ts": "b1dc7f8e403c3d3e0e48cf44700348af065bfe6248ebae8ca753748ba6b993cb"
+        },
+        "validation_environment": "independent host subprocesses; distinct from RunLedger tool environment",
+        "full_command_output_artifact": "/tmp/runledger-dev-suite-bj9xvv95/02-tasks/independent-acceptance.json"
+      },
+      "runtime_synthetic_messages_without_model": 1,
+      "termination_reasons": [
+        "repeated_tool_failure",
+        null
+      ]
+    },
+    {
+      "case": "03-rename",
+      "artifact_dir": "/tmp/runledger-dev-suite-r8e_3wjt/03-rename",
+      "workspace": "/tmp/runledger-dev-suite-r8e_3wjt/03-rename/workspace",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "observed_message_models": [
+        "deepseek-v4-pro"
+      ],
+      "thinking": "high",
+      "mode": "default",
+      "permission_profile": "workspace-write",
+      "approval_policy": "on-request",
+      "wall_seconds_sum_of_attempt_phases": 309.531,
+      "active_duration_by_run": {
+        "run-94aff2cf": {
+          "active_duration_ms_lower_bound": 155554,
+          "terminal": "length"
+        }
+      },
+      "tool_calls_completed": 17,
+      "tool_failures": 6,
+      "foreground_process_rejected": 4,
+      "agent_stop_reasons": [
+        "length"
+      ],
+      "execution_status": "incomplete",
+      "recovery_status": null,
+      "full_case_passed": false,
+      "score_dimensions": [
+        "correctness",
+        "constraints",
+        "evidence",
+        "interaction_stability"
+      ],
+      "scores": [
+        1,
+        2,
+        2,
+        1
+      ],
+      "score_total": 6,
+      "findings": [
+        "5 项自带测试通过；预览不变更、应用、中文、符号链接、不递归、整批冲突保护通过独立检查。",
+        "中文 A.T XT 被改成 中文_A.t xt，扩展名内部空格未替换。",
+        "模型以 length 结束，未交付完整最终说明。",
+        "agent_end 明确 terminationReason=repeated_tool_failure；length 并非模型输出 token 上限。"
+      ],
+      "acceptance": {
+        "case": "03-rename",
+        "checks": [
+          {
+            "name": "generated regression tests",
+            "passed": true
+          },
+          {
+            "name": "preview preserves original names",
+            "passed": true
+          },
+          {
+            "name": "apply preserves content and skips symlink/subdirectory",
+            "passed": true
+          },
+          {
+            "name": "conflict leaves whole batch byte-identical",
+            "passed": true
+          },
+          {
+            "name": "spaces anywhere in filename become underscores",
+            "passed": false
+          }
+        ],
+        "passed": false,
+        "tested_source_sha256": {
+          "rename_files.py": "4b61db825f41b4e5d786166909ee362516cd2040ed832fa575635c42d086190a",
+          "test_rename.py": "9fd512e3765f6fef8d8e520371f2bcb453db96e7262da4bef38fa84d85ae68d9"
+        },
+        "validation_environment": "independent host subprocesses; distinct from RunLedger tool environment",
+        "full_command_output_artifact": "/tmp/runledger-dev-suite-r8e_3wjt/03-rename/independent-acceptance.json"
+      },
+      "runtime_synthetic_messages_without_model": 1,
+      "termination_reasons": [
+        "repeated_tool_failure"
+      ]
+    },
+    {
+      "case": "04-trace",
+      "artifact_dir": "/tmp/runledger-dev-suite-r8e_3wjt/04-trace",
+      "workspace": "/tmp/runledger-dev-suite-r8e_3wjt/04-trace/workspace",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "observed_message_models": [
+        "deepseek-v4-pro"
+      ],
+      "thinking": "high",
+      "mode": "default",
+      "permission_profile": "read-only",
+      "approval_policy": "never",
+      "wall_seconds_sum_of_attempt_phases": 322.806,
+      "active_duration_by_run": {
+        "run-e966e65b": {
+          "active_duration_ms_lower_bound": 317988,
+          "terminal": "stop"
+        }
+      },
+      "tool_calls_completed": 50,
+      "tool_failures": 2,
+      "foreground_process_rejected": 2,
+      "agent_stop_reasons": [
+        "stop"
+      ],
+      "execution_status": "awaiting_independent_verification",
+      "recovery_status": null,
+      "full_case_passed": false,
+      "score_dimensions": [
+        "correctness",
+        "constraints",
+        "evidence",
+        "interaction_stability"
+      ],
+      "scores": [
+        1,
+        2,
+        2,
+        2
+      ],
+      "score_total": 7,
+      "findings": [
+        "核对 46 处路径/行号范围，均存在；工具调用没有写入，主要命令/事件链有源码支持。",
+        "明确声明全部为静态分析，没有伪造实测通过。",
+        "把 anthropic-messages.ts:317 的 streamSimple 包装入口称作实际 HTTP 落点；真正 SDK 请求在第 111 行，也未追踪本次 DeepSeek 的具体请求落点。"
+      ],
+      "acceptance": {
+        "reference_ranges_checked": 46,
+        "invalid_paths_or_out_of_range_lines": [],
+        "mutation_tool_calls": [],
+        "static_only_explicit": true,
+        "manual_review": {
+          "supported": [
+            "InputController -> SessionInteractiveController -> TCP command_request -> SessionRuntime -> domain controller -> Agent",
+            "Tool events persist and replay via session subscriptions into TUI timeline",
+            "Ctrl+C static interrupt/abort route and failed tool result projection"
+          ],
+          "defect": "Claims src/api/anthropic-messages.ts:317 is actual HTTP request point, but that is streamSimple wrapper; SDK request is line 111. It does not follow current DeepSeek adapter to actual request boundary.",
+          "runtime_claims": "No fabricated runtime pass; answer explicitly says static only."
+        },
+        "full_command_output_artifact": "/tmp/runledger-dev-suite-r8e_3wjt/04-trace/independent-acceptance.json"
+      },
+      "runtime_synthetic_messages_without_model": 0,
+      "termination_reasons": [
+        null
+      ]
+    },
+    {
+      "case": "05-markdown",
+      "artifact_dir": "/tmp/runledger-dev-suite-r8e_3wjt/05-markdown",
+      "workspace": "/tmp/runledger-dev-suite-r8e_3wjt/05-markdown/workspace",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "observed_message_models": [
+        "deepseek-v4-pro"
+      ],
+      "thinking": "high",
+      "mode": "default",
+      "permission_profile": "workspace-write",
+      "approval_policy": "on-request",
+      "wall_seconds_sum_of_attempt_phases": 798.085,
+      "active_duration_by_run": {
+        "run-e95eb0ef": {
+          "active_duration_ms_lower_bound": 366742,
+          "terminal": "stop"
+        }
+      },
+      "tool_calls_completed": 31,
+      "tool_failures": 11,
+      "foreground_process_rejected": 9,
+      "agent_stop_reasons": [
+        "stop"
+      ],
+      "execution_status": "awaiting_independent_verification",
+      "recovery_status": null,
+      "full_case_passed": false,
+      "score_dimensions": [
+        "correctness",
+        "constraints",
+        "evidence",
+        "interaction_stability"
+      ],
+      "scores": [
+        1,
+        2,
+        2,
+        1
+      ],
+      "score_total": 6,
+      "findings": [
+        "15 项自带测试通过；独立检查常规链接、fragment、中文目标和多种围栏通过，明确说明不支持语法。",
+        "代码块内的 ``` not-a-close 被当作结束围栏，导致块内不存在的链接被误报。"
+      ],
+      "acceptance": {
+        "case": "05-markdown",
+        "checks": [
+          {
+            "name": "generated regression tests",
+            "passed": true
+          },
+          {
+            "name": "valid relative fragment",
+            "passed": true
+          },
+          {
+            "name": "broken source line and target",
+            "passed": true
+          },
+          {
+            "name": "external/mail/anchor",
+            "passed": true
+          },
+          {
+            "name": "backtick fence",
+            "passed": true
+          },
+          {
+            "name": "tilde fence",
+            "passed": true
+          },
+          {
+            "name": "short fence does not close long fence",
+            "passed": true
+          },
+          {
+            "name": "text after fence marker is not a closing fence",
+            "passed": false
+          },
+          {
+            "name": "Chinese angle destination",
+            "passed": true
+          }
+        ],
+        "passed": false,
+        "tested_source_sha256": {
+          "check_md_links.py": "f7b239e5132d33e3a3a0b0c38084740580ffbded1428dd284b9f06f56c33c56a",
+          "test_check_md_links.py": "c2e0997b8dfe3efac7926760392ceefd30c9f37982aa178c3bdcf3189d2cbd96"
+        },
+        "validation_environment": "independent host subprocesses; distinct from RunLedger tool environment",
+        "full_command_output_artifact": "/tmp/runledger-dev-suite-r8e_3wjt/05-markdown/independent-acceptance.json"
+      },
+      "runtime_synthetic_messages_without_model": 0,
+      "termination_reasons": [
+        null
+      ]
+    },
+    {
+      "case": "06-csv",
+      "artifact_dir": "/tmp/runledger-dev-suite-ne64z210/06-csv",
+      "workspace": "/tmp/runledger-dev-suite-ne64z210/06-csv/workspace",
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "observed_message_models": [
+        "deepseek-v4-pro"
+      ],
+      "thinking": "high",
+      "mode": "default",
+      "permission_profile": "workspace-write",
+      "approval_policy": "on-request",
+      "wall_seconds_sum_of_attempt_phases": 940.191,
+      "active_duration_by_run": {
+        "run-56b253be": {
+          "active_duration_ms_lower_bound": 75476,
+          "terminal": null
+        },
+        "run-6a72b399": {
+          "active_duration_ms_lower_bound": 128713,
+          "terminal": "length"
+        }
+      },
+      "tool_calls_completed": 38,
+      "tool_failures": 16,
+      "foreground_process_rejected": 16,
+      "agent_stop_reasons": [
+        "length"
+      ],
+      "execution_status": "failed_execution",
+      "recovery_status": "incomplete",
+      "full_case_passed": false,
+      "score_dimensions": [
+        "correctness",
+        "constraints",
+        "evidence",
+        "interaction_stability"
+      ],
+      "scores": [
+        1,
+        1,
+        1,
+        0
+      ],
+      "score_total": 3,
+      "findings": [
+        "部分源码生成后发送 Ctrl+C 未得到 aborted；从审批界面取消也未正常收尾。",
+        "强制退出后 --continue 保留同一 Session 和源码哈希；recovery assess 确认 unresolved=0 后才重新发送继续任务。",
+        "五项独立功能检查通过；自带测试实际 23 passed, 1 failed，失败为测试把有效数值 count 错写成 2（实际应为 1）。",
+        "恢复轮以 length 结束；正常中断/恢复及最终完成说明未通过。",
+        "agent_end 明确 terminationReason=repeated_tool_failure；length 并非模型输出 token 上限。"
+      ],
+      "acceptance": {
+        "case": "06-csv",
+        "checks": [
+          {
+            "name": "quoted commas, escaped quotes, multiline groups",
+            "passed": true
+          },
+          {
+            "name": "empty groups and invalid/empty numeric values",
+            "passed": true
+          },
+          {
+            "name": "CSV stdin",
+            "passed": true
+          },
+          {
+            "name": "unknown column rejected",
+            "passed": true
+          },
+          {
+            "name": "header-only input",
+            "passed": true
+          },
+          {
+            "name": "generated CSV regression tests: test.ts",
+            "passed": false
+          }
+        ],
+        "passed": false,
+        "tested_source_sha256": {
+          "main.ts": "7f17aca462f045b190d350b408441a5fcf2108c9c4d15583ca445db8a28f9b04",
+          "summarize.ts": "8f5a62cc25955fe17fb68c3d0856780de951d1ec45fd7670bde0a1baba7d2fcb",
+          "test.ts": "84d70798dc9a32464125ec263d1c30d74a4550ca2a54a7e0551adb904b7af240",
+          "csv.ts": "7db5854b9124aec30c9c9f1fc70a41dfb5e61c200c88fd96bd1f2cfc18c6d9f2"
+        },
+        "validation_environment": "independent host subprocesses; distinct from RunLedger tool environment",
+        "full_command_output_artifact": "/tmp/runledger-dev-suite-ne64z210/06-csv/independent-acceptance.json"
+      },
+      "runtime_synthetic_messages_without_model": 1,
+      "termination_reasons": [
+        "repeated_tool_failure"
+      ]
+    }
+  ],
+  "repository_validation": {
+    "python_driver_tests_passed": 3,
+    "python_syntax_passed": true,
+    "npm_run_check_exit_code": 0,
+    "check_log": "/tmp/runledger-development-cases-final-check.log",
+    "git_diff_check_passed": true,
+    "full_npm_test_run": false,
+    "production_build_run": false,
+    "test_processes_cleaned": true,
+    "credential_matches_in_artifacts": 0
+  }
+}

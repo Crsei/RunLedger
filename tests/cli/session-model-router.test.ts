@@ -53,5 +53,6 @@ describe("standard CLI Session model routing composition", () => {
 		const source = await readFile(join(process.cwd(), "src", "cli", "main.ts"), "utf8");
 		expect(source).toContain("createCliSessionModelRequestRouterFactory");
 		expect(source).toContain("modelRequestRouter: modelRequestRouters.forSession");
+		expect(source).toContain("isModelSelectable: modelRequestRouters.isModelSelectable");
 	});
 });

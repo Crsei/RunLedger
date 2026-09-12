@@ -110,6 +110,25 @@ describe("slash command registry", () => {
     expect(isCommandVisibleForContext(prefixed, { showDebugCommands: true })).toBe(true);
   });
 
+  it("labels unavailable Session commands using the exact negotiated operation", () => {
+    const supported = new Set(["extension.inspect", "mcp.list", "plan.inspect"]);
+    const context = { showDebugCommands: false, supportsOperation: (operation: string) => supported.has(operation) };
+    const entries = commandsForContext(context);
+    for (const name of ["compact", "memory", "remember", "skillsproviders"]) {
+      expect(entries.find((entry) => entry.canonicalName === name)?.description).toContain("Unavailable in this session");
+    }
+    for (const name of ["plugins", "skills", "hooks", "mcp", "plan", "new", "quit"]) {
+      expect(entries.find((entry) => entry.canonicalName === name)?.description).toBe(findCommand(name)?.description);
+    }
+  });
+
+  it("restores the ordinary command description when a later Session supports the operation", () => {
+    const unavailableContext = { showDebugCommands: false, supportsOperation: () => false };
+    expect(commandsForContext(unavailableContext).find((entry) => entry.canonicalName === "memory")?.description).toContain("Unavailable in this session");
+    const availableContext = { showDebugCommands: false, supportsOperation: (operation: string) => operation === "memory.inspect" };
+    expect(commandsForContext(availableContext).find((entry) => entry.canonicalName === "memory")?.description).toBe(findCommand("memory")?.description);
+  });
+
   it("commandsForContext 把动态命令稳定插入 /model 之后", () => {
     const model = builtinCommandDescriptors().find((entry) => entry.canonicalName === "model")!;
     const serviceTier = { ...model, canonicalName: "service-tier", description: "Switch service tier", aliases: [] };

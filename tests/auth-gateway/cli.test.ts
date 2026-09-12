@@ -7,7 +7,8 @@ import { AuthStorage } from "../../src/storage/auth-storage.ts";
 import { createModels, type Provider } from "../../src/models.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import type { AssistantMessage, Api, Model } from "../../src/types.ts";
-import { checkConfiguredGatewayProviders, parseAuthGatewayArgs } from "../../src/cli/auth-gateway-cli.ts";
+import { checkConfiguredGatewayProviders, parseAuthGatewayArgs, runAuthGatewayCommand } from "../../src/cli/auth-gateway-cli.ts";
+import { resolveRunledgerHome } from "../../src/storage/runledger-home.ts";
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 
@@ -44,6 +45,25 @@ function fixtureStream(model: Model<Api>): ReturnType<typeof createAssistantMess
 }
 
 describe("auth-gateway CLI arguments", () => {
+	test("strict failure sets a nonzero exit code without making provider network requests", async () => {
+		const home = mkdtempSync(join(tmpdir(), "runledger-auth-gateway-strict-"));
+		const previousExitCode = process.exitCode;
+		const output: string[] = [];
+		try {
+			process.exitCode = 0;
+			await runAuthGatewayCommand(["check", "--strict", "--json"], {
+				resolveHome: () => resolveRunledgerHome({ env: { RUNLEDGER_DIR: home }, userHome: home }),
+				models: createModels({ credentials: AuthStorage.inMemory() }),
+				writeStdout: (text) => output.push(text),
+			});
+			expect(JSON.parse(output.join(""))).toMatchObject({ ok: false, strict: true, providers: [] });
+			expect(process.exitCode).toBe(1);
+		} finally {
+			process.exitCode = previousExitCode;
+			rmSync(home, { recursive: true, force: true });
+		}
+	});
+
 	test("parses serve bind and no-auth options", () => {
 		expect(parseAuthGatewayArgs(["serve", "--bind", "127.0.0.1:4545", "--no-auth"])).toEqual({
 			ok: true,

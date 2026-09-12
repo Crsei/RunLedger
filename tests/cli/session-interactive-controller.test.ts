@@ -74,6 +74,65 @@ function controller(detail: string | undefined, request?: SessionClientTransport
 }
 
 describe("SessionInteractiveController command error surfacing", () => {
+	it.each(["active", "completed", "recovery_required"] as const)("restores busy state when attaching to a %s run", async (status) => {
+		let wireListener: ((frame: SessionFrameEnvelope) => void) | undefined;
+		const transport = {
+			onEvent: (listener: (frame: SessionFrameEnvelope) => void): (() => void) => { wireListener = listener; return () => { wireListener = undefined; }; },
+			notify: () => undefined,
+		} as unknown as SessionClientTransport;
+		const instance = new SessionInteractiveController({ transport } as unknown as OwnedSessionHandle, {
+			sessionId: "session_fixture", ...sessionPresentation, messages: [], warnings: [], auditEntries: [],
+			selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 10, driverRevision: 0,
+			agentRuns: [{ runId: "run-attached", status, startedAtMs: 1 }],
+		});
+		try {
+			expect(instance.inFlight).toBe(status === "active");
+			let idle = false;
+			const waiting = instance.waitForIdle().then(() => { idle = true; });
+			await Promise.resolve();
+			expect(idle).toBe(status !== "active");
+			wireListener?.({
+				frameId: "attached-run-end", kind: "subscription_event", protocolVersion: 3,
+				body: { sequence: 11, eventType: "agent.event", payload: { type: "agent_end", timestamp: 2, runId: "run-attached", stopReason: "stop" } },
+			});
+			await waiting;
+			expect(instance.inFlight).toBe(false);
+		} finally { instance.dispose(); }
+	});
+
+	it("keeps a completed run idle when queue updates and durable ledger entries arrive after agent_end", async () => {
+		let wireListener: ((frame: SessionFrameEnvelope) => void) | undefined;
+		const delivered: string[] = [];
+		const notify = vi.fn();
+		const transport = {
+			onEvent: (listener: (frame: SessionFrameEnvelope) => void): (() => void) => { wireListener = listener; return () => { wireListener = undefined; }; },
+			notify,
+		} as unknown as SessionClientTransport;
+		const instance = new SessionInteractiveController({ transport } as unknown as OwnedSessionHandle, {
+			sessionId: "session_fixture", ...sessionPresentation, messages: [], warnings: [], auditEntries: [],
+			selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
+		});
+		instance.subscribe((event) => { delivered.push(event.type); });
+		try {
+			const emit = (sequence: number, eventType: string, payload: Record<string, unknown>) => wireListener?.({
+				frameId: `event-${sequence}`, kind: "subscription_event", protocolVersion: 3,
+				body: { sequence, eventType, payload },
+			});
+			emit(1, "agent.event", { type: "agent_start", timestamp: 100, runId: "run-completed" });
+			const idle = instance.waitForIdle();
+			emit(2, "agent.event", { type: "agent_end", timestamp: 200, runId: "run-completed", stopReason: "stop" });
+			emit(3, "ledger.agent_event", { type: "agent_event", timestamp: 200, payload: { event: "agent_end", stopReason: "stop" } });
+			emit(4, "ledger.message", { type: "message", timestamp: 200, payload: { role: "assistant" } });
+			emit(5, "agent.event", { type: "queue_update", timestamp: 201, steering: [], followUp: [] });
+			await idle;
+
+			expect(instance.inFlight).toBe(false);
+			expect(delivered).toEqual(["agent_start", "agent_end", "queue_update"]);
+			expect(instance.recoveryCursor()).toBe(5);
+			expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "ack_cursor", body: { cursor: 5 } }));
+		} finally { instance.dispose(); }
+	});
+
 	it.each(["interrupt", "clear_queues", "editor_activity"])("reports a rejected %s through the existing warning channel", async (operation) => {
 		const instance = controller(undefined, async (): Promise<SessionFrameEnvelope> => ({ kind: "command_result", protocolVersion: 3, frameId: "rejected", body: { ok: false, code: "driver_lease_lost", detail: "driver was replaced" } }));
 		try {
