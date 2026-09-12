@@ -22,6 +22,7 @@ import type { ExtensionRuntimeScope, ExtensionSourceRoot, ExtensionStateDocument
 import { TrustStore } from "../trust/trust-store.ts";
 import { createPluginContributionsProvider } from "./providers/plugin-contributions.ts";
 import { createRunledgerBuiltinProvider, createRunledgerRepoProvider, createRunledgerSessionProvider, createRunledgerUserProvider, createRunledgerWorkspaceProvider } from "./providers/runledger.ts";
+import { createOmpProjectProvider, createOmpUserProvider } from "./providers/omp.ts";
 import { createCodexProjectProvider, createCodexUserProvider } from "./providers/codex.ts";
 import { createAgentsProjectProvider, createAgentsUserProvider } from "./providers/agents.ts";
 import { createClaudeProjectProvider, createClaudeUserProvider } from "./providers/claude.ts";
@@ -81,17 +82,20 @@ export interface SkillRegistryOptions {
 	readonly repoSkillRoot?: string;
 	/** session 注入的临时 roots（默认 off/empty）。 */
 	readonly sessionSkillRoots?: readonly string[];
-	/** Codex user compatibility root（默认 off）：`<os-user-home>`，由 composition root 解析注入。 */
+	/** OMP 默认目录：用户 ~/.omp/agent/skills 与项目 .omp/skills。 */
+	readonly ompUserHome?: string;
+	readonly ompProjectBoundary?: string;
+	/** Codex user compatibility root（默认 on）：`<os-user-home>`，由 composition root 解析注入。 */
 	readonly codexUserHome?: string;
-	/** Codex project compatibility root（默认 off）：repo boundary。 */
+	/** Codex project compatibility root（默认 on）：repo boundary。 */
 	readonly codexProjectBoundary?: string;
-	/** Agents user compatibility root（默认 off）：`<os-user-home>`（`.agents`+`.agent` 各一 observation）。 */
+	/** Agents user compatibility root（默认 on）：`<os-user-home>`（`.agents`+`.agent` 各一 observation）。 */
 	readonly agentsUserHome?: string;
-	/** Agents project compatibility root（默认 off）：repo boundary。 */
+	/** Agents project compatibility root（默认 on）：repo boundary。 */
 	readonly agentsProjectBoundary?: string;
-	/** Claude user compatibility root（默认 off）：`<os-user-home>`。 */
+	/** Claude user compatibility root（默认 on）：`<os-user-home>`。 */
 	readonly claudeUserHome?: string;
-	/** Claude project compatibility root（默认 off）：repo boundary。 */
+	/** Claude project compatibility root（默认 on）：repo boundary。 */
 	readonly claudeProjectBoundary?: string;
 	/** Claude plugins compatibility root（默认 off）：`<os-user-home>`（registry 在 `~/.claude/plugins/`）。 */
 	readonly claudePluginsHome?: string;
@@ -150,6 +154,8 @@ export class SkillRegistry {
 		if (options.workspaceSkillRoot !== undefined) defaultProviders.push(createRunledgerWorkspaceProvider(options.workspaceSkillRoot));
 		if (options.repoSkillRoot !== undefined) defaultProviders.push(createRunledgerRepoProvider(options.repoSkillRoot));
 		for (const root of options.sessionSkillRoots ?? []) defaultProviders.push(createRunledgerSessionProvider(root));
+		if (options.ompUserHome !== undefined) defaultProviders.push(createOmpUserProvider(options.ompUserHome));
+		if (options.ompProjectBoundary !== undefined) defaultProviders.push(createOmpProjectProvider(options.ompProjectBoundary));
 		if (options.codexUserHome !== undefined) defaultProviders.push(createCodexUserProvider(options.codexUserHome));
 		if (options.codexProjectBoundary !== undefined) defaultProviders.push(createCodexProjectProvider(options.codexProjectBoundary));
 		if (options.agentsUserHome !== undefined) defaultProviders.push(createAgentsUserProvider(options.agentsUserHome));

@@ -8,6 +8,8 @@
 >
 > Oh My Pi 参考基线：`06aecdd51f`（`main`，只作行为与结构参考，不复制其全局状态、优先级覆盖或外部信任语义）。
 
+> **2026-09-12 当前修订：** 用户明确要求自动发现 OMP、Codex、Agents 等目录。普通目录 providers（`omp-*`、`codex-*`、`agents-*`、`claude-user/project`）改为默认 on；显式关闭优先，正文仍须 exact trust。插件 registry providers 仍默认 off。旧阶段证据保留为历史，当前差异与验收见 §15.8。
+
 ## 0. 结论与计划边界
 
 本次重构的目标不是简单把更多目录塞进 `discoverSkills()`，而是将 RunLedger 当前的“PluginManager 内部发现 Skill”拆成五个明确层次：
@@ -20,7 +22,7 @@
 
 首轮实施只实例化 `skills` capability，不同时迁移 Hook、MCP、Plugin 或 Rules/Prompts。通用 registry 必须保持被动、最小和无 extension-specific 执行行为；只有第二种 capability 出现真实重复需求后，才允许抽取更多共用策略。
 
-外部兼容来源（Codex、`~/.agents`、Claude、Claude 插件缓存等）必须**默认关闭**。启用 provider 只允许 RunLedger 发现候选，不能继承外部工具的 installed/enabled 状态作为 RunLedger trust，也不能绕过逐资源 receipt。RunLedger 不写回、禁用、卸载或修复任何外部工具目录/registry。
+普通外部 Skill 目录默认参与发现；Claude 插件缓存等 registry 来源仍**默认关闭**。启用 provider 只允许 RunLedger 发现候选，不能继承外部工具的 installed/enabled 状态作为 RunLedger trust，也不能绕过逐资源 receipt。RunLedger 不写回、禁用、卸载或修复任何外部工具目录/registry。
 
 ## 1. 当前实现基线与真实缺口
 
@@ -115,9 +117,9 @@ provider 输出的路径、manifest 状态和来源标签都只是 `SkillDiscove
 
 来源 rank 固定为：session 显式输入 > canonical workspace > 显式 repo input > canonical user > RunLedger plugin contribution > builtin > 外部兼容来源。它只决定稳定列表顺序和 diagnostics 展示；不会删除冲突项、复用 trust 或替调用方选择含糊短名。
 
-### D6 — 外部目录默认关闭且只读
+### D6 — 普通外部目录默认发现且只读
 
-Codex、Agents、Claude、Claude plugins、Agent Plugins、Oh My Pi/OpenCode/GitHub compatibility providers 全部默认关闭。启用后：
+OMP、Codex、Agents、Claude 普通目录默认开启；Claude plugins、Agent Plugins 等 registry 来源仍默认关闭，未实现来源不作隐式 fallback。启用后：
 
 - 只读，不创建目录、不写 state、不改 registry；
 - 外部用户目录不因“属于当前 Unix 用户”自动 trusted；
@@ -247,12 +249,14 @@ P2 完成时，production 必须至少真正装配 `runledger-user`、`runledger
 
 | Provider ID | 输入 | 默认 | 外部 registry 语义 |
 |---|---|---:|---|
-| `codex-user` | 显式解析的 `<os-user-home>/.codex/skills/` | off | 不读取 Codex enable 配置；RunLedger policy + trust 独立 |
-| `codex-project` | repo boundary 内 `.codex/skills/` | off | 当前 workspace 只读，默认 untrusted |
-| `agents-user` | `<os-user-home>/.agents/skills/` 与兼容 `.agent/skills/` | off | 两目录分别形成 observation，不按 name 覆盖 |
-| `agents-project` | repo boundary 内 `.agents/skills/`/`.agent/skills/` | off | bounded ancestor，越近只改变 rank，不覆盖 identity |
-| `claude-user` | `<os-user-home>/.claude/skills/` | off | 不读取 Claude settings 的 enabledPlugins 作为授权 |
-| `claude-project` | repo boundary 内 ancestor `.claude/skills/` | off | bounded ancestor，默认 untrusted |
+| `omp-user` | `<os-user-home>/.omp/agent/skills/` | on | 不读取 OMP 启用或信任状态 |
+| `omp-project` | 当前项目目录 `.omp/skills/` | on | 只读，默认 untrusted |
+| `codex-user` | 显式解析的 `<os-user-home>/.codex/skills/` | on | 不读取 Codex enable 配置；RunLedger policy + trust 独立 |
+| `codex-project` | 当前项目目录 `.codex/skills/` | on | 只读，默认 untrusted |
+| `agents-user` | `<os-user-home>/.agents/skills/` 与兼容 `.agent/skills/` | on | 两目录分别形成 observation，不按 name 覆盖 |
+| `agents-project` | 当前项目目录 `.agents/skills/`/`.agent/skills/` | on | 两目录独立观察；ancestor 扫描尚未接线 |
+| `claude-user` | `<os-user-home>/.claude/skills/` | on | 不读取 Claude settings 的 enabledPlugins 作为授权 |
+| `claude-project` | 当前项目目录 `.claude/skills/` | on | 默认 untrusted；ancestor 扫描尚未接线 |
 | `claude-plugins` | `~/.claude/plugins/installed_plugins.json` 指向的已安装 roots | off | `enabled:false` 可抑制该 source entry；缺失/true 不等于 RunLedger trusted |
 | `agent-plugins` | 用户显式提供或可信 registry 指向的 Agent Plugins `plugin.json` roots | off | 仅导入标准 skills contribution；不执行 plugin code |
 
@@ -260,7 +264,7 @@ P2 完成时，production 必须至少真正装配 `runledger-user`、`runledger
 
 ### 6.3 后置兼容 providers
 
-`omp-user/project`、`omp-plugins`、`opencode-user/project`、`github-project` 等仅在第二批完成真实 E2E 后逐个增加。每增加一个 provider 必须单独提交固定 locator、默认关闭、fixture、诊断和 provenance；不得以一个“third-party fallback”开关把未知 provider 一起打开。
+`omp-user/project` 的标准固定目录已在 2026-09-12 接入；`omp-plugins`、`opencode-user/project`、`github-project` 等仍后置。每增加一个 provider 必须单独提交固定 locator、默认关闭、fixture、诊断和 provenance；不得以一个“third-party fallback”开关把未知 provider 一起打开。
 
 Gemini/Cursor/Windsurf/Cline/VS Code 等若参考实现当前只提供其他 capability，不为了凑数量虚构 Skill 路径。
 
@@ -477,7 +481,7 @@ P4 验收证据（2026-08-13，见 §15.5）：fake home/repo 隔离测试全绿
 - [x] 增 provider list/enable/disable command/query schema、revision/idempotency 与 owner-fenced event；
 - [x] 增 standalone Skill trust/untrust exact-resource command，复用 Runtime Resource receipt，不新建第二套 PermissionEngine；
 - [x] CLI human/JSON 与稳定 exit code；
-- [x] TUI `/skills` 显示 provider、source、trust、active/hidden/ambiguous/failed；
+- [ ] TUI `/skills` 已显示资源、trust 与 ready 状态；provider/source 和 hidden/ambiguous/failed 的完整投影尚未完成，旧勾选过宽。
 - [x] idle reload 有 pending/success/failure subscription，当前 turn 不变；
 - [x] 审计只记 provider ID、policy revision、resource identity/digest、计数和诊断摘要；不写完整外部路径、Skill 正文或外部 registry 内容。
 
@@ -486,8 +490,8 @@ P4 验收证据（2026-08-13，见 §15.5）：fake home/repo 隔离测试全绿
 ### P7 — 上下文与调用路径联合验收
 
 - [x] system prompt 只含 `modelDiscoverable` metadata，预算稳定；
-- [x] `Skill` Tool、`/skill:<name>` 和其他已支持显式语法走同一 catalog/exact loader；
-- [x] user invocation 以用户身份进入会话，model Tool result 保持 toolResult 身份，两者 provenance 不混；
+- [ ] `Skill` Tool 已走 exact loader；`/skill:<name>` 的 TUI 显式调用尚未接线。旧勾选只覆盖 resolver，不能代表端到端完成；本次 `/skill` 仅作为 `/skills` 管理入口别名。
+- [ ] 用户显式 Skill 调用的端到端 provenance 待实现与验证；model Tool result 已保持 toolResult 身份。
 - [x] 若增加 `skill://`，必须复用当前 snapshot resolver、realpath containment、trust/digest 和资源预算；不得创建独立全局 active table；
 - [x] 子代理 autoload/per-task pinning 在 RunLedger 有正式 agent manifest/session contract 前保持 deferred，不用父 Session 全量列表临时替代；
 - [x] Trace `context.assembled` 验证 selected Skill fragment 真正进入 provider-facing request，正文只在调用后的后续上下文出现。
@@ -501,7 +505,7 @@ P4 验收证据（2026-08-13，见 §15.5）：fake home/repo 隔离测试全绿
 - [x] 重建 `dist`，核对 `which runledger` 与全局 npm link；
 - [ ] 使用隔离 `RUNLEDGER_DIR`、fake external homes 和真实 TTY/tmux 验证 provider list/toggle、Skill list、catalog、调用与 reload；当前 worktree 环境阻塞见 §15.6；
 - [ ] 至少一次本 worktree 真实模型 E2E，检查 Trace/artifact 不含凭据、完整外部 home path 和未调用 Skill 正文；当前仅有 2026-08-11 既有语义证据，不能计作本轮 fresh 证据；
-- [x] 审阅所有 provider 默认值，确认 compatibility provider 仍为 off；
+- [x] 审阅 provider 默认值：2026-09-12 普通目录默认 on，registry 来源仍 off，显式关闭优先；
 - [x] 删除旧 PluginManager Skill ownership、重复 scanner、临时 adapter/feature flag；不保留 silent fallback；
 - [x] 回写本文件阶段证据和 `01` 总状态；不以 focused gate 代替完整 gate。
 
@@ -779,3 +783,25 @@ cutover 完成，Skill discovery 不再由 PluginManager 私有拥有；Plugin �
 - fixed-root 与 Claude registry unavailable status 改为有界消息，public `skillProviders.lastError`/JSON 不再泄漏完整 external home path。
 
 fresh 自动证据：review focused 8 files / 77 tests 全绿；mutation/atomicity focused 4 files / 38 tests 全绿；`npm run check` EXIT=0；完整 `npm test` 为 Vitest 322 files（321 passed / 1 skipped）、1894 passed / 3 skipped，Bun OpenTUI 66 passed；`npm run build` EXIT=0；隔离临时 `RUNLEDGER_DIR` 下编译后的 `node dist/cli/cli.js --version/--help` 通过。全局 `which runledger` 当前链接到 sibling `RunLedger-codex-syntax-highlighting`，不是本 worktree，因此未替换用户全局链接，也未把它计为本分支 PATH smoke；`git diff --check` 在最终审阅完成。真实 TTY/tmux 与真实模型仍保持 §15.6 的 pending/blocked 状态，P8 不提升为全部完成。
+
+### 15.8 2026-09-12：自动发现差异审计与修复
+
+参考当前本地 oh-my-pi `3b3a6dc9bb`，核对 `extensibility/skills.ts`、`discovery/{builtin,agents,codex,helpers}.ts`、`modes/skill-command.ts`：OMP 默认扫描 native 与 Agents，Codex 用户来源当前默认需要 opt-in；共享 scanner 扫 immediate children，正文调用与目录发现是不同路径。OMP 的项目扫描会沿 ancestor 到 repo root，且支持自定义目录、profile 与配置路径。
+
+此前体验落差的原因：
+
+1. 旧 D6 有意将所有外部来源默认关闭；本机存在 Codex/Agents/Claude Skill 目录但未配置 `skills.providers`，因此扫描被跳过。这是旧策略与当前需求不一致。
+2. OMP 来源被列为后置，直到本次都没有 provider，实现不能据总标题视为完整复刻。
+3. P6 的 provider/source 完整展示和 P7 的 TUI 用户调用闭环未完成，旧勾选超过实际证据，现回退；P7 只有 resolver 单测，P8 当时仅验证 `--help/--version`，明确未做真实 TTY。
+4. `/skills` 仍按 Plugin-owned 模型管理资源，独立 Skill 没有 trust 入口。现允许 `t` 调用 exact `skill.trust/untrust`，`r` 重建发现快照，保留 Plugin-owned Skill 的父插件信任路径。
+
+本次按用户澄清实现普通目录自动发现，新增 OMP 用户／项目固定目录；显式 provider false 与总闸 false 仍优先，同名资源不 first-wins，发现不自动授权正文。TUI 删除 `/skillsproviders` 的注册、路由、modal 与提示，保留 CLI/domain provider 管理接口；新增 `/skill` 管理别名。
+
+范围边界：本次不导入 OMP profile/env 自定义根、插件 registry、ancestor 扫描或 symlink 目录；仍使用现有 bounded scanner、当前项目目录和注入的 OS home。不是 OMP 全部 Skill 行为的等价实现。
+
+本轮验证：
+
+- 定向 11 files / 122 tests 通过，覆盖八个默认目录、显式关闭零 I/O、外部同名歧义、exact trust 与生产 Session 的 OMP 自动发现；TUI trust/reload 重绘回归另跑 14 tests 通过。
+- `npm run check`、完整 `npm test`（隔离 HOME/RUNLEDGER_DIR）与 `npm run build` 通过，标准 PATH 链接核对为本仓库 `bin/runledger.js`。
+- 可复现脚本：`python3 tests/manual/skill-discovery/run.py`。真实 tmux/CLI、隔离 HOME/RUNLEDGER_DIR、无 provider enable 配置，验证八个目录列表、`/skill` 别名、`t` 信任、`r` 发现新增文件；wire capture 证明初轮无正文，exact `Skill` tool 调用后正文作为 tool result 进入后续请求。证据 `/tmp/runledger-skill-discovery-thtikziv/result.json`，退出码 0、无残留进程。仅本地 fixture，不替代真实模型或人工视觉验收。
+- 首轮 TTY 捕获到 trust 已持久化但 modal 未重绘，已补齐 trust/reload 后 `uiRequestRender()`；不是通过多发按键掩盖刷新问题。

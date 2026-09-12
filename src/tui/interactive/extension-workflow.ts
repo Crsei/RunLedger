@@ -6,11 +6,8 @@
 
 import { McpServersModal, type McpServerViewItem } from "../components/mcp-servers-modal.ts";
 import { ExtensionToggleModal, type ExtensionToggleItem } from "../components/extension-toggle-modal.ts";
-import { SelectorModal } from "../components/selector-modal.ts";
-import { makeSelectListTheme } from "../theme/factories.ts";
 import { querySessionController, commandSessionController } from "../adapters/session-domain.ts";
 import type { ExtensionResourceView } from "../extensions/types.ts";
-import type { SelectItem } from "../primitives.ts";
 import type { InteractiveModePorts } from "./types.ts";
 
 export class ExtensionWorkflow {
@@ -64,40 +61,6 @@ export class ExtensionWorkflow {
 		}
 	}
 
-	/** /skillsproviders:只读 provider status 列表（mutation 仍走 authenticated Session command）。 */
-	public async openSkillProvidersModal(): Promise<void> {
-		const port = this.port;
-		const context = { correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}` };
-		const result = await querySessionController(port.controller, "skill.provider.list", {}, context).catch((error: unknown) => {
-			port.showNotice(`/skillsproviders query failed: ${String(error)}`, "error");
-			return undefined;
-		});
-		if (result === undefined) return;
-		if (!result.ok) {
-			port.showNotice(`/skillsproviders query failed: ${result.code}`, "error");
-			return;
-		}
-		const rawItems = isRecordArray(result.value?.items) ? result.value.items : [];
-		const items: SelectItem[] = rawItems.flatMap((item) => {
-			if (!isRecord(item) || typeof item.providerId !== "string") return [];
-			const state = typeof item.state === "string" ? item.state : "unknown";
-			const candidateCount = typeof item.candidateCount === "number" ? item.candidateCount : 0;
-			const activeCount = typeof item.activeCount === "number" ? item.activeCount : 0;
-			const failedCount = typeof item.failedCount === "number" ? item.failedCount : 0;
-			const label = `${item.providerId} — ${state}`;
-			const description = `candidates=${candidateCount} active=${activeCount} failed=${failedCount}`;
-			return [{ value: item.providerId, label, description }];
-		});
-		const modal = new SelectorModal({
-			theme: port.theme,
-			selectListTheme: makeSelectListTheme(port.theme),
-			title: `/skillsproviders (${items.length})`,
-			items,
-			onCancel: () => port.closeOverlay(),
-		});
-		port.showOverlayModal(modal, { anchor: "bottom-left" });
-	}
-
 	private async queryMcpServers(): Promise<McpServerViewItem[] | undefined> {
 		const port = this.port;
 		const context = { correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}` };
@@ -128,13 +91,13 @@ export class ExtensionWorkflow {
 			return;
 		}
 		const items: ExtensionToggleItem[] = resources.map(resourceToToggleItem);
-		const showTrust = kind === "plugin" || kind === "hook";
-		const showReload = kind === "plugin";
+		const showTrust = true;
+		const showReload = kind === "plugin" || kind === "skill";
 		let modal: ExtensionToggleModal | undefined;
 		modal = new ExtensionToggleModal({
 			title: `${commandName} (${items.length})`,
 			subtitle: kind === "skill"
-				? "Turn skills on or off. Changes apply to the owning plugin and are saved automatically."
+				? "Review discovered skills. Press t to trust or untrust; r rescans directories."
 				: kind === "hook"
 					? "Toggle hooks and review their trust. Changes apply to the owning plugin."
 					: "Enable, disable, trust or untrust plugins. Changes are saved automatically.",
@@ -157,7 +120,7 @@ export class ExtensionWorkflow {
 
 	private async toggleExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined): Promise<void> {
 		if (item.pluginId === undefined) {
-			this.port.showNotice(`${kind} ${item.name} has no owning plugin and cannot be toggled.`, "error");
+			this.port.showNotice(kind === "skill" ? "Press t to trust or untrust this standalone skill." : `${kind} ${item.name} has no owning plugin and cannot be toggled.`, "note");
 			return;
 		}
 		const ok = await this.runSessionMutation(item.enabled ? "plugin.disable" : "plugin.enable", { pluginId: item.pluginId }, `/${kind} toggle`);
@@ -170,21 +133,30 @@ export class ExtensionWorkflow {
 	}
 
 	private async trustExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined): Promise<void> {
-		if (item.pluginId === undefined) {
+		if (item.pluginId === undefined && kind !== "skill") {
 			this.port.showNotice(`${kind} ${item.name} has no owning plugin and cannot be re-trusted.`, "error");
 			return;
 		}
-		const ok = await this.runSessionMutation(item.trusted ? "plugin.untrust" : "plugin.trust", { pluginId: item.pluginId }, `/${kind} trust`);
+		const standaloneSkill = kind === "skill" && item.pluginId === undefined;
+		const operation = standaloneSkill ? (item.trusted ? "skill.untrust" : "skill.trust") : (item.trusted ? "plugin.untrust" : "plugin.trust");
+		const payload = standaloneSkill ? { skillId: item.resourceId } : { pluginId: item.pluginId };
+		const ok = await this.runSessionMutation(operation, payload, `/${kind} trust`);
 		if (!ok || modal === undefined) return;
 		const fresh = await this.queryExtensionResources(kind, `/${kind}`);
-		if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
+		if (fresh !== undefined) {
+			modal.update(fresh.map(resourceToToggleItem));
+			this.port.uiRequestRender();
+		}
 	}
 
 	private async reloadExtensions(kind: "plugin" | "skill" | "hook", commandName: string, modal: ExtensionToggleModal | undefined): Promise<void> {
 		const ok = await this.runSessionMutation("extension.reload", {}, commandName);
 		if (!ok || modal === undefined) return;
 		const fresh = await this.queryExtensionResources(kind, commandName);
-		if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
+		if (fresh !== undefined) {
+			modal.update(fresh.map(resourceToToggleItem));
+			this.port.uiRequestRender();
+		}
 	}
 
 	/** Session domain mutation 公共 runner;失败投影 typed notice,返回成功与否。 */

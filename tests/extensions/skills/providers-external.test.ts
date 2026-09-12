@@ -1,5 +1,5 @@
 /**
- * P4：Codex/Agents compatibility providers——默认 off、零 I/O、缺目录
+ * P4：Codex/Agents compatibility providers——默认发现、显式关闭零 I/O、缺目录
  * unavailable、fake home/repo 下同名不 first-wins、exact trust 后 active、
  * provider 不调用 homedir/cwd（D6）。
  */
@@ -118,13 +118,48 @@ function registryOptions(parent: string, extra: Partial<Parameters<typeof create
 }
 
 describe("P4 Codex/Agents compatibility providers", () => {
-	it("stays disabled with zero I/O when no policy enables it (default off)", async () => {
+	it("discovers default OMP, Codex, Agents and Claude directories without activating untrusted bodies", async () => {
+		const parent = await temporary("automatic");
+		const fakeHome = join(parent, "home");
+		const project = join(parent, "project");
+		const cases = [
+			["omp-user", join(fakeHome, ".omp", "agent", "skills")],
+			["omp-project", join(project, ".omp", "skills")],
+			["codex-user", join(fakeHome, ".codex", "skills")],
+			["codex-project", join(project, ".codex", "skills")],
+			["agents-user", join(fakeHome, ".agents", "skills")],
+			["agents-project", join(project, ".agents", "skills")],
+			["claude-user", join(fakeHome, ".claude", "skills")],
+			["claude-project", join(project, ".claude", "skills")],
+		] as const;
+		for (const [name, root] of cases) await writeSkill(root, name);
+		const registry = createSkillRegistry(registryOptions(parent, {
+			ompUserHome: fakeHome, ompProjectBoundary: project,
+			codexUserHome: fakeHome, codexProjectBoundary: project,
+			agentsUserHome: fakeHome, agentsProjectBoundary: project,
+			claudeUserHome: fakeHome, claudeProjectBoundary: project,
+		}));
+		const result = await registry.load();
+		expect(result.all).toHaveLength(cases.length);
+		expect(result.active).toHaveLength(0);
+		for (const [id] of cases) {
+			expect(result.providers.find((provider) => provider.providerId === id)).toMatchObject({ state: "loaded", effectiveEnabled: true, candidateCount: 1, activeCount: 0 });
+		}
+		const omp = result.all.find((skill) => skill.frontmatter.name === "omp-user")!;
+		await registry.trust(omp.descriptor.identity.qualifiedId);
+		const after = await registry.load();
+		expect(after.active.map((skill) => skill.frontmatter.name)).toEqual(["omp-user"]);
+		const disabled = await registry.load({ providerEnabled: new Map(cases.map(([id]) => [id, false])) });
+		expect(disabled.all).toHaveLength(0);
+	});
+
+	it("honors explicit provider disable with zero I/O", async () => {
 		const parent = await temporary("off");
 		const fakeHome = join(parent, "home");
 		await writeSkill(join(fakeHome, ".codex", "skills"), "codex-skill");
 		const tracing = new TracingStorage(storage);
 		const registry = createSkillRegistry(registryOptions(parent, { codexUserHome: fakeHome, agentsUserHome: fakeHome, storage: tracing }));
-		const result = await registry.load();
+		const result = await registry.load({ providerEnabled: new Map([["codex-user", false], ["agents-user", false]]) });
 		expect(result.all).toHaveLength(0);
 		for (const id of ["codex-user", "agents-user"]) {
 			expect(result.providers.find((provider) => provider.providerId === id)).toMatchObject({ state: "disabled", effectiveEnabled: false });
@@ -132,18 +167,18 @@ describe("P4 Codex/Agents compatibility providers", () => {
 		expect(tracing.probeCalls.some((call) => call.includes(".codex") || call.includes(".agents") || call.includes(".agent"))).toBe(false);
 	});
 
-	it("discovers an untrusted Codex user Skill after explicit enable and activates it through exact trust", async () => {
+	it("automatically discovers an untrusted Codex user Skill and activates it through exact trust", async () => {
 		const parent = await temporary("codex-user");
 		const fakeHome = join(parent, "home");
 		await writeSkill(join(fakeHome, ".codex", "skills"), "release-review");
 		const registry = createSkillRegistry(registryOptions(parent, { codexUserHome: fakeHome }));
-		const before = await registry.load({ providerEnabled: new Map([["codex-user", true]]) });
+		const before = await registry.load();
 		expect(before.providers.find((provider) => provider.providerId === "codex-user")).toMatchObject({ state: "loaded", candidateCount: 1, activeCount: 0 });
 		expect(before.all[0]?.descriptor.activation).toBe("blocked");
 		const qualifiedId = before.all[0]!.descriptor.identity.qualifiedId;
 		expect(qualifiedId).toContain("skill:user:");
 		await registry.trust(qualifiedId);
-		const after = await registry.load({ providerEnabled: new Map([["codex-user", true]]) });
+		const after = await registry.load();
 		expect(after.active.map((skill) => skill.descriptor.identity.qualifiedId)).toEqual([qualifiedId]);
 		const loaded = await new SkillToolResolver({ catalog: new SkillCatalog(after.active), trustStore: new TrustStore(join(parent, "trust.json"), storage), principalId: scope.principalId, storage, currentTools: () => ["read"] }).load("release-review");
 		expect(loaded).toMatchObject({ ok: true, value: { body: "Body.\n" } });
@@ -184,7 +219,7 @@ describe("P4 Codex/Agents compatibility providers", () => {
 	it("marks an external root unavailable when the directory is missing", async () => {
 		const parent = await temporary("missing");
 		const registry = createSkillRegistry(registryOptions(parent, { codexUserHome: join(parent, "no-home") }));
-		const result = await registry.load({ providerEnabled: new Map([["codex-user", true]]) });
+		const result = await registry.load();
 		expect(result.providers.find((provider) => provider.providerId === "codex-user")).toMatchObject({ state: "unavailable", observationCount: 0 });
 		expect(result.all).toHaveLength(0);
 	});
@@ -205,7 +240,7 @@ describe("P4 Codex/Agents compatibility providers", () => {
 		await writeSkill(join(fakeHome, ".codex", "skills"), "Review");
 		await writeSkill(join(fakeHome, ".codex", "skills"), "review");
 		const registry = createSkillRegistry(registryOptions(parent, { codexUserHome: fakeHome }));
-		const result = await registry.load({ providerEnabled: new Map([["codex-user", true]]) });
+		const result = await registry.load();
 		// frontmatter name 只接受小写：混合大小写目录被 schema 拒绝（独立条目，不合并、不 first-wins）。
 		expect(result.all.map((skill) => skill.frontmatter.name)).toEqual(["review"]);
 		expect(result.diagnostics.some((item) => item.code === "skill.schema_invalid")).toBe(true);

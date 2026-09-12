@@ -19,6 +19,8 @@ export const KNOWN_SKILL_PROVIDER_IDS: readonly string[] = Object.freeze([
 	"runledger-repo",
 	"runledger-session",
 	"runledger-plugin",
+	"omp-user",
+	"omp-project",
 	"codex-user",
 	"codex-project",
 	"agents-user",
@@ -33,6 +35,14 @@ const DEFAULT_ENABLED_SKILL_PROVIDER_IDS = new Set([
 	"runledger-user",
 	"runledger-workspace",
 	"runledger-plugin",
+	"omp-user",
+	"omp-project",
+	"codex-user",
+	"codex-project",
+	"agents-user",
+	"agents-project",
+	"claude-user",
+	"claude-project",
 ]);
 
 export interface SkillsPolicyResult {

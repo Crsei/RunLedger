@@ -65,6 +65,10 @@
 
 本文件是后续 Plugin / MCP / Skill / Hooks 工作的执行状态账本。实施时只在本文件的复选框上更新状态；专题设计可以作为附录增加，但不得另建平行的总计划。
 
+### 2026-09-12：普通外部 Skill 目录自动发现修订
+
+按用户最新要求，OMP、Codex、Agents、Claude 普通 Skill 目录默认参与发现，显式关闭与 exact trust 保留；OMP 固定目录接入生产 composition。TUI 移除 `/skillsproviders`，`/skill` 作为管理入口别名，并补齐独立 Skill 的 trust/reload 操作。原 P7 将 resolver 测试当作用户调用完成的勾选已回退；本轮范围、OMP 差异和 fresh 证据统一见 [Skill 专题 §15.8](02-skill-registry-discovery-provider-refactor-plan.md#158-2026-09-12自动发现差异审计与修复)。
+
 ### 0.0.5 2026-08-13 Skill Registry / Discovery Provider 重构实现完成，P8 human/environment gates pending
 
 `02-skill-registry-discovery-provider-refactor-plan.md` 的代码与自动化范围已实现；P8 的本 worktree 真实 TTY/tmux 和真实模型 E2E 仍受环境阻塞，不能宣称 P0–P8 全阶段验收完成。Skill discovery 不再由 PluginManager 私有拥有；`SkillRegistry`（被动 registry + canonical providers + 四视图 snapshot）成为 Plugin 与 standalone 的唯一 Skill 入口，production Session Owner 与 resident Host 复用同一 `createSkillRegistry` factory。要点：

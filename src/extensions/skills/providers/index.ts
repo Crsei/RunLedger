@@ -6,3 +6,4 @@ export { createCodexProjectProvider, createCodexUserProvider } from "./codex.ts"
 export { createAgentsProjectProvider, createAgentsUserProvider } from "./agents.ts";
 export { createClaudeProjectProvider, createClaudeUserProvider } from "./claude.ts";
 export { createClaudePluginsProvider, parseInstalledPluginsRegistry } from "./claude-plugins.ts";
+export { createOmpProjectProvider, createOmpUserProvider } from "./omp.ts";

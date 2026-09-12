@@ -62,7 +62,7 @@ interface StubController {
   dispose: () => void;
 }
 
-const MUTATION_OPERATIONS = new Set(["plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust", "extension.reload", "mcp.restart"]);
+const MUTATION_OPERATIONS = new Set(["plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust", "skill.trust", "skill.untrust", "extension.reload", "mcp.restart"]);
 
 function stubController(query: Record<string, Record<string, unknown>>): StubController {
   return {
@@ -206,6 +206,26 @@ describe("TUI extension mutation wiring routes through commandSessionDomain", ()
 
     const command = controller.commandSessionDomain as ReturnType<typeof vi.fn>;
     expect(command).toHaveBeenCalledWith("plugin.trust", { pluginId: "plugin:fixture" }, expect.objectContaining({ expectedRevision: 0 }));
+  });
+
+  it.each([false, true])("trusts a standalone Skill through its exact resource ID (trusted=%s)", async (trusted) => {
+    const { pluginId: _pluginId, ...standalone } = skill;
+    const controller = stubController({ "extension.inspect": extensionSnapshot([{ ...standalone, trusted }]) });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    await (mode as unknown as { openExtensionSelector(op: "skill.list", label: string, name: string): Promise<void> }).openExtensionSelector("skill.list", "skills", "/skills");
+    await settleFrames();
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    const modal = tui.getOverlay() as unknown as { handleInput(data: string): void; update(items: readonly unknown[]): void };
+    const update = vi.spyOn(modal, "update");
+    const render = vi.spyOn(tui, "requestRender");
+    modal.handleInput("t");
+    await settleFrames();
+    expect(render.mock.invocationCallOrder.at(-1)).toBeGreaterThan(update.mock.invocationCallOrder.at(-1)!);
+    expect(controller.commandSessionDomain).toHaveBeenCalledWith(trusted ? "skill.untrust" : "skill.trust", { skillId: "skill:fixture" }, expect.objectContaining({ expectedRevision: 0 }));
+    modal.handleInput("r");
+    await settleFrames();
+    expect(render.mock.invocationCallOrder.at(-1)).toBeGreaterThan(update.mock.invocationCallOrder.at(-1)!);
+    expect(controller.commandSessionDomain).toHaveBeenCalledWith("extension.reload", {}, expect.objectContaining({ expectedRevision: 0 }));
   });
 
   it("mcp restart routes mcp.restart and refreshes the catalog", async () => {

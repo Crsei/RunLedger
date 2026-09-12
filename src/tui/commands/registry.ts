@@ -52,7 +52,6 @@ export type SlashCommandActionType =
   | "extension.mcp"
   | "extension.plugins"
   | "extension.skills"
-  | "extension.skills.providers"
   | "extension.hooks"
   | "plan.inspect"
   | "compaction.list"
@@ -262,8 +261,7 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
 	    command("quit", "Exit safely", 16, { actionType: "ui.quit", category: "ui", aliases: ["exit"] }),
 	    command("mcp", "List connected MCP servers", 17, { actionType: "extension.mcp", category: "extensions", policy: READONLY_POLICY, requiredOperation: "mcp.list", unavailableHint: "Use /new standard to work with extensions." }),
 	    command("plugins", "List discovered plugins", 18, { actionType: "extension.plugins", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
-	    command("skills", "List discovered skills", 19, { actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
-	    command("skillsproviders", "List skill discovery providers", 20, { actionType: "extension.skills.providers", category: "extensions", policy: READONLY_POLICY, requiredOperation: "skill.provider.list", unavailableHint: "Use /new standard to work with extensions." }),
+	    command("skills", "List discovered skills", 19, { aliases: ["skill"], actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
 	    command("hooks", "List configured hooks", 21, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
 	    command("plan", "Inspect or review the current plan", 22, {
       actionType: "plan.inspect",

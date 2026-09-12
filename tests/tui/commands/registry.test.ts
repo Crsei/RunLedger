@@ -110,11 +110,17 @@ describe("slash command registry", () => {
     expect(isCommandVisibleForContext(prefixed, { showDebugCommands: true })).toBe(true);
   });
 
+  it("exposes /skill as the skills manager alias and removes provider UI commands", () => {
+    expect(findCommand("skill")?.actionType).toBe("extension.skills");
+    expect(findCommand("skillsproviders")).toBeUndefined();
+    expect(findCommand("skillproviders")).toBeUndefined();
+  });
+
   it("labels unavailable Session commands using the exact negotiated operation", () => {
     const supported = new Set(["extension.inspect", "mcp.list", "plan.inspect"]);
     const context = { showDebugCommands: false, supportsOperation: (operation: string) => supported.has(operation) };
     const entries = commandsForContext(context);
-    for (const name of ["compact", "memory", "remember", "skillsproviders"]) {
+    for (const name of ["compact", "memory", "remember"]) {
       expect(entries.find((entry) => entry.canonicalName === name)?.description).toContain("Unavailable in this session");
     }
     for (const name of ["plugins", "skills", "hooks", "mcp", "plan", "new", "quit"]) {

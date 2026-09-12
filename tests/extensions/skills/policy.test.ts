@@ -23,9 +23,9 @@ describe("skills provider policy merge", () => {
 	});
 
 	it("keeps only known provider IDs and reports unknown ones without running them", () => {
-		const result = resolveSkillsPolicy({ providers: providers([["runledger-user", false], ["omp-user", true], ["unknown-provider", true]]) }, undefined);
+		const result = resolveSkillsPolicy({ providers: providers([["runledger-user", false], ["opencode-user", true], ["unknown-provider", true]]) }, undefined);
 		expect(result.providerEnabled.get("runledger-user")).toBe(false);
-		expect(result.providerEnabled.has("omp-user")).toBe(false);
+		expect(result.providerEnabled.has("opencode-user")).toBe(false);
 		expect(result.providerEnabled.has("unknown-provider")).toBe(false);
 		expect(result.diagnostics.map((item) => item.code)).toEqual(["skill.policy_unknown_provider", "skill.policy_unknown_provider"]);
 	});
@@ -57,8 +57,8 @@ describe("skills provider policy merge", () => {
 	});
 
 	it("does not let workspace enable a default-off provider omitted by user policy", () => {
-		const result = resolveSkillsPolicy(undefined, { providers: providers([["codex-user", true]]) });
-		expect(result.providerEnabled.has("codex-user")).toBe(false);
+		const result = resolveSkillsPolicy(undefined, { providers: providers([["claude-plugins", true]]) });
+		expect(result.providerEnabled.has("claude-plugins")).toBe(false);
 		expect(result.diagnostics.map((item) => item.code)).toEqual(["skill.policy_workspace_cannot_reopen"]);
 	});
 

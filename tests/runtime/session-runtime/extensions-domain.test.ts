@@ -453,6 +453,9 @@ describe("SessionRuntime extension domain", () => {
 		const standaloneRoot = join(layout.state, "extensions", "user", "skills", "release-review");
 		mkdirSync(standaloneRoot, { recursive: true, mode: 0o700 });
 		writeFileSync(join(standaloneRoot, "SKILL.md"), "---\nname: release-review\ndescription: Review a release safely\n---\nStandalone body.", { mode: 0o600 });
+		const externalRoot = join(home, ".omp", "agent", "skills", "omp-auto");
+		mkdirSync(externalRoot, { recursive: true });
+		writeFileSync(join(externalRoot, "SKILL.md"), "---\nname: omp-auto\ndescription: Discovered automatically\n---\nOMP fixture body.");
 		const harness = await createRuntimeHarness("standalone-skill");
 		const managedProcess = { start: async () => { throw new Error("MCP transport must not start"); } } as unknown as Parameters<typeof createProductionSessionExtensionComposition>[0]["managedProcess"];
 		let composition: Awaited<ReturnType<typeof createProductionSessionExtensionComposition>> | undefined;
@@ -499,10 +502,12 @@ describe("SessionRuntime extension domain", () => {
 			const skillProviders = inspectSkillProviders(inspected.value);
 			const userProvider = skillProviders.find((item) => item.providerId === "runledger-user");
 			expect(userProvider).toMatchObject({ state: "loaded", candidateCount: 1 });
-			expect(skillProviders.find((item) => item.providerId === "codex-user")).toMatchObject({ state: "disabled" });
+			expect(skillProviders.find((item) => item.providerId === "codex-user")).toMatchObject({ state: "unavailable", effectiveEnabled: true });
 
 			// 未 trust：standalone 是 inspect 可见的 blocked 候选，不进 catalog、loader 不可达。
 			const before = await listSkills();
+			expect(before.find((item) => item.displayName === "omp-auto")).toMatchObject({ ready: false, trusted: false, activation: "blocked" });
+			expect(skillProviders.find((item) => item.providerId === "omp-user")).toMatchObject({ state: "loaded", candidateCount: 1 });
 			const standaloneId = before.find((item) => item.displayName === "release-review")?.identity?.qualifiedId;
 			const standaloneBefore = before.find((item) => item.displayName === "release-review");
 			expect(standaloneBefore).toMatchObject({ ready: false, trusted: false, activation: "blocked" });

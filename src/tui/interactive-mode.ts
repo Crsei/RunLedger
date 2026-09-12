@@ -1232,9 +1232,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
       case "extension.skills":
         void this.extensionWorkflow.openExtensionSelector("skill.list", "skills", "/skills");
         return;
-      case "extension.skills.providers":
-        void this.extensionWorkflow.openSkillProvidersModal();
-        return;
       case "extension.hooks":
         void this.extensionWorkflow.openExtensionSelector("hook.list", "hooks", "/hooks");
         return;

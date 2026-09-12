@@ -390,6 +390,8 @@ export async function createProductionSessionExtensionComposition(
 		userSkillRoot: join(stateRoot, "user", "skills"),
 		workspaceSkillRoot: join(stateRoot, "workspaces", storageKey, "skills"),
 		...(options.skillCompatibility === undefined ? {} : {
+			ompUserHome: options.skillCompatibility.osUserHome,
+			ompProjectBoundary: options.skillCompatibility.projectBoundary,
 			codexUserHome: options.skillCompatibility.osUserHome,
 			codexProjectBoundary: options.skillCompatibility.projectBoundary,
 			agentsUserHome: options.skillCompatibility.osUserHome,

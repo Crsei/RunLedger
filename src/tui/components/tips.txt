@@ -62,8 +62,7 @@ Session 选择器中 Ctrl+S 在 Updated 与 Created 排序之间切换；Enter �
 /terminal <execution-id> 打开指定 managed process 的终端；详情中 t/Enter 进入终端，o 刷新输出。
 managed terminal 中输入会发送 stdin，Enter 发送换行；Ctrl+S 请求停止进程，Ctrl+R 请求按当前窗口调整 PTY 大小。
 /mcp 查看当前 MCP server；Enter 查看工具与诊断，r 重启选中 server，Esc 返回。
-/plugins、/skills、/hooks 打开扩展 toggle 视图；Space/Enter 切换启用状态，插件与 hook 可用 t 处理信任，插件可用 r reload。
-/skillsproviders 查看已配置的 Skill discovery provider 状态、候选数、激活数与失败数。
+/plugins、/skills（/skill）、/hooks 打开扩展管理；t 处理信任，Space/Enter 切换所属插件启用状态，插件与 Skill 可用 r 重新发现。
 /plan 查看当前 Plan Mode 状态与审批信息；Plan 的写入、激活、批准与取消也可通过 headless control command 执行。
 /compact 查看 compaction checkpoints；实际 compact run 需要受治理的 source range 与 transcript 输入。
 /memory 查看当前 memory store；/remember <text> 提交一条 workspace memory proposal，是否生效由批准流程决定。

@@ -137,6 +137,8 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		pluginContributions: () => extensionPluginManager.last()?.skillContributions ?? [],
 		userSkillRoot: join(extensionStateRoot, "user", "skills"),
 		workspaceSkillRoot: join(extensionStateRoot, "workspaces", scope.workspaceStorageKey, "skills"),
+		ompUserHome: homedir(),
+		ompProjectBoundary: cwd,
 		codexUserHome: homedir(),
 		codexProjectBoundary: cwd,
 		agentsUserHome: homedir(),
