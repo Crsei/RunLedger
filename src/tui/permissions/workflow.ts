@@ -168,7 +168,14 @@ export class PermissionsWorkflow {
 				document: applySystemPermissionPreset(view.document, preset),
 			}, { ...request, expectedRevision: view.domainRevision });
 			if (!result.ok) {
-				this.#options.showNotice(result.status === "stale" ? "Permissions changed elsewhere. Reopen /permissions and try again." : result.code === "permissions_saved_not_applied" ? "Permissions were saved, but this Session could not apply them. Reconnect to recover." : "Permissions could not be applied to this Session.", "error");
+				const message = result.status === "stale"
+					? "Permissions changed elsewhere. Reopen /permissions and try again."
+					: result.code === "permissions_saved_not_applied"
+						? "Permissions were saved, but this Session could not apply them. Reconnect to this Session and run /recovery assess."
+						: result.status === "recovery_required"
+							? "Permissions require recovery. Reconnect to this Session and run /recovery assess before retrying."
+							: "Permissions could not be applied to this Session.";
+				this.#options.showNotice(`${message} (${result.code})`, "error");
 				return;
 			}
 			if (result.value.appliesTo !== "current_and_new_sessions" || typeof result.value.effectiveProfile !== "string") {

@@ -108,6 +108,14 @@
 - 最终验证：`npm run check`、`npm run build` exit 0；`npm test` 的全部 Vitest 分组 504 files / 3305 passed / 3 skipped，补充 `session-permission-events` 1 passed。原生阶段发现权限字段强制显示挤掉 80 列 thinking；恢复既有窄屏降级规则后，`npm run test:tui-native` 全部分组 24 files / 154 passed / 0 failed。早先 `npm test` 进程因原生失败返回 1，本轮以受影响原生分组的完整复验闭合该失败，不将该进程记为 exit 0。首轮 MCP list 30 秒超时也在后续完整 Vitest 运行中通过。
 - 验证日志根：`/tmp/runledger-permission-validation-sYWFyp`。真实外部 provider、人工视觉/键盘/中文 IME 与 macOS/Windows 未执行；本轮不修改 `src/security/sandbox/**`，也不关闭 Advanced 或 Runtime R8/R9 的门禁。
 
+#### 2026-09-12 跨 Session 权限事件冲突修复
+
+- 缺陷：TUI 请求计数在不同 Session 中可重复，`updateId` 仅绑定 generation/correlationId/effectId；旧 journal 直接用 updateId/stage 生成全库唯一的 `event_id`。同一用户库已有相同操作记录时，新会话的 prepared INSERT 会报 `sequence_conflict`，尚未保存 settings 就封闭 admission，并留下 uncertain attempt。界面原先只显示 `Permissions could not be applied to this Session.`，隐藏了恢复错误码。
+- 修复：保留会话内 updateId 与历史幂等回执；journal 使用 `digest({sessionId, updateId})` 加 stage 生成有长度界限的全局事件 ID。旧事件、schema、配置和历史 hash chain 不改写。TUI 保留错误码，并区分 stale、已保存未应用、recovery_required；恢复提示要求重新连接原会话并执行 `/recovery assess`，不把重试或自动确认当作恢复。
+- 回归：同库预置旧格式记录，再创建两个新 Session 使用相同请求计数切换 Full Access；每次重复提交不增加 revision 或事件，旧新会话重新接管均可恢复。新增测试在修复前明确失败；修复后与既有审批中切换、持久化恢复及 TUI 定向测试共 19 项通过。真实 CLI 多会话驱动见 [`cross-session.py`](../../tests/manual/active-permissions/cross-session.py)。
+- 验证：`npm run check`、完整 `npm test`、`npm run build` 均 exit 0，完整日志在 `/tmp/runledger-permission-fix-validation/`。PATH/global npm link 指向本仓库。`cross-session.py` 在真实 tmux TTY 中验证两个会话相同 updateId、四个不同 eventId、两次切换和两次工具执行均成功，两个 CLI exit 0，无存活 owner/进程；证据 `/tmp/runledger-permission-cross-session-znq5cl3h/result.json`。既有 `run.py` 也通过审批中切换、原操作仅一次、后续权限收紧及模型上下文更新，revision 1→2→3，CLI exit 0、无存活进程；证据 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/runledger-active-permissions-86t71low/result.json`。这些是 Linux、本地 HTTP fixture 与构建后 CLI/TUI 证据，不替代真实外部模型、人工或跨平台验收。
+- 已经运行的旧 CLI 需要正常退出后恢复原会话以加载新构建；旧失败留下的 uncertain attempt 仍受既有 recovery barrier 约束，本修复不修改真实用户数据或静默清除待核验副作用。
+
 #### 交付顺序与完成标准
 
 按 R1 contract/失败恢复表 → R2 生产接线 → R3 审批及故障恢复 → R4 TUI → R5 集成/TTY 顺序实现，R2–R4 未闭环前不将功能标记完成。阶段可分提交，但最终交付必须包含同一会话即时生效、待审批重新评估、反向收紧、审计恢复和真实 TTY 证据；仅改提示、默认值或要求用户重开 session 均不算修复。

@@ -1,6 +1,6 @@
 import type { SessionStore } from "../../storage/session-store/session-store.ts";
 import { createRuntimeId } from "../protocol/ids.ts";
-import type { RuntimeDigest } from "../protocol/foundation.ts";
+import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
 
 export interface PermissionUpdateRecord {
@@ -53,8 +53,10 @@ export function createPermissionUpdateJournal(store: SessionStore, fence: OwnerF
 		append: (record) => {
 			if (!isPermissionUpdateRecord(record)) throw new Error("permission update record is invalid");
 			const tail = store.replaySessionEvents(fence.sessionId).at(-1);
+			// updateId 仅在会话内幂等；全库唯一的事件 ID 必须绑定 Session，摘要避免超出 ID 长度上限。
+			const eventKey = runtimeDigest({ sessionId: fence.sessionId, updateId: record.updateId }).digest;
 			store.appendEvent(fence, {
-				eventId: createRuntimeId("event", `permission-${record.updateId}-${record.stage}`),
+				eventId: createRuntimeId("event", `permission-${eventKey}-${record.stage}`),
 				ownerGeneration: fence.generation,
 				eventType: "session.security.update",
 				payloadJson: JSON.stringify(record),

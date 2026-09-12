@@ -130,7 +130,37 @@ describe("PermissionsWorkflow", () => {
 
 		await workflow.open();
 		overlay?.handleInput?.("enter");
-		await vi.waitFor(() => expect(notices).toContain("Permissions changed elsewhere. Reopen /permissions and try again."));
+		await vi.waitFor(() => expect(notices).toContain("Permissions changed elsewhere. Reopen /permissions and try again. (revision_conflict)"));
+	});
+
+	it.each([
+		{ status: "recovery_required", code: "permission_update_requires_recovery", advice: "/recovery assess" },
+		{ status: "recovery_required", code: "permissions_saved_not_applied", advice: "were saved" },
+		{ status: "denied", code: "policy_denied", advice: "could not be applied" },
+	] as const)("preserves $code and the appropriate recovery advice", async ({ status, code, advice }) => {
+		let overlay: Component | undefined;
+		const notices: string[] = [];
+		const onApplied = vi.fn();
+		const workflow = new PermissionsWorkflow({
+			controller: {
+				supports: () => true,
+				querySessionDomain: async (operation) => ({ ok: true, status: "ok", operation, domainRevision: 1, value: {
+					profile: "workspace-write", securityRevision: 1, document: {}, sourceDigest: runtimeDigest(null), editable: true,
+				} }),
+				commandSessionDomain: async () => ({ ok: false, status, code, operation: "session.security.apply" }),
+			},
+			theme: loadTheme("dark"), showOverlay: (view) => { overlay = view; },
+			closeOverlay: () => { overlay = undefined; }, showNotice: (message) => { notices.push(message); },
+			requestRender: () => undefined, nextRequest: () => ({ correlationId: "apply", effectId: "apply" }), onApplied,
+		});
+		await workflow.open();
+		overlay?.handleInput?.("down"); overlay?.handleInput?.("down"); overlay?.handleInput?.("enter");
+		overlay?.handleInput?.("enter");
+		await vi.waitFor(() => expect(notices).toHaveLength(1));
+		expect(notices[0]).toContain(code);
+		expect(notices[0]).toContain(advice);
+		if (status === "recovery_required") expect(notices[0]).toContain("Reconnect");
+		expect(onApplied).not.toHaveBeenCalled();
 	});
 });
 
