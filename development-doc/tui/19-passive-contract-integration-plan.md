@@ -572,6 +572,13 @@ tests/tui/
   （/model、/thinking workflow ready、/prompt unavailable）全绿；
 - 门禁：`npm run check` + `npm test`（217 files/1173 tests + bun 26）+ `npm run build` 全绿。
 
+### 11.4 2026-09-12：Session catalog 的 standard@2 兼容修复
+
+- 新会话使用 `standard@2`，但 Session adapter 的版本校验曾只允许 `minimal@2`，导致 `/resume` 整表报 `session.catalog.list returned a malformed result`；现同步接纳 `standard@2`，覆盖 catalog 和 create/resume/fork 返回值，仍拒绝未知 ID、未知版本和 `plan@2`。
+- 回归用例从实际 builtin profile 列表生成，修复前仅 `standard@2` 失败；修复后 adapter、workflow、domain router 共 63 项 focused tests 通过；`npm run check`、`npm test`、`npm run build` 均通过。
+- 构建后标准 PATH CLI 在隔离 `RUNLEDGER_DIR` / tmux 中完成 `/new`、`/resume` 列表选择及粘贴 `/resume <id>`，两种路径均恢复目标 Session 并继续一轮本地 fixture 对话，退出码 0，无残留进程。证据：`/tmp/runledger-resume-smoke-hoq9izob/result.json`；不代表真实 provider 或人工视觉验收。
+- 自动逐键快速注入完整 `/resume <id>` 曾触发 `request capacity exceeded`；本次不扩展到 editor activity 限流专项，逐键注入方式仍未通过，整段粘贴恢复已通过。
+
 ## 12. B6：Queue、Approval、Security、Workspace、Shutdown 与 Update 治理操作
 
 ### 12.1 RED

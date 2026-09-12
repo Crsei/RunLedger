@@ -230,5 +230,5 @@ function integerValue(value: unknown): number | undefined {
 }
 
 function harnessProfileVersionValue(id: unknown, value: unknown): 1 | 2 | undefined {
-	return value === 1 ? 1 : id === "minimal" && value === 2 ? 2 : undefined;
+	return value === 1 ? 1 : (id === "minimal" || id === "standard") && value === 2 ? 2 : undefined;
 }

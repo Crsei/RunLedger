@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createSessionDomainPort, createSessionDomainPortFromController } from "../../../src/tui/adapters/session-domain.ts";
 
+import { builtinHarnessProfiles } from "../../../src/runtime/harness-profiles/builtins.ts";
+
 const ref = { generation: 7, effectId: "effect-session", correlationId: "corr-session", signal: new AbortController().signal, authorityGeneration: 11 };
 
 describe("S2 session domain adapter", () => {
@@ -74,6 +76,44 @@ describe("S2 session domain adapter", () => {
 				}],
 			},
 		});
+	});
+
+	it.each([
+		...builtinHarnessProfiles().map(({ id, version }) => ({ id, version, accepted: true })),
+		{ id: "plan", version: 2, accepted: false },
+		{ id: "standard", version: 3, accepted: false },
+		{ id: "unknown", version: 1, accepted: false },
+	])("validates catalog and transitions for $id@$version (accepted: $accepted)", async ({ id, version, accepted }) => {
+		const profile = { harnessProfileId: id, harnessProfileVersion: version };
+		const port = createSessionDomainPort({
+			supports: () => true,
+			query: async (operation) => ({
+				ok: true, status: "ok", operation, domainRevision: 2,
+				value: { items: [{
+					sessionId: "session-target", workspaceId: "workspace-a", repositoryId: "repository-a",
+					status: "paused", createdAtMs: 10, updatedAtMs: 20, headSequence: 4, driverRevision: 3,
+					current: false, ...profile,
+				}] },
+			}),
+			command: async (operation) => ({
+				ok: true, status: "ok", operation, domainRevision: 2,
+				value: { targetSessionId: "session-target", ...profile },
+			}),
+		});
+		const results = [
+			await port.list(ref),
+			await port.create({ ...ref, expectedRevision: 1 }),
+			await port.resume({ ...ref, expectedRevision: 1, targetSessionId: "session-target" }),
+			await port.fork({ ...ref, expectedRevision: 1, sourceSessionId: "session-target", expectedSourceHeadSequence: 4 }),
+		];
+		for (const result of results) {
+			if (!accepted) {
+				expect(result).toMatchObject({ ok: false, error: { code: "session_domain_malformed" } });
+			} else {
+				expect(result).toMatchObject({ ok: true, value: "items" in (result.ok ? result.value : {})
+					? { items: [profile] } : profile });
+			}
+		}
 	});
 
 	it("maps create/resume/fork to typed mutation envelopes and recovery_required to uncertain", async () => {
