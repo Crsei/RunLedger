@@ -42,8 +42,14 @@ Thumbs.db
 
 # Local session files
 .pi/
+.omp/
 .zcode/
 .runledger/
+
+# LoopX state and evidence
+.loopx/
+.codex/goals/
+.local/
 
 
 asset/
