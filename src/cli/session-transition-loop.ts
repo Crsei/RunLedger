@@ -15,6 +15,7 @@ export interface SessionTransitionLoopOptions<TView extends SessionTransitionVie
 	readonly open: (sessionId: string) => Promise<TView>;
 	readonly run: (view: TView) => Promise<InteractiveExitIntent>;
 	readonly detach: (view: TView) => Promise<void>;
+	readonly onQuit?: (view: TView) => void;
 	readonly onSwitchFailure?: (failure: SessionSwitchFailure) => void;
 }
 
@@ -33,7 +34,10 @@ export async function runSessionTransitionLoop<TView extends SessionTransitionVi
 		}
 		const fromSessionId = current.sessionId;
 		await options.detach(current);
-		if (intent.kind === "quit") return;
+		if (intent.kind === "quit") {
+			options.onQuit?.(current);
+			return;
+		}
 		try {
 			current = await options.open(intent.target.sessionId);
 		} catch (error) {

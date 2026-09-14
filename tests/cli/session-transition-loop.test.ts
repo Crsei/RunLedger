@@ -18,6 +18,7 @@ describe("S2 CLI session transition loop", () => {
 				throw new Error("renderer failed");
 			},
 			detach: async (view) => { order.push(`detach:${view.sessionId}`); },
+			onQuit: (view) => { order.push(`quit:${view.sessionId}`); },
 		})).rejects.toThrow("renderer failed");
 		expect(order).toEqual(["run:session-a", "detach:session-a"]);
 	});
@@ -39,6 +40,7 @@ describe("S2 CLI session transition loop", () => {
 				return view.runIntent;
 			},
 			detach: async (view) => { order.push(`detach:${view.sessionId}`); },
+			onQuit: (view) => { order.push(`quit:${view.sessionId}`); },
 		});
 		expect(order).toEqual([
 			"open:session-a",
@@ -47,6 +49,7 @@ describe("S2 CLI session transition loop", () => {
 			"open:session-b",
 			"run:session-b",
 			"detach:session-b",
+			"quit:session-b",
 		]);
 	});
 

@@ -57,6 +57,8 @@ import type { SecurityConfigDocument } from "../security/types.ts";
 import type { SessionSecurityConfigSource } from "../security/session-composition.ts";
 import { SESSION_PROTOCOL_VERSION } from "../runtime/session-server/protocol.ts";
 import { runSessionTransitionLoop } from "./session-transition-loop.ts";
+import { formatExitSummary } from "./exit-summary.ts";
+import type { UsageSnapshot } from "../runtime/usage/index.ts";
 import { createCliTuiPreferences } from "./tui-preferences.ts";
 import { createCliPromptDumpPort } from "./prompt-dump-artifacts.ts";
 import { composeCliTraceRecorderFactory } from "./trace-config.ts";
@@ -342,6 +344,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   let firstView: CliSessionView | undefined = initialView;
+  let exitUsage: UsageSnapshot | undefined;
   let showWelcomeOnNextView = sessionOpenMode(args) === "create";
   try {
     await runSessionTransitionLoop<CliSessionView>({
@@ -355,6 +358,15 @@ export async function main(argv: readonly string[]): Promise<void> {
         return openView(targetSessionId);
       },
       run: runInteractiveView,
+	  onQuit: (view) => {
+		if (exitUsage === undefined) return;
+		process.stdout.write(formatExitSummary({
+			sessionId: view.sessionId,
+			resumable: view.embedded.store.getSession(view.sessionId) !== undefined,
+			usage: exitUsage,
+			...(process.env.RUNLEDGER_DIR === undefined ? {} : { runledgerDir: layout.home }),
+		}));
+	  },
       detach: async (view) => {
         view.controller.dispose();
         await view.embedded.handle.close().catch(() => undefined);
@@ -425,6 +437,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     if (process.stdin.readableEnded) queueMicrotask(onStdinEnd);
     try {
       const intent = await activeInteractive.run();
+      if (intent.kind === "quit") exitUsage = activeInteractive.getUsageSnapshot();
       if (intent.kind === "switch") retainedTransitionSources.add(view.sessionId);
       if (intent.kind === "switch" && intent.action === "new") {
         const selection = view.controller.currentSelection;

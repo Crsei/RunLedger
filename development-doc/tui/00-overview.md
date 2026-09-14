@@ -13,6 +13,8 @@
 
 ---
 
+正常退出 TUI 后，CLI 在终端主屏幕打印退出摘要：会话恢复命令 `runledger --session-id <id>`、累计 input/output/total、已报告的缓存与 reasoning 用量。沿用 runtime usage 口径，total 不含 cache-read，reasoning 已包含在 output 中；未知值显示 `unknown`，不伪装为零。显式 `RUNLEDGER_DIR` 会保留在恢复命令中。空会话若被既有回收流程删除，则提示未保存，不提供失效恢复命令。退出仍先中断当前交互轮次；摘要不承诺后台继续执行。切换会话和初始化失败不输出正常退出摘要。
+
 ## 1. 目标与非目标
 
 ### 1.1 目标

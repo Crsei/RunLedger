@@ -22,6 +22,18 @@ function reportedUsage(input: number, output: number, cacheRead: number, cacheWr
 }
 
 describe("usage reducer and display contract", () => {
+	it("aggregates reported reasoning without changing totals and hides incomplete breakdowns", () => {
+		let state = applyUsageObservation(createUsageAccumulator(), {
+			id: "a", usage: { ...reportedUsage(100, 20, 0, 0, 0), reasoning: 6 },
+		});
+		state = applyUsageObservation(state, { id: "b", usage: { ...reportedUsage(50, 10, 0, 0, 0), reasoning: 0 } });
+		const snapshot = usageSnapshot(state, undefined, "idle");
+		expect(snapshot.cumulative.reasoning).toMatchObject({ state: "exact", value: 6 });
+		expect(snapshot.cumulative.tokenTotal).toMatchObject({ state: "exact", value: 180 });
+		state = applyUsageObservation(state, { id: "c", usage: reportedUsage(1, 1, 0, 0, 0) });
+		expect(usageSnapshot(state, undefined, "idle").cumulative.reasoning?.state).toBe("unknown");
+	});
+
 	it("aggregates fields independently, excludes cacheRead from token total, and replaces duplicate request ids", () => {
 		let state = createUsageAccumulator();
 		state = applyUsageObservation(state, {

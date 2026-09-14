@@ -33,6 +33,7 @@ export interface UsageSnapshot {
 		readonly cacheWrite: UsageQuantity;
 		readonly tokenTotal: UsageQuantity;
 		readonly cost: UsageQuantity;
+		readonly reasoning?: UsageQuantity;
 	};
 	readonly latestRequest?: {
 		readonly input: UsageQuantity;
@@ -134,6 +135,11 @@ export function usageSnapshot(
 	const cacheRead = sumField(observations, "cacheRead");
 	const cacheWrite = sumField(observations, "cacheWrite");
 	const tokenTotal = addQuantities([input, output, cacheWrite], "token-total");
+	// reasoning 是 output 的子集；缺少任一请求的明细时不展示部分累计值。
+	const reasoning = addQuantities(observations.map((observation) => {
+		const value = observation.usage?.reasoning;
+		return isSafeNumber(value) ? exact(value, observation.source ?? "provider") : unknown("reasoning-not-reported");
+	}), "reasoning");
 	const cost = sumField(observations, "cost");
 	const latest = state.latestRequestId === undefined ? undefined : state.observations[state.latestRequestId];
 	const latestRequest = latest === undefined ? undefined : {
@@ -151,7 +157,7 @@ export function usageSnapshot(
 		percent: contextPercent(context.usedTokens, context.contextWindow),
 	};
 	return {
-		cumulative: { input, output, cacheRead, cacheWrite, tokenTotal, cost },
+		cumulative: { input, output, cacheRead, cacheWrite, tokenTotal, cost, reasoning },
 		...(latestRequest === undefined ? {} : { latestRequest }),
 		...(contextSnapshot === undefined ? {} : { context: contextSnapshot }),
 		status,
