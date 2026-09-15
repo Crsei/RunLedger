@@ -23,12 +23,9 @@ describe("CLI exit summary", () => {
 		expect(text).not.toContain("work continues");
 	});
 
-	it("does not advertise a removed empty session or invent zero usage", () => {
+	it("prints nothing when the session was empty and removed", () => {
 		const text = formatExitSummary({ sessionId: "empty", resumable: false, usage: usageSnapshot(createUsageAccumulator(), undefined, "idle") });
-		expect(text).toContain("this empty session was removed");
-		expect(text).not.toContain("Reconnect:");
-		expect(text).toContain("total=unknown input=unknown output=unknown");
-		expect(text).not.toContain("reasoning");
+		expect(text).toBe("");
 	});
 
 	it("preserves an explicit home and safely quotes shell metacharacters", () => {

@@ -7,15 +7,19 @@ export interface ExitSummary {
 	readonly runledgerDir?: string;
 }
 
-/** 在备用屏幕销毁并完成 detach 后输出，保留到终端正常滚动历史。 */
+/**
+ * 在备用屏幕销毁并完成 detach 后输出，保留到终端正常滚动历史。
+ * 空会话(未写入任何用户消息，退出时已被回收)不输出任何内容，返回空串。
+ */
 export function formatExitSummary(summary: ExitSummary): string {
-	const lines = ["", "Disconnected from this session. The interactive turn is no longer running.", ""];
-	if (summary.resumable) {
-		const prefix = summary.runledgerDir === undefined ? "" : `RUNLEDGER_DIR=${shellQuote(summary.runledgerDir)} `;
-		lines.push(`Reconnect: ${prefix}runledger --session-id ${shellQuote(summary.sessionId)}`);
-	} else {
-		lines.push("No conversation was saved; this empty session was removed.");
-	}
+	if (!summary.resumable) return "";
+	const prefix = summary.runledgerDir === undefined ? "" : `RUNLEDGER_DIR=${shellQuote(summary.runledgerDir)} `;
+	const lines = [
+		"",
+		"Disconnected from this session. The interactive turn is no longer running.",
+		"",
+		`Reconnect: ${prefix}runledger --session-id ${shellQuote(summary.sessionId)}`,
+	];
 	const usage = summary.usage.cumulative;
 	let tokens = `Token usage so far: total=${formatQuantity(usage.tokenTotal)} input=${formatQuantity(usage.input)}`;
 	if (quantityValue(usage.cacheRead) !== undefined) tokens += ` (+ ${formatQuantity(usage.cacheRead)} cached)`;

@@ -360,12 +360,13 @@ export async function main(argv: readonly string[]): Promise<void> {
       run: runInteractiveView,
 	  onQuit: (view) => {
 		if (exitUsage === undefined) return;
-		process.stdout.write(formatExitSummary({
+		const summary = formatExitSummary({
 			sessionId: view.sessionId,
 			resumable: view.embedded.store.getSession(view.sessionId) !== undefined,
 			usage: exitUsage,
 			...(process.env.RUNLEDGER_DIR === undefined ? {} : { runledgerDir: layout.home }),
-		}));
+		});
+		if (summary !== "") process.stdout.write(summary);
 	  },
       detach: async (view) => {
         view.controller.dispose();
