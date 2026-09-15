@@ -74,6 +74,7 @@ export class CustomEditor extends Editor {
       const text = this.getText();
       if (text.trim().length > 0) {
         this.setText("");
+        this.addToHistory(text);
         this.onFollowUp(text);
       }
       return;

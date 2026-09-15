@@ -119,11 +119,12 @@ RunLedger 现状：`handleSubmit`（`src/tui/interactive-mode.ts:1156`）里有�
 | 动态命令 | service-tier 注入 `/model` 后 | 无 | 无动态命令点 |
 | 门控 | 特性位 + during_task + side 检查 | `rejectConfigWhileRunning` 部分近似 during_task，但散落 | 无统一门控模型 |
 | 二级展示 | `SelectionViewParams` 通用组件 + 各 popup | 各 workflow 手写 `SearchableSelectorModal` / `SelectorModal`（样式可），无通用 `SelectionItem.actions` | 无通用确认/动作视图 |
-| 历史 recall | stage 后 Up recall | `Editor.addToHistory` 空实现 | 可选 |
+| 历史 recall | stage 后 Up recall | `Editor.addToHistory` 记录提交/follow-up/补全文本，`↑`/`↓` 在输入区回放（见 §5 后注） | 无跨会话持久历史与 Ctrl+R 搜索 |
 
 `Editor` primitive（`src/tui/primitives.ts:170`）当前能力：`text` + `onChange`/`onSubmit`
-回调、无真实光标（`getCursor()` 是计算值，`setText` 整串覆盖、`handleInput` 只处理
-enter/backspace/ctrl+u/可打印字符）。OpenTUI 的 `EditorView`（`@opentui/core`）具备
+回调、真实光标（`getCursor()`/`setCursor` 以 code point 计、`setText` 整串覆盖、`handleInput`
+处理 enter/backspace/ctrl+u/`↑`/`↓` 历史回放/左右与 home/end/可打印字符）。OpenTUI 的
+`EditorView`（`@opentui/core`）具备
 真实光标（`getCursor` row/col、`setCursorByOffset`），但本仓库 `Editor` 是自研 text model，
 **适配以自研 `Editor` 为边界**，不引入 OpenTUI EditorView 状态（renderer 投影是
 17/18 计划的地盘）。
@@ -268,7 +269,7 @@ enter/backspace/ctrl+u/可打印字符）。OpenTUI 的 `EditorView`（`@opentui
 - **OpenTUI EditorView 光标复用**：17/18 计划边界内，本计划不碰 renderer 投影；
 - **fuzzy 匹配（非前缀）**：codex 有 `fuzzy_match`，RunLedger 先用 exact→prefix，
   后续可加；`gooooal` 特例不做；
-- **history recall（Up）**：`Editor.addToHistory` 接通列为 P6 可选；
+- **history recall（Up）**：`Editor.addToHistory` 已接通（2026-09-16），提交、Alt+Enter follow-up 与 slash 补全都写入会话内历史，`↑` 取更早、`↓` 取更新，越过最新一条恢复进入回放前的草稿；仍未做的是 codex 的跨会话持久历史、Ctrl+R 增量搜索与 `should_handle_navigation` 的行边界守卫（本仓 `Editor` 无多行上下光标，`↑`/`↓` 无其它占用，故回放始终可用）；
 - **service-tier 动态命令**：模型能力落地后接，本计划只留注入点；
 - **`!` shell 模式**：codex `queued_input_action` 有 `RunShell`，RunLedger 无 bash
   模式，本期不做。
@@ -344,7 +345,7 @@ enter/backspace/ctrl+u/可打印字符）。OpenTUI 的 `EditorView`（`@opentui
 - RunLedger 无 `/archive` `/delete`;P5 以 `/commands` 作为当前生产 SelectionView 消费方,
   后续确认类命令可复用同一组件。
 - `availableInSideConversation` 位未加(RunLedger 无 side conversation 概念)。
-- `Editor.addToHistory`(Up recall)按 §5 标 deferred。
+- `Editor.addToHistory`(Up recall) 已接通；本轮只落地会话内回放，跨会话历史与 Ctrl+R 搜索仍未做，边界见 §5。
 
 ### 门禁证据(2026-08-10)
 

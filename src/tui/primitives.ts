@@ -16,7 +16,7 @@ import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock, StatusIndicatorView } from "./presentation.ts";
 import type { TuiAction } from "./application/action.ts";
 import { appInputForKeypress, normalizeAppInput } from "./input/normalize-action.ts";
-import { EDITOR_LEFT_PAD, EDITOR_RIGHT_PAD, DEFAULT_EDITOR_PLACEHOLDER, editorHeight, wrapEditorText } from "./editor-height.ts";
+import { EDITOR_LEFT_PAD, EDITOR_RIGHT_PAD, DEFAULT_EDITOR_PLACEHOLDER, EDITOR_HISTORY_LIMIT, editorHeight, wrapEditorText } from "./editor-height.ts";
 import type { EditorAppearance } from "./opentui/component-runtime.ts";
 import type { SyntaxThemeController } from "./highlight/theme-controller.ts";
 import { FOOTER_INDENT } from "./footer/layout.ts";
@@ -200,6 +200,12 @@ export class Editor implements Component, Focusable {
   private text = "";
   /** 真实光标位置,以 code point 计;getCursor() 由此投影为 line/col。 */
   private cursorCodePoints = 0;
+  /** 输入历史(最近一次提交在末尾);Up/Down 在输入区回放。 */
+  private readonly history: string[] = [];
+  /** 历史游标;undefined 表示当前编辑的是草稿而非历史条目。 */
+  private historyIndex: number | undefined;
+  /** 进入历史回放前的草稿,Down 越过最新一条时原样恢复。 */
+  private historyDraft = "";
   protected readonly tui: TUI;
   private readonly theme: EditorTheme;
   private readonly options: EditorOptions;
@@ -240,6 +246,7 @@ export class Editor implements Component, Focusable {
   setText(text: string): void {
     this.text = text.replace(/\r\n?|\t/gu, (value) => value === "\t" ? "    " : "\n");
     this.cursorCodePoints = Array.from(this.text).length;
+    this.resetHistoryCursor();
     this.onChange?.(this.text);
     this.tui.requestRender();
   }
@@ -249,7 +256,16 @@ export class Editor implements Component, Focusable {
   }
   /** 在光标位置插入文本,光标移至插入内容之后(粘贴/输入路径共用)。 */
   insertTextAtCursor(text: string): void { this.replaceRangeAtCursor(text); }
-  addToHistory(_text: string): void {}
+  /**
+   * 记录一条输入历史;提交、follow-up 与 slash 补全共用同一入口。
+   * 连续重复只保留一条,超出上限时丢弃最旧条目。
+   */
+  addToHistory(text: string): void {
+    this.resetHistoryCursor();
+    if (text.trim().length === 0 || this.history[this.history.length - 1] === text) return;
+    this.history.push(text);
+    if (this.history.length > EDITOR_HISTORY_LIMIT) this.history.shift();
+  }
   /** 帧驱动高度;OpenTUI 路径由 TUI.renderFrame 读取并传给 runtime。 */
   desiredHeight(width: number): number {
     return editorHeight(this.text, width);
@@ -277,12 +293,54 @@ export class Editor implements Component, Focusable {
     this.onChange?.(this.text);
     this.tui.requestRender();
   }
+
+  private resetHistoryCursor(): void {
+    this.historyIndex = undefined;
+    this.historyDraft = "";
+  }
+
+  /** 回放历史条目:整段替换文本,光标置于末尾(与 setText 一致)。 */
+  private applyHistoryText(text: string): void {
+    this.text = text;
+    this.cursorCodePoints = Array.from(text).length;
+    this.onChange?.(this.text);
+    this.tui.requestRender();
+  }
+
+  /**
+   * Up/Down 回放历史:Up 依次向前取更早的条目,Down 向后;
+   * 首次进入回放时保存当前草稿,Down 越过最新一条即原样恢复。
+   */
+  private navigateHistory(offset: -1 | 1): void {
+    if (offset === -1) {
+      if (this.history.length === 0) return;
+      if (this.historyIndex === undefined) {
+        this.historyDraft = this.text;
+        this.historyIndex = this.history.length - 1;
+      } else {
+        if (this.historyIndex === 0) return;
+        this.historyIndex -= 1;
+      }
+    } else {
+      if (this.historyIndex === undefined) return;
+      if (this.historyIndex + 1 >= this.history.length) {
+        const draft = this.historyDraft;
+        this.resetHistoryCursor();
+        this.applyHistoryText(draft);
+        return;
+      }
+      this.historyIndex += 1;
+    }
+    this.applyHistoryText(this.history[this.historyIndex] ?? "");
+  }
+
   handleInput(data: string): void {
     if (matchesKey(data, "enter")) {
       if (!this.disableSubmit && this.text.trim().length > 0) {
         const value = this.text;
         this.text = "";
         this.cursorCodePoints = 0;
+        this.addToHistory(value);
         this.onChange?.(this.text);
         this.onSubmit?.(value);
       }
@@ -316,6 +374,8 @@ export class Editor implements Component, Focusable {
       this.setCursor(nextLine === -1 ? points.length : nextLine);
       return;
     }
+    if (matchesKey(data, "up")) { this.navigateHistory(-1); return; }
+    if (matchesKey(data, "down")) { this.navigateHistory(1); return; }
     if (isNavigationKey(data)) { this.tui.requestRender(); return; }
     if (!/[\u0000-\u001f\u007f]/u.test(data)) this.replaceRangeAtCursor(data);
   }
@@ -763,6 +823,8 @@ export interface KeybindingConflict { key: KeyId; keybindings: string[] }
 export const TUI_KEYBINDINGS: KeybindingDefinitions = {
   "tui.input.submit": { defaultKeys: "enter", description: "Send the current draft; queues as follow-up while the turn is running" },
   "tui.input.followUp": { defaultKeys: "alt+enter", description: "Queue a follow-up without interrupting" },
+  "tui.input.historyPrev": { defaultKeys: "up", description: "Recall the previous submitted input in the composer" },
+  "tui.input.historyNext": { defaultKeys: "down", description: "Move forward in composer input history; restores the draft past the newest entry" },
   "tui.input.interrupt": { defaultKeys: "ctrl+c", description: "Interrupt the active turn; clear the draft; quit when idle" },
   "tui.input.quit": { defaultKeys: "ctrl+d", description: "Quit when idle" },
   "tui.thinking.toggle": { defaultKeys: "alt+t", description: "Toggle thinking-block visibility (display only)" },

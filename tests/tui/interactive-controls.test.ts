@@ -8,6 +8,7 @@ import { CustomEditor } from "../../src/tui/components/custom-editor.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import { TUI, type Terminal } from "../../src/tui/index.ts";
 import { makeEditorTheme, makeSelectListTheme } from "../../src/tui/theme/factories.ts";
+import { EDITOR_HISTORY_LIMIT } from "../../src/tui/editor-height.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
@@ -221,6 +222,88 @@ describe("TUI input components", () => {
     expect(editor.getText()).toBe("bcXd");
     editor.handleInput("end");
     expect(editor.getCursor()).toEqual({ line: 0, col: 4 });
+  });
+
+  it("Up/Down 回放已提交输入,越过最新一条恢复原草稿", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal, false);
+    const theme = loadTheme("dark");
+    const editor = new CustomEditor(tui, makeEditorTheme(theme, makeSelectListTheme(theme)), { theme, selectListTheme: makeSelectListTheme(theme) });
+
+    editor.setText("first prompt");
+    editor.handleInput("\r");
+    editor.setText("second prompt");
+    editor.handleInput("\r");
+    // 空提交不入历史
+    editor.handleInput("\r");
+
+    editor.setText("未发送草稿");
+    editor.handleInput("up");
+    expect(editor.getText()).toBe("second prompt");
+    editor.handleInput("\x1b[A");
+    expect(editor.getText()).toBe("first prompt");
+    editor.handleInput("up");
+    expect(editor.getText()).toBe("first prompt");
+    editor.handleInput("down");
+    expect(editor.getText()).toBe("second prompt");
+    editor.handleInput("\x1b[B");
+    expect(editor.getText()).toBe("未发送草稿");
+    expect(editor.getCursor()).toEqual({ line: 0, col: 5 });
+    editor.handleInput("down");
+    expect(editor.getText()).toBe("未发送草稿");
+  });
+
+  it("多行草稿按 Down 可原样恢复,连续重复提交只记一条", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal, false);
+    const theme = loadTheme("dark");
+    const editor = new CustomEditor(tui, makeEditorTheme(theme, makeSelectListTheme(theme)), { theme, selectListTheme: makeSelectListTheme(theme) });
+
+    editor.setText("same");
+    editor.handleInput("\r");
+    editor.setText("same");
+    editor.handleInput("\r");
+    editor.setText("a\nb");
+    editor.handleInput("up");
+    expect(editor.getText()).toBe("same");
+    editor.handleInput("up");
+    expect(editor.getText()).toBe("same");
+    editor.handleInput("down");
+    expect(editor.getText()).toBe("a\nb");
+  });
+
+  it("Alt+Enter 提交的 follow-up 进入历史回放", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal, false);
+    const theme = loadTheme("dark");
+    const editor = new CustomEditor(tui, makeEditorTheme(theme, makeSelectListTheme(theme)), {
+      theme,
+      selectListTheme: makeSelectListTheme(theme),
+      onFollowUp: () => {},
+    });
+
+    editor.setText("排队的问题");
+    editor.handleInput("\x1b[27;3;13~");
+    expect(editor.getText()).toBe("");
+    editor.handleInput("up");
+    expect(editor.getText()).toBe("排队的问题");
+  });
+
+  it("历史条数有上限,最旧条目被丢弃", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal, false);
+    const theme = loadTheme("dark");
+    const editor = new CustomEditor(tui, makeEditorTheme(theme, makeSelectListTheme(theme)), { theme, selectListTheme: makeSelectListTheme(theme) });
+
+    for (let index = 0; index <= EDITOR_HISTORY_LIMIT; index += 1) {
+      editor.setText(`prompt-${index}`);
+      editor.handleInput("\r");
+    }
+
+    editor.handleInput("up");
+    expect(editor.getText()).toBe(`prompt-${EDITOR_HISTORY_LIMIT}`);
+    for (let index = 0; index < EDITOR_HISTORY_LIMIT; index += 1) editor.handleInput("up");
+    expect(editor.getText()).toBe("prompt-1");
   });
 });
 

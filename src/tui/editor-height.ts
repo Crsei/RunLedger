@@ -27,6 +27,9 @@ export const EDITOR_MIN_HEIGHT = EDITOR_TOP_PAD + 1 + EDITOR_BOTTOM_PAD;
 /** 空输入占位符;OpenTUI 侧由 TextareaRenderable.placeholder 承接同一文本。 */
 export const DEFAULT_EDITOR_PLACEHOLDER = "Message RunLedger…";
 
+/** 输入区回放历史的最大条数;超出的最旧条目被丢弃,避免长会话无界增长。 */
+export const EDITOR_HISTORY_LIMIT = 200;
+
 const WORD_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "word" });
 
 /**

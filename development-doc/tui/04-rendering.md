@@ -8,6 +8,8 @@
 
 2026-09-06：Linux 原生渲染测试与构建后 PATH `runledger` 的隔离 SQLite 会话回放验证了 80/143 列间距、整宽横线、空 stderr 和 Ctrl+D 退出码 0。该证据不替代人工视觉、中文 IME 或跨平台验收。
 
+2026-09-16：重新构建 `dist` 后以隔离 `RUNLEDGER_DIR` + loopback 合成 provider 的 100×30 / 143×42 tmux 帧复核：用户消息与 agent 正文之间、`─ stop · Worked for …` 运行边界行与其上下的正文之间均保留一行空白，横线宽度等于正文列数。输入区的 `↑`/`↓` 历史回放属于编辑器模型（`src/tui/primitives.ts`），见 Plan 20 §5，不在本节的间距规则内。
+
 以下保留早期 pi-tui 设计。
 
 > 本文档描述 RunLedger TUI 复用 pi-tui 时的渲染层细节、Overlay 用法、滚动策略、ANSI 同步、节流参数,以及 RunLedger 必须保留 / 必须明确放弃的 pi 行为。
