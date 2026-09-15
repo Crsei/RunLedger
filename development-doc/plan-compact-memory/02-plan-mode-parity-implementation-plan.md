@@ -168,7 +168,7 @@ P7 门禁实测(2026-09-16,本机 Linux):
 **未通过项与归因**(不扩大本次修改范围,证据已核实):
 
 1. `check:current-format` 报 `development-doc/bench/{01,02}-*` 含内部代际标记。这两个文件由并行提交 `6b7f14e`(同日 06:57)引入,`grep -E '^(src|tests)/'` 无任何命中,本次改动路径全部通过。
-2. `tests/runtime/session-runtime/extensions-domain.test.ts` 的 Skill 快照用例失败:断言 `descriptors: []`,而真实 OS home 下存在 `~/.claude/skills/*` 可被发现。在 pristine `e332a97` 的独立 worktree 中复现同一失败;加 `HOME=$(mktemp -d)` 后 17 用例全绿。属测试对开发者 home 的隔离缺口,与本专项无关。
+2. `tests/runtime/session-runtime/extensions-domain.test.ts` 的 Skill 快照用例失败:断言 `descriptors: []`,而真实 OS home 下存在 `~/.claude/skills/*` 可被发现。在 pristine `e332a97` 的独立 worktree 中复现同一失败(1 failed / 16 passed);加 `HOME=$(mktemp -d)` 后本工作树上 17 用例全绿。属测试对开发者 home 的隔离缺口,与本专项无关。
 3. 人工键盘/中文 IME/鼠标、真实外部 provider、macOS/Windows runner 保持 pending,不因自动化通过而关闭。
 
 与计划的偏差(经代码核实后修正,同时更新 §3 与 §4):
