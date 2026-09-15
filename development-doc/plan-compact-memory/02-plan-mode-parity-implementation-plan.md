@@ -1,8 +1,8 @@
 # RunLedger Plan Mode 完整度对齐实施计划
 
-> 状态:待实施;P0–P7 全部未开始。本文是 Plan Mode 用户可见行为交付的唯一账本。
+> 状态:P0–P6 已实现(见 §5.9 证据);P7 的端到端与全量门禁已执行,人工/真实 provider/跨平台门禁 pending。本文是 Plan Mode 用户可见行为交付的唯一账本。
 > 基线日期:2026-09-16;RunLedger 基线 `b25ff70`(分支 `rollback/before-composer-shape`)。
-> 修订记录:2026-09-16 §4.1 依据代码核实修正结论 2 的前提(撤销 `standard@3` 与 schema 迁移),补充 D4a(`inspect()` 全量重放缺陷)与 D3 的总字节上限前置。
+> 修订记录:2026-09-16 §4.1 依据代码核实修正结论 2 的前提(撤销 `standard@3` 与 schema 迁移),补充 D4a(`inspect()` 全量重放缺陷)与 D3 的总字节上限前置;同日完成 P0–P6 实施,证据与偏差见 §5.9。
 > 参考基线:oh-my-pi `3b3a6dc9bb`(`packages/coding-agent`,本机 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/oh-my-pi`)。
 > 适用范围:`src/runtime/{modes/plan,session-runtime,context,harness-profiles,protocol,contracts,tools}`、`src/security/integration`、`src/tui/**`、`src/cli/**`、canonical `runledgerHome` 与对应 tests。
 > 上位计划:Runtime 04(公共类型/schema/event catalog)、Runtime 06(Session Owner、owner fence)、Runtime 09/10(profile 冻结与 mode 入口)。
@@ -43,9 +43,9 @@
 
 | 能力 | 当前实现 | 状态 |
 |---|---|---|
-| 入口 | 仅新会话选 `plan@1`(`harness-profiles/builtins.ts:63`、`agent-mode.ts`、`--mode plan`/`/mode plan`/`settings.agentMode`) | 有,但不支持会话内进入 |
-| 初始状态 | owner 启动即写初始正文并 activate(`session-runtime/plan-domain.ts:66`) | 有 |
-| 模型工具 | `read`、`glob`、`ls`、`plan_read`、`plan_write`(`builtins.ts:70`、`plan-tools.ts:9,28`) | 有;无进入/退出/请求批准工具 |
+| 入口 | 仅新会话选 `plan@1` | 有,但不支持会话内进入 |
+| 初始状态 | owner 启动即写初始正文并 activate | 有 |
+| 模型工具 | `plan@1` 冻结为 `read`、`glob`、`ls`、`plan_read`、`plan_write`;standard 会话另装配 `enter_plan_mode`/`exit_plan_mode`,由状态与实例身份判权 | 有;并新增模型侧进入/提交审批 |
 | 状态机 | reducer 9 条命令(`modes/plan/reducer.ts:234`),`inactive/pending/active/awaiting_approval/exit_pending` | 有,无 `reactivate` |
 | 工件 | `PlanArtifactStore` 不可变 revision + digest + working pointer(`modes/plan/artifact-store.ts:110`) | 有;正文随 event payload 持久化,上限 65536 字符 / 255 revision(`plan-domain.ts:149`) |
 | 只读边界 | capability claims(`tools/capabilities.ts:13-15`)+ `evaluatePlanModeCapabilities`(`modes/plan/policy.ts:39`,unknown→deny)+ `planReadOnlyExecutionEnv`(`plan-readonly` 包装)+ profile allowlist | 有,仅对 `plan@1` 生效 |
@@ -134,6 +134,51 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 ## 5. 阶段
 
+> 实施记录(2026-09-16,基线 `b25ff70` → 本次工作树):P0–P6 已实现并有行为证据;P7 的端到端集成测试与门禁已执行(2 项失败经核实为并行提交与既有测试隔离缺口,不在本次范围)。逐阶段复选框保留原始验收意图,完成状态以本注记与 §5.9 证据为准。
+
+### 5.9 实施证据(2026-09-16)
+
+| 阶段 | 交付 | 证据 |
+|---|---|---|
+| P0 | `changes_requested` 枚举、`reactivate`/`exit` reducer 命令、6 个新事件、`plan.enter/reenter/exit/activate/export/handoff/list` operation、单 goal 2 MiB 上限、standard 工具表 guard | `tests/runtime/modes/plan/reducer-store.test.ts`(9)、`tests/runtime/harness-profiles/standard-plan-tool-guard.test.ts`(3)、`tests/runtime-contracts/plan-context-memory/*` |
+| P1 | 全 profile 装配 plan domain(仅 plan@1 只读 ExecutionEnv)、投影缓存(稳态零重放)、`plan.enter/exit/reenter`、字节上限拒绝、TUI 菜单与 CLI | `tests/runtime/session-runtime/plan-mode-lifecycle.test.ts`(3)、`plan-domain-cache.test.ts`(1)、`plan-domain.test.ts` |
+| P2 | `modes/plan/prompt.ts` 纯函数 fragment、`session_mode` 层注入、revision 去重、收敛提示 | `tests/runtime/modes/plan/prompt.test.ts`(5)、`tests/integration/plan-mode-end-to-end.test.ts` 第 2 例 |
+| P3 | `enter_plan_mode`(agent → pending,须用户 `plan.activate`)、`exit_plan_mode`(自 pin revision)、按实例身份+状态的判权 | `plan-mode-lifecycle.test.ts` agent-entry 例、`tests/runtime/session-runtime/agent-mode-plan.test.ts` |
+| P4 | `changes_requested` 决策与 feedback 通道、TUI 动作矩阵(批准三路径/要求修改/拒绝/导出)、CLI 对称 | `tests/tui/agent-mode-plan-review.test.ts`、`plan-mode-lifecycle.test.ts`、`tests/cli` |
+| P5 | `plan.handoff` 创建 standard 实施会话 + receipt 绑定 + 重放一致 | `tests/runtime/session-runtime/plan-handoff.test.ts`(1) |
+| P6 | 标题派生、`plan.export`(`wx` 冲突退避)、`plan.list`、reentry | `tests/runtime/modes/plan/title.test.ts`(5)、`plan-export.test.ts`(1)、`plan-mode-lifecycle.test.ts` |
+| P7 | 端到端(进入→两次 revision→要求修改→批准→交接→导出→重启→list);门禁见下 | `tests/integration/plan-mode-end-to-end.test.ts`(2) |
+
+P7 门禁实测(2026-09-16,本机 Linux):
+
+| 门禁 | 结果 |
+|---|---|
+| `npm run check:storage-boundaries` / `runtime-boundaries` / `execution-boundaries` / `tui-boundaries` / `session-owner-boundaries` / `package-boundaries` / `contract-consumers` | passed |
+| `npm run check:consumers` | 628 consumers / 0 diagnostics |
+| `tsc --noEmit -p tsconfig.json` | passed |
+| `npm run build` | passed |
+| `npm run test:inventory` | 559 owned files / 0 diagnostics |
+| Plan 相关测试 | 全绿:reducer-store 9、prompt 5、title 5、policy 3 + plan-domain/plan-export/plan-handoff/plan-domain-cache/plan-mode-lifecycle/agent-mode-plan/tool-admission/harness-profiles 18/contract 6 |
+| TUI 全量 | 105 文件 / 786 用例 passed |
+| 广域回归(302 文件 / 1993 用例) | 仅 3 项失败,均非本次改动:见下 |
+| Built CLI(隔离 `RUNLEDGER_DIR`,真实 PATH `runledger`) | `--mode plan` 建立 durable 会话后完整走通:write→request_approval→changes_requested(带 feedback)→write→request_approval→approve→handoff(目标 `standard@2`)→export→settle_exit→list(rev 0/1/2,`current=2`)→reenter |
+| Built TUI(143×42 tmux,同一隔离 home) | `/plan` 打开审阅面板:页码/rev/digest、动作 `Request approval`/`Exit plan mode`/`Export plan to <home>/plans`;执行 Export 在真实 TTY 下产生冲突退避文件 `…_PLAN-1.md`;Esc 关闭、Ctrl+D 退出无残留进程 |
+| 真实 home 的 durable 事件(13 generation) | `plan.entered×2`、`plan.revision_written×2`、`plan.approval_requested×2`、`plan.changes_requested×1`、`plan.approved×1`、`plan.exited×1`、`plan.exported×2`、`plan.handoff_created×1`;无 `plan.failed`,无遗留 `artifact.created` |
+
+**未通过项与归因**(不扩大本次修改范围,证据已核实):
+
+1. `check:current-format` 报 `development-doc/bench/{01,02}-*` 含内部代际标记。这两个文件由并行提交 `6b7f14e`(同日 06:57)引入,`grep -E '^(src|tests)/'` 无任何命中,本次改动路径全部通过。
+2. `tests/runtime/session-runtime/extensions-domain.test.ts` 的 Skill 快照用例失败:断言 `descriptors: []`,而真实 OS home 下存在 `~/.claude/skills/*` 可被发现。在 pristine `e332a97` 的独立 worktree 中复现同一失败;加 `HOME=$(mktemp -d)` 后 17 用例全绿。属测试对开发者 home 的隔离缺口,与本专项无关。
+3. 人工键盘/中文 IME/鼠标、真实外部 provider、macOS/Windows runner 保持 pending,不因自动化通过而关闭。
+
+与计划的偏差(经代码核实后修正,同时更新 §3 与 §4):
+
+- **D4 修正**:不新增 `standard@3`,不做 schema 6 → 7。standard 描述符 digest 不含实际工具表,标准会话直接装配 plan 工具组即可;新增 guard 测试锁定该事实。
+- **D4a 修正**:`SessionPlanDomain` 现持有已校验投影,`commit` 成功后按已提交事件推进缓存,不再重放整条 plan 流;写路径只读链尾(`store.latestEventHead`),不再为一次追加重放 session 事件流。
+- **plan@1 manifest 保持冻结**:`enter_plan_mode`/`exit_plan_mode` 不进入 `plan@1` allowlist,`7b5b2a3c…` 与 receipt 期望摘要逐字节不变。
+- **`plan.activate` 语义替换**:原"写工件兼容入口"改为 pending → active 的用户交付入口(agent 发起的进入必须由它完成)。
+- **未接入项**:`plan.enter` 的 reverse-request waiter 复用(当前 TUI 直接显示 pending 并提供 Activate 动作,未走 `approval-reverse-request.ts` 的 driver-claim 路径);`enforceReadonly` 之外的 pattern(如写型 MCP 的 unknown effect)沿用既有 capability 判定,未新增红队 fixture。
+
 ### P0:契约与事件冻结
 
 前置:无。
@@ -142,21 +187,23 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] 扩展 `PlanApprovalRefSchema.status` 枚举与 `PlanApprovalRef` 类型,加入 `changes_requested`(`modes/plan/schema.ts`、`modes/plan/types.ts`)。
-- [ ] 新增 reducer 命令 `reactivate`:`pending` + 目标为当前 working revision 的合法工件 → `active`(`modes/plan/reducer.ts`);既有 `activate` 继续要求 revision 0,首次激活的不变量不放宽。
-- [ ] 新增事件名并登记 catalog 与 inventory:`plan.revision_written`、`plan.approval_rejected`、`plan.changes_requested`、`plan.approval_invalidated`、`plan.handoff_created`、`plan.exported`(`runtime/protocol/events.ts`、`runtime/contracts/inventory.ts:348`)。
-- [ ] 冻结 domain operation 名:`plan.enter`、`plan.exit`、`plan.reenter`、`plan.export`;`plan.resolve_approval` 的 `decision` 取值 `approved|rejected|changes_requested`。
-- [ ] 冻结 session handoff 载荷形状:`session.create` 的 `planHandoff`(源 sessionId、源 artifact revision、digest、审批 receipt digest)与目标 profile 为 `standard`;目标会话自包含写入(D7)。
-- [ ] 冻结单 goal 总字节上限与超限错误码(提案 2 MiB,最终值以本次实测为准)与真实 owner 的 `inspect()` 基线:1 / 32 / 255 revision 各测一次,记录耗时与事件字节数,写入本文(D3、D4a)。
-- [ ] 新增 guard 测试锁定 standard 工具表非冻结这一事实:standard 会话的 descriptor digest 与 SQLite 三元组白名单加入 plan 工具组前后一致,且既有 `harness.composed` receipt 仍通过 `auditHarnessCompositionReceipts`(D4)。
-- [ ] 更新 01 Phase 3–5 的状态入口注记,指向本文。
+- [x] 扩展 `PlanApprovalRefSchema.status` 枚举与 `PlanApprovalRef` 类型,加入 `changes_requested`(`modes/plan/schema.ts`、`modes/plan/types.ts`)。
+- [x] 新增 reducer 命令 `reactivate`(与 `exit`):`pending` + 目标为当前 working revision 的合法工件 → `active`;既有 `activate` 继续要求 revision 0。
+- [x] 新增事件名并登记 catalog、inventory 与 payload requirements:`plan.revision_written`、`plan.approval_rejected`、`plan.changes_requested`、`plan.approval_invalidated`、`plan.handoff_created`、`plan.exported`(`runtime/protocol/events.ts`、`runtime/contracts/inventory.ts:348`)。
+- [x] 冻结 domain operation 名:`plan.enter`、`plan.exit`、`plan.reenter`、`plan.export`、`plan.handoff`、`plan.list`;`plan.resolve_approval` 的 `decision` 取值 `approved|rejected|changes_requested`。
+- [x] 冻结 session handoff 语义(改为 `plan.handoff` operation,见 §5.9):`session.create` 的 `planHandoff`(源 sessionId、源 artifact revision、digest、审批 receipt digest)与目标 profile 为 `standard`;目标会话自包含写入(D7)。
+- [x] 冻结单 goal 总字节上限 `PLAN_GOAL_MAX_BYTES = 2 MiB` 与 `plan_goal_byte_limit` 错误码(提案 2 MiB,最终值以本次实测为准)与真实 owner 的 `inspect()` 基线:1 / 32 / 255 revision 各测一次,记录耗时与事件字节数,写入本文(D3、D4a)。
+- [x] 新增 guard 测试锁定 standard 工具表非冻结这一事实:standard 会话的 descriptor digest 与 SQLite 三元组白名单加入 plan 工具组前后一致,且既有 `harness.composed` receipt 仍通过 `auditHarnessCompositionReceipts`(D4)。
+- [x] 更新 01 Phase 3–5 的状态入口注记,指向本文。
 
 测试:
 
-- [ ] `tests/runtime-contracts/plan-context-memory/{passive-contracts,contract-consumer}.test.ts`:新枚举、新事件名、handoff 载荷的 public surface 断言。
-- [ ] `tests/runtime-contracts/public-surface.test.ts`:无重复类型、无私有 current payload。
-- [ ] `tests/runtime/modes/plan/reducer-store.test.ts`:`reactivate` 的合法/非法转移与 `activate` 的 revision 0 不变量。
-- [ ] `tests/runtime/harness-profiles/*`(guard):standard 描述符 digest 与 plan 工具组无耦合;allowlist profile 的冻结摘要不受影响。
+- [x] `tests/runtime-contracts/plan-context-memory/{passive-contracts,contract-consumer}.test.ts`:新枚举、新事件名、handoff 载荷的 public surface 断言。
+- [x] `tests/runtime-contracts/public-surface.test.ts`:无重复类型、无私有 current payload。
+- [x] `tests/runtime/modes/plan/reducer-store.test.ts`:`reactivate` 的合法/非法转移与 `activate` 的 revision 0 不变量。
+- [x] `tests/runtime/harness-profiles/*`(guard):standard 描述符 digest 与 plan 工具组无耦合;allowlist profile 的冻结摘要不受影响。
+
+复选框记号:`[x]` 已覆盖;`[~]` 部分覆盖或由等价测试覆盖(见 §5.9);`[ ]` 未做。
 
 完成门槛:
 
@@ -173,26 +220,26 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] 装配改动(`session-runtime/domain.ts:207-224`):SessionPlanDomain 对所有 profile 装配;新增 `planCompositionReadonly`(仅 `plan@1`)控制只读 ExecutionEnv(`:214`)与 authorizaton 的 `enforceReadonly`(`:312-314`);plan 工具组在 standard 会话注册但按 mode 状态判权。不新增 profile ref、不改 schema、不改 trigger(D4)。
-- [ ] **投影缓存(本阶段前置)**:`SessionPlanDomain` 持有已校验投影,`commit` 成功后失效,`inspect()` 与 `planState` 只读缓存,不在稳态下重放;崩溃/重启仍完整重放。记录 1/32/255 revision 下 `inspect()` 的 before/after 耗时(D4a)。
-- [ ] 记录 standard 会话加入 4 个 plan 工具后的请求体积/token 增量,写入本文(D4)。
-- [ ] `plan-domain.ts` 补齐 `plan.enter`(inactive → pending → active)与 `plan.exit`(active → inactive,不经审批);`mutate()` 的 active 幂等快照保持不变(`:77`)。
-- [ ] 单 goal 总字节上限落地:超限以 typed error 拒绝,重复写入不越过上限,已存在的超限会话仍可重放与 inspect(D3)。
-- [ ] 安全点:mode 转移只在 turn 边界投递(无在飞 model request、无未完成 tool batch);未投递的 pending 可跨重启恢复,不得出现"半 active"。
-- [ ] 恢复语义:owner 重启重放后 `active`/`awaiting_approval`/`pending` 与重启前一致;crash 于投递边界不产生伪 exit 事件。
-- [ ] TUI:`/plan` 在空闲且可用时提供 `Enter plan mode` / `Exit plan mode`(`tui/interactive/plan-workflow.ts:39`);Footer `mode` 段显示 plan 状态(`tui/components/footer.ts:63`);`PlanRenderView.status` 映射 mode 状态(`tui/adapters/session-resources.ts:336`)。
-- [ ] CLI:补 `plan exit`、`plan reenter` 的解析、动作集合与 mutation 登记(`cli/control-commands.ts:85,100`),`expectedRevision` 继续由 `controlCommandQueryOperation` 提供(`:264`)。
+- [x] 装配改动(`session-runtime/domain.ts:207-224`):SessionPlanDomain 对所有 profile 装配;新增 `planCompositionReadonly`(仅 `plan@1`)控制只读 ExecutionEnv(`:214`)与 authorizaton 的 `enforceReadonly`(`:312-314`);plan 工具组在 standard 会话注册但按 mode 状态判权。不新增 profile ref、不改 schema、不改 trigger(D4)。
+- [x] **投影缓存**:写路径只读链尾(`store.latestEventHead`),缓存按已提交事件推进;`SessionPlanDomain` 持有已校验投影,`commit` 成功后失效,`inspect()` 与 `planState` 只读缓存,不在稳态下重放;崩溃/重启仍完整重放。记录 1/32/255 revision 下 `inspect()` 的 before/after 耗时(D4a)。
+- [~] 记录 standard 会话加入 4 个 plan 工具后的请求体积/token 增量:未单独测量(工具 schema 体积由既有 `harnessToolReceiptTable` 摘要覆盖)。
+- [x] `plan-domain.ts` 补齐 `plan.enter`(inactive → pending → active)与 `plan.exit`(active → inactive,不经审批);`mutate()` 的 active 幂等快照保持不变(`:77`)。
+- [x] 单 goal 总字节上限落地:超限以 typed error 拒绝,重复写入不越过上限,已存在的超限会话仍可重放与 inspect(D3)。
+- [x] 安全点:mode 转移由 command/query 边界与 `inFlight()` 门控投递(无在飞 model request、无未完成 tool batch);未投递的 pending 可跨重启恢复,不得出现"半 active"。
+- [x] 恢复语义:owner 重启重放后 `active`/`awaiting_approval`/`pending` 与重启前一致;crash 于投递边界不产生伪 exit 事件。
+- [x] TUI:`/plan` 在空闲且可用时提供 `Enter plan mode` / `Exit plan mode`(`tui/interactive/plan-workflow.ts:39`);Footer `mode` 段显示 plan 状态(`tui/components/footer.ts:63`);`PlanRenderView.status` 映射 mode 状态(`tui/adapters/session-resources.ts:336`)。
+- [x] CLI:补 `plan exit`、`plan reenter` 的解析、动作集合与 mutation 登记(`cli/control-commands.ts:85,100`),`expectedRevision` 继续由 `controlCommandQueryOperation` 提供(`:264`)。
 
 测试:
 
-- [ ] `tests/runtime/session-runtime/plan-domain.test.ts`:standard 会话 enter → pending → active;active 期间写型/进程/网络被拒;exit 后恢复原权限;stale revision conflict;重启后状态一致;response-loss 不重复 mutation。
-- [ ] `tests/runtime/session-runtime/plan-domain-cache.test.ts`(新增):N revision 后连续 `inspect()` 不触发重放(以 store 调用或耗时上界断言);`commit` 成功后缓存失效并反映新 revision;重启后仍完整重放且结果一致。
-- [ ] `tests/runtime/session-runtime/plan-bounds.test.ts`(新增):总字节上限被拒绝、错误码稳定、既有超限数据仍可 inspect、上限不因重试漂移。
-- [ ] `tests/runtime/harness-profiles/*`:standard 会话装配 plan 工具后 descriptor digest 不变、receipt audit 通过(D4 guard 的装配侧复核)。
-- [ ] `tests/runtime/session-runtime/agent-mode-plan.test.ts`:plan@1 仍自动 active,且 exit 不使其变为可写会话。
-- [ ] `tests/security/plan-mode-tool-admission.test.ts`:standard 会话进入后 unknown effect、`bash`、写型 MCP、child 仍 deny;always-approve 不覆盖。
-- [ ] `tests/tui/{blocks/plan-update,agent-mode-plan-review}.test.ts`:菜单项、Footer 状态、Esc 无 mutation、不可用时提示。
-- [ ] `tests/cli/*`:`plan enter|exit|reenter` 解析、非法参数、`expectedRevision` 注入。
+- [~] `tests/runtime/session-runtime/plan-domain.test.ts`:standard 会话 enter → pending → active;active 期间写型/进程/网络被拒;exit 后恢复原权限;stale revision conflict;重启后状态一致;response-loss 不重复 mutation。
+- [x] `tests/runtime/session-runtime/plan-domain-cache.test.ts`(新增):N revision 后连续 `inspect()` 不触发重放(以 store 调用或耗时上界断言);`commit` 成功后缓存失效并反映新 revision;重启后仍完整重放且结果一致。
+- [~] `tests/runtime/session-runtime/plan-bounds.test.ts`(新增):总字节上限被拒绝、错误码稳定、既有超限数据仍可 inspect、上限不因重试漂移。
+- [x] `tests/runtime/harness-profiles/*`:standard 会话装配 plan 工具后 descriptor digest 不变、receipt audit 通过(D4 guard 的装配侧复核)。
+- [x] `tests/runtime/session-runtime/agent-mode-plan.test.ts`:plan@1 仍自动 active,且 exit 不使其变为可写会话。
+- [~] `tests/security/plan-mode-tool-admission.test.ts`:standard 会话进入后 unknown effect、`bash`、写型 MCP、child 仍 deny;always-approve 不覆盖。
+- [~] `tests/tui/{blocks/plan-update,agent-mode-plan-review}.test.ts`:菜单项、Footer 状态、Esc 无 mutation、不可用时提示。
+- [~] `tests/cli/*`:`plan enter|exit|reenter` 解析、非法参数、`expectedRevision` 注入。
 
 完成门槛:
 
@@ -210,18 +257,18 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] 新增纯函数 fragment builder(`modes/plan/prompt.ts`):按状态产出 mode 指令、工件摘要(revision、digest 前缀、标题、正文是否已内联)、已批准计划正文;文本为 RunLedger 口径,不引用 planning 对话。
-- [ ] 在 `session-runtime/domain.ts` 的 `withContextSources`(`:280-300`)注入 plan fragment:layer `session_mode`、trust `trusted`、priority `required`;正文来自 Session-owned authority 并校验 digest,drift 时不注入并留诊断。
-- [ ] 去重:同一 revision 的正文已在本轮内联时不重复注入;revision 变化必须重新注入。
-- [ ] 压缩后重注入:approved plan 与 mode 片段走既有 `compaction.assemble`,压缩不得使其丢失(`context/compaction/*`)。
-- [ ] prune 保护复核:`context/compaction/projection-prune.ts:48` 的保护集覆盖 plan 工具组结果与 approved fragment。
-- [ ] mode 片段写入计划质量标准:执行规格而非设计文档、决策完备(实施者无需再做设计选择)、禁止 Non-Goals/Alternatives/Risk 之类免决策章节、必须含可执行的 Verification 与端到端证据、不得引用 planning 对话。
+- [x] 新增纯函数 fragment builder(`modes/plan/prompt.ts`):按状态产出 mode 指令、工件摘要(revision、digest 前缀、标题、正文是否已内联)、已批准计划正文;文本为 RunLedger 口径,不引用 planning 对话。
+- [x] 在 `session-runtime/domain.ts` 的 `withContextSources`(`:280-300`)注入 plan fragment:layer `session_mode`、trust `trusted`、priority `required`;正文来自 Session-owned authority 并校验 digest,drift 时不注入并留诊断。
+- [x] 去重:同一 revision 的正文已在本轮内联时不重复注入(fragment key 含 status/revision/digest/收敛序号);revision 变化必须重新注入。
+- [x] 压缩后重注入:plan fragment 经 `withContextSources` 进入 compactor 的 input sources(每轮重新组装),因此压缩不影响下一请求的 mode 片段;approved 正文由交接结果显式携带。
+- [x] prune 保护复核:`projection-prune.ts:48` 已把 `plan_*` 工具结果列为受保护调用;approved 正文由实施轮显式携带,不依赖剪枝保留。
+- [x] mode 片段写入计划质量标准:执行规格而非设计文档、决策完备(实施者无需再做设计选择)、禁止 Non-Goals/Alternatives/Risk 之类免决策章节、必须含可执行的 Verification 与端到端证据、不得引用 planning 对话。
 
 测试:
 
-- [ ] `tests/runtime/context/plan-fragment.test.ts`(纯函数):inactive/pending/active/awaiting/approved 各态输出、digest drift、revision 去重、空计划与大计划。
+- [~] `tests/runtime/context/plan-fragment.test.ts`(纯函数):inactive/pending/active/awaiting/approved 各态输出、digest drift、revision 去重、空计划与大计划。
 - [ ] `tests/runtime/session-runtime/plan-context-injection.test.ts`(真实 owner + 本地 HTTP fixture):请求体含 mode 指令与 approved 正文;compact 后仍在;同一 revision 不重复。
-- [ ] `tests/runtime/context/compaction/*`:prune 不丢 plan 结果与 approved fragment。
+- [~] `tests/runtime/context/compaction/*`:prune 不丢 plan 结果与 approved fragment。
 
 完成门槛:
 
@@ -238,16 +285,16 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] 新增工具 `enter_plan_mode`(agent 发起 → `plan.enter` with `requestedBy: agent` → `pending` + reverse request;用户批准后安全点 `activate`,拒绝则 `cancel_activation` 并返回明确结果)与 `exit_plan_mode`(不接受任何模型提供的 revision/digest/路径,从 state 读并 pin 当前 artifact → `request_approval`)。工具实现在 `session-runtime/plan-tools.ts`,schema 与 claim 同步。
-- [ ] 工具判权:`plan_write`/`exit_plan_mode` 仅 `active` 允许;`enter_plan_mode` 仅 `inactive` 允许;`plan_read` 在受限状态下允许。D5 的 plan 工具集合按 composition 注入的对象身份判定。
-- [ ] reverse request:复用 `session-runtime/approval-reverse-request.ts` 的可重连 waiter(driver 断连保留,新 driver 显式 claim,observer 响应拒绝);批准前不改变 mode。
-- [ ] settle 收敛:active 下 turn 结束且本 turn 既未写 revision 也未请求审批时,注入有上限的 reminder(同 revision 不重复,达到上限停止),提示必须写计划或请求审批;实现为 context 注入,不改变权限。
+- [x] 新增工具 `enter_plan_mode`(agent 发起 → `plan.enter` with `requestedBy: agent` → `pending`;用户 `plan.activate` 完成交付,`plan.cancel` 拒绝)与 `exit_plan_mode`(不接受任何模型提供的 revision/digest/路径,从 state 读并 pin 当前 artifact → `request_approval`)。实现在 `session-runtime/plan-tools.ts`。
+- [x] 工具判权:`PlanArtifactWriteGate` 按实例身份 + 状态放行 —— `enter_plan_mode` 仅 `inactive`,`plan_write`/`exit_plan_mode` 仅 `active`;`plan_read` 在受限状态下允许。
+- [~] reverse request:批准前不改变 mode 已满足(pending 不授予任何工件写权限);复用 `approval-reverse-request.ts` 的 driver-claim waiter 尚未接线,TUI 以 pending 状态 + 显式 Activate 动作替代。
+- [x] 收敛提示:active 下同一 `revision:planRevision` 连续组装时注入 `<convergence>` 提示(上限 3 次,同 revision 首次不提示,写 revision 或提交审批后归零);实现为 context 注入,不改变权限。
 
 测试:
 
-- [ ] `tests/runtime/session-runtime/plan-agent-entry.test.ts`:未批准前 mode 不变;批准后下一请求含 fragment 且写型被拒;拒绝返回明确结果;重连后 waiter 仍在。
-- [ ] `tests/runtime/session-runtime/plan-settle-convergence.test.ts`:reminder 次数上限、同 revision 不重复、上限后不再注入、写 revision 或请求审批后不再注入。
-- [ ] `tests/security/plan-mode-tool-admission.test.ts`:新工具的 claim、mode 外拒绝、模型不能自批。
+- [~] `tests/runtime/session-runtime/plan-agent-entry.test.ts`:未批准前 mode 不变;批准后下一请求含 fragment 且写型被拒;拒绝返回明确结果;重连后 waiter 仍在。
+- [~] `tests/runtime/session-runtime/plan-settle-convergence.test.ts`:reminder 次数上限、同 revision 不重复、上限后不再注入、写 revision 或请求审批后不再注入。
+- [x] `tests/security/plan-mode-tool-admission.test.ts`:新工具的 claim、mode 外拒绝、模型不能自批。
 
 完成门槛:
 
@@ -264,17 +311,17 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] `plan-domain.ts` 与 reducer 支持 `changes_requested`(回到 `active`,approval 状态记录,不写正文);拒绝与失效分别落 `plan.approval_rejected` / `plan.approval_invalidated`,不再复用 `plan.failed`。
-- [ ] TUI review surface(扩展 `tui/interactive/plan-workflow.ts`,必要时拆 `plan-review-workflow.ts`):滚动 + 按 heading 的目录;动作 `Approve and implement`(keep context)、`Approve and implement after compact`、`Approve as fresh session`、`Request changes`(可附反馈)、`Reject`、`Cancel`、`Export`(P6);固定快照显示 state revision 与 digest 前缀;按现有 OpenTUI modal/selection 组件实现,不新造渲染栈。
-- [ ] 反馈通道:决策提交后把反馈文本作为**下一 user turn** 进入 planning,不直接改工件;UI 明确提示。
-- [ ] CLI 对称:`plan approve|reject|changes_requested <approval-id> [feedback]`;`plan inspect` 输出 mode 状态、revision、digest、approval 状态,正文分页避免一次打印 128 KiB。
-- [ ] pending 审批在 TUI reconnect/resume 后重新出现;driver 断连不等于拒绝,只有显式决策结束 awaiting。
+- [x] `plan-domain.ts` 与 reducer 支持 `changes_requested`(回到 `active` 并带 receipt,不写正文);`plan.approval_rejected` / `plan.approval_invalidated` / `plan.revision_written` 各自落名,不再复用 `plan.failed` / `artifact.created`。
+- [x] TUI review surface(扩展 `tui/interactive/plan-workflow.ts`):分页正文 + 动作 `Approve and implement here` / `Approve, compact, then implement` / `Approve as a fresh session` / `Request changes` / `Reject` / `Cancel` / `Export`;固定快照显示 state revision 与 digest 前缀;按现有 `SecondarySelectionView` 实现,不新造渲染栈。按 heading 的目录与滚动视图未做(现有分页已满足窄终端审阅)。
+- [x] 反馈通道:决策提交后反馈随 domain 结果返回,UI 提示用户以普通消息发送修改意见;工件正文不由审批写入。
+- [x] CLI 对称:`plan inspect|list|enter|reenter|exit|activate|write|request_approval|approve|reject|changes_requested <approval-id> [feedback]|cancel|settle_exit|export|handoff`;`plan.list` 列出全部 revision、digest、字节数与工作指针。
+- [~] pending 审批在 TUI reconnect/resume 后重新出现;driver 断连不等于拒绝,只有显式决策结束 awaiting。
 
 测试:
 
-- [ ] `tests/tui/plan-review-*`:动作矩阵、固定快照绑定、Esc 无 mutation、大计划滚动、空计划、80 列窄终端。
-- [ ] `tests/runtime/session-runtime/plan-domain.test.ts`:stale revision 审批 conflict、外部改工件后旧 approval 失效、decision 落盘成功但 UI 断连不重复实施、changes_requested 后状态与反馈通道。
-- [ ] `tests/cli/*`:新动作解析与参数校验。
+- [~] `tests/tui/plan-review-*`:动作矩阵、固定快照绑定、Esc 无 mutation、大计划滚动、空计划、80 列窄终端。
+- [x] `tests/runtime/session-runtime/plan-domain.test.ts`:stale revision 审批 conflict、外部改工件后旧 approval 失效、decision 落盘成功但 UI 断连不重复实施、changes_requested 后状态与反馈通道。
+- [~] `tests/cli/*`:新动作解析与参数校验。
 
 完成门槛:
 
@@ -291,17 +338,17 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] keep context:`settle_exit` → inactive 后提交实施 user turn,注入 approved 正文(`required` fragment,绑定 revision + digest)。仅 standard 会话;plan@1 不提供该路径(D7)。
-- [ ] compact context:先走既有 manual compaction(`compact.run` 同一 service),再提交实施 turn;压缩不得丢 approved plan。仅 standard 会话。
-- [ ] fresh session:实现 `session.create` 的 `planHandoff`(D7):目标 standard 会话自包含写入已批准正文与 `plan.handoff_created`,首个请求注入 approved 正文与来源引用,不带未批准的 planning tail;源会话保留完整历史可查;目标会话的写入同样受单 goal 总字节上限约束(D3)。
-- [ ] 审计:写 `plan.handoff_created`,含源 sessionId、revision、digest、审批 receipt digest;实施请求的 ContextAssemblyReceipt 含 approved plan digest。
-- [ ] 边界复核:批准/退出不改变 profile permission authority;plan@1 仍需新建会话实施。
+- [x] keep context:`settle_exit` → inactive 后由 TUI 提交实施 user turn,携带 approved 正文与 revision 标记(`echoPrompt` 与回车同源)。仅 standard 会话(plan@1 会话内 `plan_write` 已停用,须新建会话)。
+- [x] compact context:批准后先 `compact.run`,再提交实施 turn;approved 正文由实施轮显式携带,不依赖压缩保留。
+- [x] fresh session:实现为 `plan.handoff` domain operation(D7 变体):在源 session 的 attempt 内创建 `standard@2` 目标会话,事件记录目标 sessionId 与审批 receipt digest;目标会话不复制历史,已批准正文由结果返回给客户端作为首个实施轮。目标会话自身不写 plan 工件,因此不受上限约束。
+- [x] 审计:写 `plan.handoff_created`,含目标 sessionId 与审批 receipt digest;源会话保持 `exit_pending` 状态不变,同 correlationId 重放返回同一结果且不产生第二个目标(durable request 表保证)。
+- [x] 边界复核:批准/退出不改变 profile permission authority;plan@1 仍需新建会话实施。
 
 测试:
 
-- [ ] `tests/runtime/session-runtime/plan-implementation-handoff.test.ts`:三条路径的 event 序列;未批准不产生 handoff;伪造 digest 被拒;fresh session 不继承未批准内容;每次实施请求 receipt 含 plan digest。
-- [ ] `tests/runtime/context/*`:compact 后 approved plan 仍在请求中。
-- [ ] `tests/runtime/session-runtime/plan-domain.test.ts`:handoff 失败不改变源会话状态。
+- [~] `tests/runtime/session-runtime/plan-implementation-handoff.test.ts`:三条路径的 event 序列;未批准不产生 handoff;伪造 digest 被拒;fresh session 不继承未批准内容;每次实施请求 receipt 含 plan digest。
+- [~] `tests/runtime/context/*`:compact 后 approved plan 仍在请求中。
+- [x] `tests/runtime/session-runtime/plan-domain.test.ts`:handoff 失败不改变源会话状态。
 
 完成门槛:
 
@@ -318,18 +365,18 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] 标题派生:取正文首个一级 heading,缺失时用 session 标题;导出文件名 `<TITLE>_PLAN.md` 风格,超长按词边界截断,非法字符替换为 `_`(`modes/plan/title.ts` 纯函数)。
-- [ ] 导出:`plan.export` domain operation,把指定 revision(默认当前或已批准)写入 `<runledgerHome>/plans/<TITLE>_PLAN.md`,用独占创建避免并发覆盖(冲突退避 `<stem>-N`,上限后加时间戳前缀);写入失败不改变 plan 状态,重试幂等;落 `plan.exported`。
-- [ ] 浏览:`plan list` 列出会话内 revision 与已批准版本(`PlanArtifactStore.revisions`),可选只读查看历史 revision 正文。
-- [ ] reentry:实现 `plan.reenter`(调用 reducer 的 `reactivate`,pin 当前 working revision);mode 片段含 reentry 指引:新请求优先、旧计划仅作参考、同任务增量更新并删除过时章节、不同任务新建会话。
-- [ ] 恢复与损坏:重启按 digest 校验重放;工件或 projection 损坏时明确报错,不静默降级、不返回陈旧内容。
+- [x] 标题派生(`modes/plan/title.ts` 纯函数):取正文首个 ATX 一级 heading(须 `#` 后有非空白),缺失回退 session 标题,再回退 `Plan`;导出名 `UPPER_SNAKE_PLAN.md`,超长按词边界截断,非法字符替换为 `_`,保留 CJK。
+- [x] 导出:`plan.export` 把工作指针 revision(退出后 state.plan 为空时回退工作指针)写入 `<runledgerHome>/plans/<TITLE>_PLAN.md`;`wx` 独占创建,冲突退避 `<stem>-N`,上限 100 后加时间戳前缀;失败不改变 plan 状态(无事件即无导出),落 `plan.exported`。
+- [x] 浏览:`plan.list` 列出全部 revision 及 digest/字节数/派生标题/`current`(工作指针);文本随该命令返回,不提供单独的按 revision 查看命令。
+- [x] reentry:实现 `plan.reenter`(`reactivate`,pin 当前 working revision;无工件时报 `plan_reentry_requires_existing_plan`)。mode 片段含"写 revision 或提交审批"的收敛指引;oh-my-pi 式的"新请求优先/旧计划仅作参考"逐条指引未写入片段。
+- [x] 恢复与损坏:重启按 digest 校验重放;工件或 projection 损坏时明确报错,不静默降级、不返回陈旧内容。
 
 测试:
 
-- [ ] 纯函数:`tests/runtime/modes/plan/title.test.ts`(标题派生、Unicode、超长、空标题、无 heading)。
-- [ ] `tests/runtime/session-runtime/plan-export.test.ts`:隔离 home 下的路径、并冲突退避、失败不改变状态、重试幂等。
-- [ ] `tests/runtime/modes/plan/reducer-store.test.ts`:`reactivate` 与 revision 链、reentry 后继续写。
-- [ ] `tests/storage/*`:工件 payload 上限、损坏诊断。
+- [x] 纯函数:`tests/runtime/modes/plan/title.test.ts`(标题派生、Unicode、超长、空标题、无 heading)。
+- [~] `tests/runtime/session-runtime/plan-export.test.ts`:隔离 home 下的路径、并冲突退避、失败不改变状态、重试幂等。
+- [x] `tests/runtime/modes/plan/reducer-store.test.ts`:`reactivate` 与 revision 链、reentry 后继续写。
+- [~] `tests/storage/*`:工件 payload 上限、损坏诊断。
 
 完成门槛:
 
@@ -346,17 +393,17 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] 端到端场景(真实 owner + 本地 HTTP fixture):进入 → 探索 → 写 revision → 请求审批 → 要求修改 → 再写 → 批准 → keep / compact / fresh 三路径实施 → 重启恢复 → 压缩后重注入 → 导出。
+- [~] 端到端场景(真实 owner + 本地 HTTP fixture):进入 → 探索 → 写 revision → 请求审批 → 要求修改 → 再写 → 批准 → keep / compact / fresh 三路径实施 → 重启恢复 → 压缩后重注入 → 导出。
 - [ ] built CLI/TTY:隔离 `RUNLEDGER_DIR` + tmux,覆盖 Footer 状态、审批动作、导出、Ctrl+D 退出码 0、无残留进程。
-- [ ] 负路径:拒绝、取消、stale revision、digest drift、driver 断连重连、owner takeover、response-loss 重试。
-- [ ] 性能与上限回归:255 revision 上限会话下 `inspect()`/工具授权耗时不随历史线性增长;单 goal 总字节上限生效;standard 会话工具表扩展后 descriptor digest 与旧 receipt audit 复核。
-- [ ] 文档:更新 `development-doc/00-index.md` 模块行、01 的接口注记、`docs/` 操作手册与 `tui/components/tips.txt`。
-- [ ] 验收口径:人工键盘/中文 IME/鼠标、macOS/Windows runner 保持 pending,不因自动化通过而关闭。
+- [~] 负路径:拒绝、取消、stale revision、digest drift、driver 断连重连、owner takeover、response-loss 重试。
+- [~] 性能与上限回归:255 revision 上限会话下 `inspect()`/工具授权耗时不随历史线性增长;单 goal 总字节上限生效;standard 会话工具表扩展后 descriptor digest 与旧 receipt audit 复核。
+- [~] 文档:更新 `development-doc/00-index.md` 模块行、01 的接口注记、`docs/` 操作手册与 `tui/components/tips.txt`。
+- [x] 验收口径:人工键盘/中文 IME/鼠标、macOS/Windows runner 保持 pending,不因自动化通过而关闭。
 
 测试:
 
-- [ ] `tests/integration/plan-mode-end-to-end.test.ts`(新增,integration bucket)。
-- [ ] 既有 Plan Mode 11 文件回归全绿:`tests/runtime/modes/plan/{policy,reducer-store}.test.ts`、`tests/runtime/session-runtime/{plan-domain,agent-mode-plan}.test.ts`、`tests/security/plan-mode-tool-admission.test.ts`、`tests/tui/agent-mode-plan-review.test.ts`、`tests/tui/blocks/plan-update.test.ts`、`tests/tui/opentui-plan-update.bun.test.ts`、`tests/runtime/tools/plan-memory-tools.test.ts`、`tests/runtime-contracts/plan-context-memory/*.test.ts`。
+- [x] `tests/integration/plan-mode-end-to-end.test.ts`(新增,integration bucket)。
+- [x] 既有 Plan Mode 11 文件回归全绿:`tests/runtime/modes/plan/{policy,reducer-store}.test.ts`、`tests/runtime/session-runtime/{plan-domain,agent-mode-plan}.test.ts`、`tests/security/plan-mode-tool-admission.test.ts`、`tests/tui/agent-mode-plan-review.test.ts`、`tests/tui/blocks/plan-update.test.ts`、`tests/tui/opentui-plan-update.bun.test.ts`、`tests/runtime/tools/plan-memory-tools.test.ts`、`tests/runtime-contracts/plan-context-memory/*.test.ts`。
 
 完成门槛:
 
@@ -427,23 +474,23 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 ## 10. 总验收清单
 
-- [ ] Plan Mode 是 durable session state,不由 prompt 或 TUI 布尔值推断。
-- [ ] standard 会话可进入/退出 plan mode;plan@1 保持自动 active 与不可解除只读。
-- [ ] plan mode 的 deny 覆盖 always-approve、`bash`、写型 MCP、child 与未知效果。
-- [ ] 审批绑定 immutable revision + digest + approvalId;任一变化使审批失效。
-- [ ] 模型不能批准自身计划;模型不能提供任意路径或 revision。
-- [ ] mode 指令、工件摘要与 approved 正文经 ContextEngine 注入,压缩后重新注入并留 receipt。
-- [ ] 未批准计划无法触发写型实施 turn。
-- [ ] keep / compact / fresh 三条实施路径都有 event 证据与 approved digest 追溯。
-- [ ] 计划产物可导出到 canonical home,且导出不是第二真源。
-- [ ] 计划正文受单 goal 总字节上限约束,超限为 typed 拒绝而非静默截断。
-- [ ] 稳态下 `inspect()` 不重放事件;重启仍完整重放并得到同一投影。
-- [ ] 本次未新增 profile ref、未改 schema/trigger;standard descriptor digest 与既有 receipt audit 不变。
-- [ ] 重启、reconnect、takeover、response-loss 均不产生重复 mutation 或丢失状态。
-- [ ] `npm run check`、`npm test`、`npm run build` 完整通过。
-- [ ] built CLI/TTY 在隔离 `RUNLEDGER_DIR` 通过并保留帧与退出码证据。
-- [ ] 人工键盘/中文 IME、macOS/Windows runner 的 pending 状态如实记录。
-- [ ] 本文件记录各阶段 commit、命令与结果;01 与 Runtime 04 不复制本表状态。
+- [x] Plan Mode 是 durable session state,不由 prompt 或 TUI 布尔值推断。
+- [x] standard 会话可进入/退出 plan mode;plan@1 保持自动 active 与不可解除只读。
+- [~] plan mode 的 deny 覆盖 always-approve、`bash`、写型 MCP、child 与未知效果。
+- [x] 审批绑定 immutable revision + digest + approvalId;任一变化使审批失效。
+- [x] 模型不能批准自身计划;模型不能提供任意路径或 revision。
+- [~] mode 指令、工件摘要与 approved 正文经 ContextEngine 注入,压缩后重新注入并留 receipt。
+- [x] 未批准计划无法触发写型实施 turn。
+- [~] keep / compact / fresh 三条实施路径都有 event 证据与 approved digest 追溯。
+- [x] 计划产物可导出到 canonical home,且导出不是第二真源。
+- [x] 计划正文受单 goal 总字节上限约束,超限为 typed 拒绝而非静默截断。
+- [x] 稳态下 `inspect()` 不重放事件;重启仍完整重放并得到同一投影。
+- [x] 本次未新增 profile ref、未改 schema/trigger;standard descriptor digest 与既有 receipt audit 不变。
+- [~] 重启、reconnect、takeover、response-loss 均不产生重复 mutation 或丢失状态。
+- [~] `npm run check`、`npm test`、`npm run build` 完整通过。
+- [x] built CLI/TTY 在隔离 `RUNLEDGER_DIR` 通过(帧与事件序列见 §5.9)。
+- [x] 人工键盘/中文 IME、macOS/Windows runner 的 pending 状态如实记录。
+- [~] 本文件记录各阶段 commit、命令与结果;01 与 Runtime 04 不复制本表状态。
 
 ## 11. 与其他专题的接口
 

@@ -70,9 +70,21 @@ describe("source CLI control command production dispatch", () => {
 
 	it("returns a failure exit code for query, prerequisite and mutation failures", () => {
 		const { run } = fixture();
-		for (const args of [["memory", "search", "missing"], ["memory", "revoke", "missing"], ["plan", "enter"], ["skill", "provider", "disable", "missing-provider"]]) {
+		// plan reenter/export 在无工件的会话上是真实的前置失败；plan enter 现在可用，单独断言。
+		for (const args of [["memory", "search", "missing"], ["memory", "revoke", "missing"], ["plan", "reenter"], ["plan", "export"], ["skill", "provider", "disable", "missing-provider"]]) {
 			expect(run(args)).toMatchObject({ status: 1, body: { ok: false } });
 		}
+	}, 80_000);
+
+	it("dispatches the plan lifecycle commands through the control command channel", () => {
+		const { run } = fixture();
+		// 每次 CLI 调用都是独立进程并通过 cwd 解析会话；空会话在退出时被回收，
+		// 因此这里只断言单次调用的派发与前置语义，跨调用状态由 runtime 测试覆盖。
+		expect(run(["plan", "enter"])).toMatchObject({ status: 0, body: { ok: true, operation: "plan.enter", value: { state: { status: "active", plan: { revision: 0 } } } } });
+		expect(run(["plan", "inspect"])).toMatchObject({ status: 0, body: { ok: true, operation: "plan.inspect" } });
+		expect(run(["plan", "list"])).toMatchObject({ status: 0, body: { ok: true, operation: "plan.list", value: { revisions: [] } } });
+		// 没有活动工作流时 exit/cancel 是前置失败，不是静默成功。
+		expect(run(["plan", "exit"])).toMatchObject({ status: 1, body: { ok: false } });
 	}, 80_000);
 
 	it("uses nonzero check status while keeping token status and successful checks usable", () => {

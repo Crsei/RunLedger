@@ -129,7 +129,7 @@ src/cli/main.ts
 
 ### 0.7 2026-09-16 Plan Mode 完整度对齐入口
 
-Plan Mode 的用户可见行为交付（会话内进入/退出、mode instruction 与计划正文注入、模型侧进入与请求审批、审批决策集与 review 界面、实施交接、产物导出与 reentry、端到端门禁）转入 [02-plan-mode-parity-implementation-plan.md](02-plan-mode-parity-implementation-plan.md)。该文件以 oh-my-pi `3b3a6dc9bb` 的完成度为目标口径，按 P0–P7 记录阶段、文件边界、验证矩阵与验收证据。
+Plan Mode 的用户可见行为交付（会话内进入/退出、mode instruction 与计划正文注入、模型侧进入与请求审批、审批决策集与 review 界面、实施交接、产物导出与 reentry、端到端门禁）转入 [02-plan-mode-parity-implementation-plan.md](02-plan-mode-parity-implementation-plan.md)。该文件以 oh-my-pi `3b3a6dc9bb` 的完成度为目标口径，按 P0–P7 记录阶段、文件边界、验证矩阵与验收证据；**2026-09-16 P0–P6 已实现**，证据、与计划的偏差（不新增 `standard@3`、投影缓存修复、`plan.activate` 语义替换、fresh 交接改为 `plan.handoff`）见 02 §5.9。
 
 归属边界不变：本文件仍是 Plan Mode 的 reducer/artifact/公共契约设计账本，§3.2 的行为合同、§6.2/§6.3 的 policy ceiling 与 §6.7 的事件建议继续有效；公共类型、schema 与 event catalog 的落地仍归 `runtime/04` 的 contract work package。**Phase 3–5 的复选框状态自本节起以 02 为唯一来源**，本文件对应章节只保留设计叙述与门槛，不再作为完成状态的判断依据；02 与本节冲突时先改本节设计前提再改 02。
 

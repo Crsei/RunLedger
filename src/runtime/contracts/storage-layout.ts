@@ -81,6 +81,8 @@ export interface RunledgerLayout {
 	readonly worktrees: string;
 	/** 06 §12.2:JSONL/SQLite 显式迁移的 verified archive 根(<home>/migration-backup)。 */
 	readonly migrationBackups: string;
+	/** Plan 专题:已批准计划的导出投影根(<home>/plans);可删除重建,不是第二真源。 */
+	readonly plans: string;
 }
 
 export interface WorkspaceStorageIdentity {
@@ -182,6 +184,7 @@ export function buildRunledgerLayout(home: string, flavor: RuntimePathFlavor): R
 		database: paths.join(normalizedHome, "state.db"),
 		worktrees: paths.join(normalizedHome, "worktrees"),
 		migrationBackups: paths.join(normalizedHome, "migration-backup"),
+		plans: paths.join(normalizedHome, "plans"),
 	};
 }
 

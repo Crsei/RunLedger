@@ -210,4 +210,113 @@ describe("Plan Mode behavior", () => {
 		}));
 		expect(invalidated).toMatchObject({ status: "active", approval: { status: "invalidated" } });
 	});
+
+	it("reactivates an existing revision chain on reentry without creating a new revision", () => {
+		const active = unwrap(reducePlanModeState(unwrap(reducePlanModeState(inactiveState, {
+			type: "request_activation",
+			expectedRevision: 0,
+			requestedBy: "user",
+			updatedAt: timestamp,
+		})), {
+			type: "activate",
+			expectedRevision: 1,
+			plan: plan("# plan v0", 0),
+			updatedAt: timestamp,
+		}));
+		const exited = unwrap(reducePlanModeState(active, { type: "exit", expectedRevision: 2, updatedAt: timestamp }));
+		expect(exited.status).toBe("inactive");
+		expect(exited.plan).toBeUndefined();
+
+		const pending = unwrap(reducePlanModeState(exited, {
+			type: "request_activation",
+			expectedRevision: 3,
+			requestedBy: "user",
+			updatedAt: timestamp,
+		}));
+		// reentry 必须 pin 既有 revision；首次激活的 revision 0 约束不适用于它。
+		const reentered = unwrap(reducePlanModeState(pending, {
+			type: "reactivate",
+			expectedRevision: 4,
+			plan: plan("# plan revision-one", 1),
+			updatedAt: timestamp,
+		}));
+		expect(reentered).toMatchObject({ status: "active", revision: 5, plan: { revision: 1 } });
+
+		// reactivate 只能在 pending 生效；active 下重复投递必须被拒绝。
+		expect(reducePlanModeState(reentered, {
+			type: "reactivate",
+			expectedRevision: 5,
+			plan: plan("# plan revision-one", 1),
+			updatedAt: timestamp,
+		})).toMatchObject({ ok: false, error: { code: "illegal_transition" } });
+	});
+
+	it("returns to active on changes_requested and keeps the pinned revision", () => {
+		const active = unwrap(reducePlanModeState(unwrap(reducePlanModeState(inactiveState, {
+			type: "request_activation",
+			expectedRevision: 0,
+			requestedBy: "user",
+			updatedAt: timestamp,
+		})), {
+			type: "activate",
+			expectedRevision: 1,
+			plan: plan("# plan v0", 0),
+			updatedAt: timestamp,
+		}));
+		const awaiting = unwrap(reducePlanModeState(active, {
+			type: "request_approval",
+			expectedRevision: 2,
+			expectedPlanRevision: 0,
+			expectedPlanDigest: active.plan!.digest,
+			updatedAt: timestamp,
+		}));
+		const revisedBack = unwrap(reducePlanModeState(awaiting, {
+			type: "resolve_approval",
+			expectedRevision: 3,
+			approval: {
+				...awaiting.approval!,
+				status: "changes_requested",
+				receiptRef: { subjectKind: "receipt", digest },
+			},
+			updatedAt: timestamp,
+		}));
+
+		expect(revisedBack).toMatchObject({ status: "active", approval: { status: "changes_requested" } });
+		expect(revisedBack.plan).toEqual(active.plan);
+		// 回到 active 后可继续写下一 revision。
+		expect(reducePlanModeState(revisedBack, {
+			type: "write_plan",
+			expectedRevision: 4,
+			expectedPlanRevision: 0,
+			plan: plan("# plan revision-one", 1),
+			updatedAt: timestamp,
+		})).toMatchObject({ ok: true, value: { status: "active", plan: { revision: 1 } } });
+	});
+
+	it("rejects a changes_requested decision that does not carry a receipt", () => {
+		const active = unwrap(reducePlanModeState(unwrap(reducePlanModeState(inactiveState, {
+			type: "request_activation",
+			expectedRevision: 0,
+			requestedBy: "user",
+			updatedAt: timestamp,
+		})), {
+			type: "activate",
+			expectedRevision: 1,
+			plan: plan("# plan v0", 0),
+			updatedAt: timestamp,
+		}));
+		const awaiting = unwrap(reducePlanModeState(active, {
+			type: "request_approval",
+			expectedRevision: 2,
+			expectedPlanRevision: 0,
+			expectedPlanDigest: active.plan!.digest,
+			updatedAt: timestamp,
+		}));
+		expect(reducePlanModeState(awaiting, {
+			type: "resolve_approval",
+			expectedRevision: 3,
+			approval: { ...awaiting.approval!, status: "changes_requested" },
+			updatedAt: timestamp,
+		})).toMatchObject({ ok: false, error: { code: "approval_mismatch" } });
+	});
 });

@@ -19,8 +19,23 @@ export interface ActivatePlanModeCommand {
 	readonly updatedAt: string;
 }
 
+/** 重新进入：pending 状态下 pin 既有 working revision，不产生新 revision。 */
+export interface ReactivatePlanModeCommand {
+	readonly type: "reactivate";
+	readonly expectedRevision: number;
+	readonly plan: PlanArtifactRef;
+	readonly updatedAt: string;
+}
+
 export interface CancelPlanActivationCommand {
 	readonly type: "cancel_activation";
+	readonly expectedRevision: number;
+	readonly updatedAt: string;
+}
+
+/** 用户显式退出：active → inactive，不经审批、不产生 approval。 */
+export interface ExitPlanModeCommand {
+	readonly type: "exit";
 	readonly expectedRevision: number;
 	readonly updatedAt: string;
 }
@@ -71,7 +86,9 @@ export interface SettlePlanExitCommand {
 export type PlanModeCommand =
 	| RequestPlanActivationCommand
 	| ActivatePlanModeCommand
+	| ReactivatePlanModeCommand
 	| CancelPlanActivationCommand
+	| ExitPlanModeCommand
 	| WritePlanRevisionCommand
 	| RequestPlanApprovalCommand
 	| ResolvePlanApprovalCommand
@@ -103,7 +120,8 @@ export function isValidPlanArtifactRef(value: unknown): value is PlanArtifactRef
 
 function validApproval(value: unknown): value is PlanApprovalRef {
 	if (!isPlanApprovalRef(value)) return false;
-	if (value.status === "approved" && value.receiptRef?.subjectKind !== "receipt") return false;
+	// 决策类状态必须携带 receipt；pending 与失效态不要求。
+	if ((value.status === "approved" || value.status === "changes_requested") && value.receiptRef?.subjectKind !== "receipt") return false;
 	return value.receiptRef === undefined || isRuntimeContentRef(value.receiptRef);
 }
 
@@ -250,8 +268,21 @@ export function reducePlanModeState(
 			}
 			return nextState(state, { status: "active", plan: command.plan }, command.updatedAt);
 
+		case "reactivate":
+			if (state.status !== "pending") return planFailure("illegal_transition", "reentry delivery requires pending Plan Mode");
+			if (!isValidPlanArtifactRef(command.plan) || command.plan.goalId !== state.goalId) {
+				return planFailure("invalid_artifact", "reentry requires a valid goal-scoped artifact from the existing revision chain");
+			}
+			return nextState(state, { status: "active", plan: command.plan }, command.updatedAt);
+
 		case "cancel_activation":
 			if (state.status !== "pending") return planFailure("illegal_transition", "only pending activation can be cancelled");
+			return inactiveState(state, command.updatedAt);
+
+		case "exit":
+			if (state.status !== "active" && state.status !== "pending") {
+				return planFailure("illegal_transition", "explicit exit requires active or pending Plan Mode");
+			}
 			return inactiveState(state, command.updatedAt);
 
 		case "write_plan": {

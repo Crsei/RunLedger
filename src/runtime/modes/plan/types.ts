@@ -18,9 +18,12 @@ export interface PlanApprovalRef {
 	readonly goalId: GoalId;
 	readonly revision: number;
 	readonly digest: RuntimeDigest;
-	readonly status: "pending" | "approved" | "rejected" | "expired" | "invalidated";
+	readonly status: "pending" | "approved" | "rejected" | "changes_requested" | "expired" | "invalidated";
 	readonly receiptRef?: RuntimeContentRef;
 }
+
+/** 计划正文的单 goal 累计上限；超限以 typed 失败拒绝，不截断。 */
+export const PLAN_GOAL_MAX_BYTES = 2_097_152;
 
 export interface PlanModeState {
 	readonly status: PlanModeStatus;

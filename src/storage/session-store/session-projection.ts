@@ -40,6 +40,16 @@ export function replaySessionEvents(db: SessionDatabase, sessionId: string): Ses
 	return events;
 }
 
+/**
+ * §4.5 写路径只需要链尾:单次倒序索引查询,不重放全部事件。
+ * 返回 `{ sequence, hash }`；空流返回 `{ sequence: 0, hash: null }`。
+ */
+export function latestSessionEventHead(db: SessionDatabase, sessionId: string): { readonly sequence: number; readonly hash: string | null } {
+	const row = db.querySingle("SELECT sequence, current_event_hash FROM session_events WHERE session_id = ? ORDER BY sequence DESC LIMIT 1", [sessionId]);
+	if (row === undefined) return { sequence: 0, hash: null };
+	return { sequence: Number(row.sequence), hash: String(row.current_event_hash) };
+}
+
 /** 删除全部 checkpoint 后从 genesis 重建,结果必须与缓存投影一致(测试证据用)。 */
 export function rebuildFromEvents(db: SessionDatabase, sessionId: string): SessionProjection {
 	const events = replaySessionEvents(db, sessionId);

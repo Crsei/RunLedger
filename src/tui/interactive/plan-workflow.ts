@@ -75,12 +75,13 @@ export class PlanWorkflow {
 		const result = await querySessionController(port.controller, "plan.inspect", {}, {
 			correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}`,
 		}).catch(() => undefined);
-		if (result?.ok !== true || !isValidPlanModeState(result.value.state) || typeof result.value.content !== "string") {
+		const state = result?.ok === true ? result.value.state : undefined;
+		const content = result?.ok === true && typeof result.value.content === "string" ? result.value.content : undefined;
+		if (state === undefined || !isValidPlanModeState(state) || (content === undefined && state.status !== "inactive")) {
 			port.showNotice("/plan review is unavailable; refresh after reconnecting.", "error"); return;
 		}
-		const state = result.value.state;
 		// 固定短行分页，保证常见窄终端能够逐页审阅，不以截断摘要代替正文。
-		const lines = result.value.content.replace(/[\x00-\x08\x0b-\x1f\x7f]/gu, "�").split("\n").flatMap((line) => {
+		const lines = (content ?? "No plan yet. Enter plan mode to explore and write one.").replace(/[\x00-\x08\x0b-\x1f\x7f]/gu, "�").split("\n").flatMap((line) => {
 			const chars = Array.from(line); const chunks: string[] = [];
 			for (let index = 0; index < chars.length; index += 24) chunks.push(chars.slice(index, index + 24).join(""));
 			return chunks.length === 0 ? [""] : chunks;
@@ -91,9 +92,24 @@ export class PlanWorkflow {
 			if (page < pages - 1) items.push({ value: "next", name: "Next page" });
 			if (page > 0) items.push({ value: "previous", name: "Previous page" });
 			if (page === pages - 1) {
-				if (state.status === "active") items.push({ value: "plan.request_approval", name: "Request approval", disabled: state.plan?.revision === 0 });
-				if (state.status === "awaiting_approval") items.push({ value: "approve", name: "Approve this revision" }, { value: "reject", name: "Reject this revision" });
+				if (state.status === "inactive") {
+					items.push({ value: "plan.enter", name: "Enter plan mode" });
+				}
+				if (state.status === "active") {
+					items.push({ value: "plan.request_approval", name: "Request approval", disabled: state.plan?.revision === 0 });
+					items.push({ value: "plan.exit", name: "Exit plan mode" });
+				}
+				if (state.status === "awaiting_approval") {
+					items.push({ value: "approve", name: "Approve and implement here" });
+					items.push({ value: "approve_compact", name: "Approve, compact, then implement" });
+					items.push({ value: "approve_fresh", name: "Approve as a fresh session" });
+					items.push({ value: "changes_requested", name: "Request changes" });
+					items.push({ value: "reject", name: "Reject this revision" });
+				}
 				if (state.status === "exit_pending") items.push({ value: "plan.settle_exit", name: "Finish plan workflow" });
+				if (state.status === "inactive" || state.status === "active" || state.status === "awaiting_approval") {
+					items.push({ value: "plan.export", name: "Export plan to <home>/plans" });
+				}
 			}
 			if (state.status === "active" || state.status === "awaiting_approval") items.push({ value: "plan.cancel", name: "Cancel plan workflow" });
 			items.push({ value: "close", name: "Close" });
@@ -101,7 +117,7 @@ export class PlanWorkflow {
 				title: `Plan · ${state.status} · ${page + 1}/${pages}`,
 				subtitle: `rev ${state.plan?.revision ?? 0} · ${state.plan?.digest.digest.slice(0, 12) ?? "unavailable"}`,
 				detailLines: lines.slice(page * 4, page * 4 + 4), items,
-				footerHint: "Plan mode remains read-only. /mode default creates a new session.",
+				footerHint: "Plan mode is read-only. Approving keeps this session; /mode default starts a separate implementation session.",
 				selectListTheme: makeSelectListTheme(port.theme),
 				onCancel: () => port.closeOverlay(),
 				onSelect: (item) => {
@@ -116,15 +132,76 @@ export class PlanWorkflow {
 	}
 
 	private async resolveReview(action: string, state: PlanModeState): Promise<void> {
-		const resolving = action === "approve" || action === "reject";
+		// 三条实施路径共用同一审批：批准 → 结束工作流 → 提交实施轮。
+		// 差异只在实施轮进入哪个上下文（本会话 / 先压缩 / 新会话）。
+		const approvalMode = action === "approve" ? "here" : action === "approve_compact" ? "compact" : action === "approve_fresh" ? "fresh" : undefined;
+		if (approvalMode !== undefined) {
+			await this.approveAndImplement(approvalMode, state);
+			return;
+		}
+		const resolving = action === "reject" || action === "changes_requested";
 		const operation = resolving ? "plan.resolve_approval" : action;
 		const body: Record<string, unknown> = { expectedRevision: state.revision };
 		if (resolving || action === "plan.request_approval") {
 			body.expectedPlanRevision = state.plan?.revision; body.expectedPlanDigest = state.plan?.digest;
 		}
-		if (resolving) { body.approvalId = state.approval?.approvalId; body.decision = action === "approve" ? "approved" : "rejected"; }
+		if (resolving) { body.approvalId = state.approval?.approvalId; body.decision = action; }
 		await this.runDomainCommand(operation, body, "/plan", false);
+		// 要求修改后的意见由用户下一条消息承载，不在此处代写正文。
+		if (action === "changes_requested") {
+			this.port.showNotice("Plan mode is active again. Send your change requests as a normal message.", "note");
+		}
 		await this.openPlanWorkflow();
+	}
+
+	/**
+	 * 批准后按选定路径进入实施。批准绑定当前 revision/digest；
+	 * fresh 路径走 plan.handoff 创建实施会话，here/compact 留在原会话并在
+	 * settle_exit 后把已批准正文作为实施轮提交。
+	 */
+	private async approveAndImplement(mode: "here" | "compact" | "fresh", state: PlanModeState): Promise<void> {
+		const port = this.port;
+		const approved = await commandSessionController(port.controller, "plan.resolve_approval", {
+			expectedRevision: state.revision,
+			expectedPlanRevision: state.plan?.revision,
+			expectedPlanDigest: state.plan?.digest,
+			approvalId: state.approval?.approvalId,
+			decision: "approved",
+		}, {
+			correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}`, expectedRevision: state.revision,
+		}).catch(() => undefined);
+		if (approved?.ok !== true || !isValidPlanModeState(approved.value.state)) {
+			port.showNotice(`/plan approval failed: ${approved?.ok === false ? approved.code : "unavailable"}`, "error");
+			return;
+		}
+		const approvedState = approved.value.state;
+		const planBody = typeof approved.value.content === "string" ? approved.value.content : undefined;
+		const settle = await commandSessionController(port.controller, "plan.settle_exit", { expectedRevision: approvedState.revision }, {
+			correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}`, expectedRevision: approvedState.revision,
+		}).catch(() => undefined);
+		if (settle?.ok !== true) {
+			port.showNotice(`/plan exit failed: ${settle?.ok === false ? settle.code : "unavailable"}`, "error");
+			return;
+		}
+		if (mode === "fresh") {
+			const handoff = await commandSessionController(port.controller, "plan.handoff", { expectedRevision: approvedState.revision }, {
+				correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}`, expectedRevision: approvedState.revision,
+			}).catch(() => undefined);
+			port.showNotice(handoff?.ok === true
+				? "Approved plan handed off. Open the new session to implement it (mode: default)."
+				: `Approved plan handoff failed: ${handoff?.ok === false ? handoff.code : "unavailable"}`, handoff?.ok === true ? "note" : "error");
+			return;
+		}
+		if (mode === "compact") {
+			await this.runCompaction("");
+		}
+		// 实施轮只带已批准正文；历史与其余上下文由当前会话自然携带。
+		if (planBody === undefined) {
+			port.showNotice("Approved, but the plan body is unavailable; run /plan to review it before implementing.", "error");
+			return;
+		}
+		port.showNotice("Approved. Starting the implementation turn with the approved plan.", "note");
+		port.echoPrompt(`Implement the approved plan exactly as written, top to bottom.\n\n<approved-plan revision="${state.plan?.revision ?? 0}">\n${planBody}\n</approved-plan>`);
 	}
 
 	/** 执行已协商的 Session domain 命令并把 typed 结果投影成 notice。 */

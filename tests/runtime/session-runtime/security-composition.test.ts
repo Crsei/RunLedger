@@ -1,7 +1,16 @@
 import * as fs from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
 import { mkdtempSync, readFileSync, rmSync, type Stats } from "node:fs";
+import { AuthStorage } from "../../../src/storage/auth-storage.ts";
+import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
+import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
+import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
+import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+import { createEmbeddedSessionRuntime } from "../../../src/cli/embedded-session-runtime.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
+import { builtinModels } from "../../../src/providers/all.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -674,16 +683,50 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		expect(prompts).toBe(2);
 	});
 
-	it("composes the managed process domain and tools inside the owned SessionRuntime", () => {
-		const domainSource = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
-		const embeddedSource = readFileSync(join(process.cwd(), "src/cli/embedded-session-runtime.ts"), "utf8");
-		const mainSource = readFileSync(join(process.cwd(), "src/cli/main.ts"), "utf8");
-		expect(domainSource).toContain("const process = createSessionProcessComposition");
-		expect(domainSource).toContain("process.toolClient()");
-		expect(domainSource).toContain("...(planDomain === undefined ? { process } : {})");
-		expect(embeddedSource).toContain("await domain?.process?.recoverUnattached?.()");
-		expect(mainSource).toContain("createSessionProcessOverlayClient(controller)");
-		expect(mainSource).toContain("processOverlayController: view.processOverlayController");
+	it("composes the managed process domain and tools inside the owned SessionRuntime", async () => {
+		// 行为断言替代源码文本断言：标准会话必须真实暴露 process domain 与工具面。
+		const root = mkdtempSync(join(tmpdir(), "runledger-session-process-wiring-"));
+		const home = join(root, "home");
+		mkdirSync(home, { recursive: true, mode: 0o700 });
+		const layout = buildRunledgerLayout(home, "posix");
+		const db = openSessionDatabase(layout.database);
+		installSessionStoreSchema(db);
+		const store = new SessionStore(db);
+		const ownerStore = new OwnerStore(db);
+		const sessionId = createRuntimeId("session", "process-wiring");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "process-wiring"),
+			repositoryId: createRuntimeId("repository", "process-wiring"),
+			settingsDigest: "d".repeat(64),
+			harnessProfile: standardHarnessProfileRef(2),
+		});
+		const models = builtinModels({ credentials: AuthStorage.create(layout) });
+		await models.refresh({ allowNetwork: false });
+		let embedded: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
+		try {
+			embedded = await createEmbeddedSessionRuntime({
+				sessionId,
+				store,
+				ownerStore,
+				domain: {
+					cwd: root, layout, models, settings: { autoTitle: false },
+					securitySources: [{ source: "cli" as const, read: async () => ({ status: "available" as const, text: JSON.stringify({ profile: "danger-full-access", approvalPolicy: "never" }) }) }],
+				},
+			});
+			// 标准会话：process domain、后台句柄与 ToolClient 工具面全部可用。
+			expect(embedded.handle.supports("session.process.start")).toBe(true);
+			expect(embedded.handle.supports("session.process.list")).toBe(true);
+			const domain = (embedded.runtime as unknown as { domain: { process?: unknown; tools?: readonly { name: string }[] } }).domain;
+			expect(domain.process).toBeDefined();
+			const toolNames = (domain as { controller?: { tools?: readonly { name: string }[] } }).controller?.tools?.map((tool) => tool.name) ?? [];
+			expect(toolNames).toEqual(expect.arrayContaining(["process_output", "process_wait", "write_stdin", "process_stop"]));
+		} finally {
+			await embedded?.handle.close().catch(() => undefined);
+			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
+			db.close();
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("rejects a read-only write before the filesystem broker mutates", async () => {

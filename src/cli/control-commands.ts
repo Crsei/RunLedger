@@ -84,7 +84,7 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	skill: new Set(["list", "provider", "trust", "untrust"]),
 	hook: new Set(["list"]),
 	mcp: new Set(["list", "inspect", "doctor", "restart"]),
-	plan: new Set(["inspect", "enter", "activate", "write", "request_approval", "approve", "reject", "cancel", "settle_exit"]),
+	plan: new Set(["inspect", "list", "enter", "reenter", "exit", "activate", "write", "request_approval", "approve", "reject", "changes_requested", "cancel", "settle_exit", "export", "handoff"]),
 	compact: new Set(["run", "list"]),
 	context: new Set(["inspect", "assemble"]),
 	dump: new Set(["inspect", "request", "system", "assembled", "base"]),
@@ -97,7 +97,7 @@ const MUTATIONS = new Set([
 	"plugin.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust",
 	"skill.trust", "skill.untrust",
 	"mcp.restart",
-	"plan.enter", "plan.activate", "plan.write", "plan.approve", "plan.reject", "plan.request_approval", "plan.cancel", "plan.settle_exit",
+	"plan.enter", "plan.reenter", "plan.exit", "plan.activate", "plan.write", "plan.approve", "plan.reject", "plan.changes_requested", "plan.request_approval", "plan.cancel", "plan.settle_exit", "plan.export", "plan.handoff",
 	"compact.run", "context.assemble",
 	"remember.propose", "memory.approve", "memory.reject", "memory.revoke",
 ]);
@@ -130,7 +130,7 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	if (group === "memory" && rawAction === "search" && args.length < 1) return { ok: false, error: "search requires a query" };
 	if (group === "remember" && args.length < 1) return { ok: false, error: "remember requires a proposal text" };
 	if (group === "plan" && rawAction === "write" && args.length < 1) return { ok: false, error: "write requires plan text" };
-	if (group === "plan" && ["approve", "reject"].includes(rawAction) && args.length < 1) return { ok: false, error: `${rawAction} requires an approval id` };
+	if (group === "plan" && ["approve", "reject", "changes_requested"].includes(rawAction) && args.length < 1) return { ok: false, error: `${rawAction} requires an approval id` };
 	if (group === "memory" && rawAction === "approve" && args.length < 2) return { ok: false, error: "approve requires a proposal id and approval reference JSON" };
 	if (group === "memory" && (rawAction === "reject" || rawAction === "revoke") && args.length < 1) return { ok: false, error: `${rawAction} requires an id` };
 	if (group === "worktree" && rawAction === "release" && args[0] !== "confirm") return { ok: false, error: "release requires the explicit confirm token" };
@@ -212,12 +212,15 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			body.content = command.args.join(" ");
 			break;
 		case "plan.activate":
-			body.content = command.args.join(" ");
+			if (command.args.length > 0) body.content = command.args.join(" ");
 			break;
 		case "plan.approve":
 		case "plan.reject":
+		case "plan.changes_requested":
 			body.approvalId = command.args[0];
-			body.decision = command.action === "reject" ? "rejected" : "approved";
+			body.decision = command.action === "reject" ? "rejected"
+				: command.action === "changes_requested" ? "changes_requested" : "approved";
+			if (command.args.length > 1) body.feedback = command.args.slice(1).join(" ");
 			break;
 		case "compact.run":
 			if (command.args.some((arg) => arg.startsWith("--strategy="))) body.strategy = command.args.find((arg) => arg.startsWith("--strategy="))!.slice("--strategy=".length);
@@ -247,7 +250,7 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			: key === "compact.list" ? "compaction.list"
 			: key === "plugin.reload" ? "extension.reload"
 			: key === "remember.propose" ? "memory.propose"
-			: (key === "plan.approve" || key === "plan.reject") ? "plan.resolve_approval"
+			: (key === "plan.approve" || key === "plan.reject" || key === "plan.changes_requested") ? "plan.resolve_approval"
 			: key === "skill.provider" ? `skill.provider.${command.args[0] ?? "list"}` : key,
 		body,
 		mutation: command.mutation,
@@ -288,7 +291,7 @@ export function controlCommandBody(command: ControlCommand, domainRevision: numb
 		const plan = objectValue(state?.plan);
 		const planRevision = integerValue(plan?.revision);
 		if (["write", "activate"].includes(command.action) && planRevision !== undefined) body.expectedPlanRevision = planRevision;
-		if (["approve", "reject", "request_approval"].includes(command.action) && planRevision !== undefined && objectValue(plan)?.digest !== undefined) {
+		if (["approve", "reject", "changes_requested", "request_approval"].includes(command.action) && planRevision !== undefined && objectValue(plan)?.digest !== undefined) {
 			body.expectedPlanRevision = planRevision;
 			body.expectedPlanDigest = objectValue(plan)?.digest;
 		}
@@ -307,7 +310,7 @@ export function controlCommandHelp(): string {
 		"    Standard Sessions currently support user-scoped provider policy; workspace scope is unavailable.",
 		"  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",
 		"    plugin inspect / mcp inspect are unavailable in standard Sessions; use plugin list / mcp list|doctor.",
-		"  runledger plan inspect|enter|activate|write|request_approval|approve|reject <approval-id>|cancel|settle_exit",
+		"  runledger plan inspect|list|enter|reenter|exit|activate [body]|write <body>|request_approval|approve|reject|changes_requested <approval-id> [feedback]|cancel|settle_exit|export|handoff",
 		"  runledger compact list|run [--strategy=single-pass|hierarchical|handoff|openai-responses-native] [focus]",
 		"  runledger dump [request|system|assembled|base]   (raw content to stdout; metadata to stderr)",
 		"  runledger memory search|get|approve|reject|revoke   runledger remember <text>",

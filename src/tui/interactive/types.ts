@@ -128,6 +128,8 @@ export interface InteractiveModePorts {
 	setStreaming(value: boolean): void;
 	setStopReason(value: string | undefined): void;
 	dispatchCommand(command: unknown, arg: string): void;
+	/** 供 workflow 注入一条 user turn（与键盘回车同源，不绕过 handleSubmit）。 */
+	echoPrompt(text: string): void;
 }
 
 export type { InteractiveExitIntent };

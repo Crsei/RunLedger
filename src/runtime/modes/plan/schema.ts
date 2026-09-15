@@ -34,6 +34,7 @@ export const PlanApprovalRefSchema = Type.Object(
 			Type.Literal("pending"),
 			Type.Literal("approved"),
 			Type.Literal("rejected"),
+			Type.Literal("changes_requested"),
 			Type.Literal("expired"),
 			Type.Literal("invalidated"),
 		]),

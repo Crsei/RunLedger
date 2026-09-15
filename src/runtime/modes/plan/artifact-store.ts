@@ -110,6 +110,8 @@ export function isPlanArtifactStoreSnapshot(value: unknown): value is PlanArtifa
 export class PlanArtifactStore {
 	readonly #revisions = new Map<string, PlanArtifactStoreRevision[]>();
 	readonly #working = new Map<string, PlanArtifactRef>();
+	/** 单 goal 累计正文字节，随 put/restore 维护，避免上限判定逐次遍历全部 revision。 */
+	readonly #bytes = new Map<string, number>();
 
 	public put(input: PlanArtifactWriteInput): PlanResult<PlanArtifactRef> {
 		if (
@@ -138,6 +140,7 @@ export class PlanArtifactStore {
 		}
 
 		const digest = runtimeDigest(input.content);
+		const size = Buffer.byteLength(input.content, "utf8");
 		const artifactRef: PlanArtifactRef = {
 			goalId: input.goalId,
 			workspaceId: input.workspaceId,
@@ -147,7 +150,7 @@ export class PlanArtifactStore {
 				subjectKind: "artifact",
 				digest,
 				mediaType: input.mediaType ?? "text/markdown",
-				size: Buffer.byteLength(input.content, "utf8"),
+				size,
 			},
 		};
 		if (!isValidPlanArtifactRef(artifactRef)) return planFailure("invalid_artifact", "plan artifact write produced an invalid reference");
@@ -155,7 +158,25 @@ export class PlanArtifactStore {
 		const nextRevisions = [...(this.#revisions.get(scopeKey) ?? []), entry];
 		this.#revisions.set(scopeKey, nextRevisions);
 		this.#working.set(scopeKey, artifactRef);
+		this.#bytes.set(scopeKey, (this.#bytes.get(scopeKey) ?? 0) + size);
 		return { ok: true, value: artifactRef };
+	}
+
+	/** 单 goal 累计正文字节；调用方保证 id 已校验。 */
+	public byteSize(goalId: GoalId, workspaceId: WorkspaceId): number {
+		return this.#bytes.get(key(goalId, workspaceId)) ?? 0;
+	}
+
+	/**
+	 * 浅拷贝容器：正文与不可变 ref 按引用共享。
+	 * 供 mutation 在副本上试算，避免失败路径污染已发布的缓存投影。
+	 */
+	public clone(): PlanArtifactStore {
+		const next = new PlanArtifactStore();
+		for (const [scopeKey, entries] of this.#revisions) next.#revisions.set(scopeKey, [...entries]);
+		for (const [scopeKey, ref] of this.#working) next.#working.set(scopeKey, ref);
+		for (const [scopeKey, total] of this.#bytes) next.#bytes.set(scopeKey, total);
+		return next;
 	}
 
 	public read(ref: PlanArtifactRef): PlanResult<string> {
@@ -210,13 +231,19 @@ export class PlanArtifactStore {
 			nextRevisions.set(scopeKey, list);
 		}
 		const nextWorking = new Map<string, PlanArtifactRef>();
+		const nextBytes = new Map<string, number>();
 		for (const ref of snapshot.working) {
 			nextWorking.set(key(ref.goalId, ref.workspaceId), { ...ref, digest: { ...ref.digest }, artifactRef: { ...ref.artifactRef, digest: { ...ref.artifactRef.digest } } });
+		}
+		for (const [scopeKey, entries] of nextRevisions) {
+			nextBytes.set(scopeKey, entries.reduce((sum, entry) => sum + (entry.ref.artifactRef.size ?? 0), 0));
 		}
 		this.#revisions.clear();
 		for (const [scopeKey, entries] of nextRevisions) this.#revisions.set(scopeKey, entries);
 		this.#working.clear();
 		for (const [scopeKey, ref] of nextWorking) this.#working.set(scopeKey, ref);
+		this.#bytes.clear();
+		for (const [scopeKey, total] of nextBytes) this.#bytes.set(scopeKey, total);
 		return { ok: true, value: undefined };
 	}
 }

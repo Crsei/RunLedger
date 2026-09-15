@@ -351,7 +351,11 @@ export const CONTRACT_INVENTORY = [
 		modules: ["src/runtime/modes/plan/types.ts", "src/runtime/modes/plan/schema.ts"],
 		types: ["PlanArtifactRef", "PlanApprovalRef", "PlanModeState"],
 		schemas: ["PlanArtifactRefSchema", "PlanApprovalRefSchema", "PlanModeStateSchema"],
-		events: ["plan.enter_requested", "plan.entered", "plan.approval_requested", "plan.approved", "plan.exit_requested", "plan.exited", "plan.failed"],
+		events: [
+			"plan.enter_requested", "plan.entered", "plan.revision_written",
+			"plan.approval_requested", "plan.approved", "plan.approval_rejected", "plan.changes_requested", "plan.approval_invalidated",
+			"plan.exit_requested", "plan.exited", "plan.handoff_created", "plan.exported", "plan.failed",
+		],
 		ports: [],
 		fixtures: [
 			"tests/runtime-contracts/plan-context-memory/contract-consumer.test.ts",

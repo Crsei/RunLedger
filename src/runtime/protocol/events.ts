@@ -107,10 +107,16 @@ export const RUNTIME_EVENT_TYPES = [
 	"context.assembled",
 	"plan.enter_requested",
 	"plan.entered",
+	"plan.revision_written",
 	"plan.approval_requested",
 	"plan.approved",
+	"plan.approval_rejected",
+	"plan.changes_requested",
+	"plan.approval_invalidated",
 	"plan.exit_requested",
 	"plan.exited",
+	"plan.handoff_created",
+	"plan.exported",
 	"plan.failed",
 	"compaction.started",
 	"compaction.completed",
@@ -210,6 +216,13 @@ export const EVENT_TRANSITION_ACTIONS = [
 	"reset_on_takeover",
 	"resume_despite_uncertainty",
 	"reconciled",
+	// plan mode lifecycle：revision 写入、审批决策、失效与实施/导出证据都是状态推进。
+	"revision_written",
+	"approval_rejected",
+	"changes_requested",
+	"approval_invalidated",
+	"handoff_created",
+	"exported",
 ] as const;
 
 export const EVENT_BINDING_REQUIRED_TYPES = [
@@ -256,6 +269,10 @@ export const EVENT_REF_REQUIRED_ACTIONS = [
 	"search_recorded",
 	"effective_recorded",
 	"normalization_recorded",
+	// plan 工件与导出/交接证据必须带 ref。
+	"revision_written",
+	"handoff_created",
+	"exported",
 	"recorded",
 	"delivery_recorded",
 	"requested",
@@ -315,6 +332,8 @@ export const EVENT_IDEMPOTENCY_ACTIONS = [
 ] as const;
 
 export const EVENT_REASON_REQUIRED_ACTIONS = [
+	"approval_rejected",
+	"approval_invalidated",
 	"failed",
 	"interrupted",
 	"cancelled",
@@ -343,6 +362,10 @@ export const EVENT_METADATA_REQUIRED_ACTIONS = [
 	"search_recorded",
 	"effective_recorded",
 	"normalization_recorded",
+	// plan 工件与导出/交接证据必须带 ref。
+	"revision_written",
+	"handoff_created",
+	"exported",
 	"recorded",
 	"delivery_recorded",
 	"definition_revised",

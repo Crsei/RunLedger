@@ -4,6 +4,7 @@ import { SessionPlanDomain } from "./plan-domain.ts";
 import { buildStandardExecutionPrompt } from "./standard-system-prompt.ts";
 import { assertAssembledPromptBase } from "../harness-profiles/composition.ts";
 import { createSessionPlanTools } from "./plan-tools.ts";
+import { buildPlanFragment } from "../modes/plan/prompt.ts";
 import { planReadOnlyExecutionEnv } from "./plan-execution.ts";
 import { GovernedToolAuthorizationPolicy } from "../../security/integration/runtime-tool-authorization.ts";
 /**
@@ -58,7 +59,7 @@ import type { AgentRunBudgetUsage } from "../types.ts";
 import { SessionTitleLifecycle } from "./title-lifecycle.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition, type SessionExtensionComposition } from "./extension-composition.ts";
-import { createSessionPlanInspection, type SessionPlanInspection } from "./plan-composition.ts";
+import type { SessionPlanInspection } from "./plan-composition.ts";
 import type { ModelContextAssemblyInput } from "../types.ts";
 import { collectUselessToolCallIds } from "../context/compaction/projection-prune.ts";
 import { SessionCompactionDomain } from "./compaction-domain.ts";
@@ -204,15 +205,18 @@ export async function assembleSessionDomain(
 	});
 	// recovery attempt fence 包裹 governed 最终叶；任何一层缺失都 fail closed。
 	const governedExecutionEnv = gatedExecutionEnv(security.executionEnv, () => attemptPort.get(), sessionId);
-	const planDomain = catalog.harnessProfile.id === "plan" ? new SessionPlanDomain({
+	const planReadonly = catalog.harnessProfile.id === "plan";
+	const planDomain = new SessionPlanDomain({
 		store, fence,
 		workspaceId: catalog.workspaceId as Parameters<typeof createSessionProcessComposition>[0]["workspaceId"],
 		repositoryId: catalog.repositoryId as SessionPlanInspection["repositoryId"],
 		policyCeilingDigest: security.snapshot.policyDigest,
 		attemptPort: () => attemptPort.get(),
-	}) : undefined;
-	const executionEnv = planDomain === undefined ? governedExecutionEnv : planReadOnlyExecutionEnv(governedExecutionEnv);
-	const planTools = planDomain === undefined ? [] : createSessionPlanTools(planDomain);
+		autoActivate: planReadonly,
+		plansDir: options.layout.plans,
+	});
+	const executionEnv = planReadonly ? planReadOnlyExecutionEnv(governedExecutionEnv) : governedExecutionEnv;
+	const planTools = createSessionPlanTools(planDomain);
 	const lspOptions: LspToolOptions | undefined = harnessProfile.descriptor.tools.mode === "standard"
 		? {
 			spawn: createGovernedLspSpawner(process.toolClient()),
@@ -221,7 +225,7 @@ export async function assembleSessionDomain(
 			linterFactories: createGovernedLinterFactories(process.toolClient(), executionEnv.fs),
 		}
 		: undefined;
-	const baseTools = [...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions), ...planTools];
+	const baseTools = [...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions), ...planTools.tools];
 	let extensions: SessionExtensionComposition | undefined;
 	if (Object.values(harnessProfile.descriptor.extensions).some(Boolean)) {
 		extensions = await createProductionSessionExtensionComposition({
@@ -280,9 +284,23 @@ export async function assembleSessionDomain(
 	const titleListeners = new Set<(event: SessionTitleChangedEvent) => void>();
 	let titleLifecycle: SessionTitleLifecycle | undefined;
 	let compaction: SessionCompactionDomain;
-	const withContextSources = (input: ModelContextAssemblyInput): ModelContextAssemblyInput => ({
+	const withContextSources = (input: ModelContextAssemblyInput): ModelContextAssemblyInput => {
+		const inspection = planDomain.inspect();
+		const planContent = typeof inspection.content === "string" ? inspection.content : undefined;
+		const convergenceReminder = planDomain.notePlanTurn();
+		const fragment = buildPlanFragment({
+			state: inspection.state,
+			...(planContent === undefined ? {} : { content: planContent }),
+			...(convergenceReminder === 0 ? {} : { convergenceReminder }),
+		});
+		return {
 			...input,
 			sources: [
+				...(fragment === undefined ? [] : [{
+					fragmentId: fragment.key, key: fragment.key,
+					layer: "mode" as const, trust: "trusted" as const, taint: "none" as const, priority: "required" as const,
+					content: fragment.text,
+				}]),
 				...(harnessProfile.descriptor.prompt.mode !== "assembled" ? [] : [{
 					fragmentId: "session-effective-permissions", key: "session-effective-permissions",
 					layer: "policy" as const, trust: "trusted" as const, taint: "none" as const, priority: "required" as const,
@@ -295,7 +313,8 @@ export async function assembleSessionDomain(
 				}]),
 				...(extensions === undefined || !harnessProfile.descriptor.extensions.context ? [] : extensions.contextSources(input.model.contextWindow)),
 			],
-		});
+		};
+	};
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
@@ -309,9 +328,9 @@ export async function assembleSessionDomain(
 		...(options.isModelSelectable === undefined ? {} : { isModelSelectable: options.isModelSelectable }),
 		tools: [...harnessComposition.tools],
 		executionEnv,
-		authorizationPolicy: planDomain === undefined ? security.authorizationPolicy : new GovernedToolAuthorizationPolicy({
+		authorizationPolicy: new GovernedToolAuthorizationPolicy({
 			basePolicy: security.authorizationPolicy, planState: () => planDomain.inspect().state,
-			planProfileReadonly: true, planArtifactWriter: planTools.find((tool) => tool.name === "plan_write"),
+			planProfileReadonly: planReadonly, planArtifactWriteTools: planTools.writeGates,
 		}),
 		traceRecorderFactory,
 		...(extensions?.hookRuntime === undefined || !harnessProfile.descriptor.extensions.hooks
@@ -338,18 +357,18 @@ export async function assembleSessionDomain(
 		getInput: (model) => withContextSources(controller.compactionInput(model)),
 		getHistory: () => defaultConvertToLlm([...controller.messages]),
 		getPruneHints: () => {
-			const content = planDomain?.inspect().content;
+			const content = planDomain.inspect().content;
 			return { uselessToolCallIds: collectUselessToolCallIds(controller.messages), protectedReferences: typeof content === "string" ? [content] : [] };
 		},
 		withExclusive: (work) => controller.withContextMutation(work),
 		attemptPort: () => attemptPort.get(),
-		hasPendingApproval: () => planDomain?.inspect().state.status === "awaiting_approval",
+		hasPendingApproval: () => planDomain.inspect().state.status === "awaiting_approval",
 		protectedState: () => {
-			const plan = planDomain?.inspect().state;
+			const plan = planDomain.inspect().state;
 			return {
 				securityRevision: security.snapshot.securityRevision, policyDigest: security.snapshot.policyDigest,
 				workspaceId: catalog.workspaceId, harnessProfile: catalog.harnessProfile,
-				plan: plan === undefined ? null : { revision: plan.revision, status: plan.status, plan: plan.plan, approval: plan.approval },
+				plan: { revision: plan.revision, status: plan.status, plan: plan.plan, approval: plan.approval },
 				steering: controller.getSteeringMessages(), followUp: controller.getFollowUpMessages(),
 			};
 		},
@@ -359,8 +378,7 @@ export async function assembleSessionDomain(
 	await compaction.validateRestored();
 	const resources = composeSessionResourceDomains([
 		...(extensions === undefined ? [] : [extensions.resources]),
-		securitySettings, compaction,
-		...(planDomain === undefined ? [] : [planDomain]),
+		securitySettings, compaction, planDomain,
 	]);
 	const childRuntime = !harnessProfile.descriptor.multiAgent
 		? undefined
@@ -443,11 +461,7 @@ export async function assembleSessionDomain(
 	const removeExtensionLifecycle = extensions?.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
-	const planInspection = planDomain === undefined ? createSessionPlanInspection({
-		sessionId,
-		store,
-		policyCeilingDigest: security.snapshot.policyDigest,
-	}) : () => planDomain.inspect();
+	const planInspection = () => planDomain.inspect();
 	return {
 		controller,
 		trajectory,
@@ -458,17 +472,17 @@ export async function assembleSessionDomain(
 		},
 		...(childRuntime === undefined ? {} : { childRuntime }),
 		...(multiAgentResult.value === undefined ? {} : { multiAgent: multiAgentResult.value }),
-		...(planDomain === undefined ? { process } : {}),
+		...(planReadonly ? {} : { process }),
 		resources,
 		planInspection,
 		start: async () => {
-			await planDomain?.start();
+			await planDomain.start();
 			await extensions?.start();
 		},
 		shutdown: async (reason) => {
 			compaction.cancel();
 			titleLifecycle?.dispose();
-			if (planDomain !== undefined) await process.shutdown(reason);
+			if (!planReadonly) await process.shutdown(reason);
 			removeExtensionLifecycle?.();
 			try {
 				await extensions?.shutdown(reason);

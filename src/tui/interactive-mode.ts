@@ -516,6 +516,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       setStreaming: (value) => { this.streaming.setStreaming(value); },
       setStopReason: (value) => { this.streaming.setStopReason(value); },
       dispatchCommand: (command, arg) => this.dispatchCommand(command as RegisteredSlashCommand, arg),
+      echoPrompt: (text) => this.echoPrompt(text),
     };
   }
 

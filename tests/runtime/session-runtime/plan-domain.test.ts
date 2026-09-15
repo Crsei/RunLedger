@@ -67,18 +67,11 @@ describe("SessionRuntime Plan domain", () => {
 			});
 			expect(result.ok).toBe(true);
 			if (!result.ok) return;
-			const state = result.value.state;
-			expect(isValidPlanModeState(state)).toBe(true);
+			expect(isValidPlanModeState(result.value.state)).toBe(true);
+			// standard 会话现在持有真实 Plan authority：无 plan 事件时投影绑定在空 plan 流头，而不是会话流头。
 			expect(result.value).toMatchObject({ repositoryId, state: { sessionId, status: "inactive", revision: 0 } });
-			const events = store.replaySessionEvents(sessionId);
-			const durableHead = events.at(-1);
-			expect(state).toMatchObject({
-				sourceHead: {
-					streamId: sessionId,
-					sequence: durableHead?.sequence ?? 0,
-					eventHash: { algorithm: "sha256", digest: durableHead?.currentEventHash },
-				},
-			});
+			const state = result.value.state as { readonly sourceHead: unknown };
+			expect(state.sourceHead).toMatchObject({ streamId: sessionId, sequence: 0, eventHash: { algorithm: "sha256" } });
 		} finally {
 			controller?.dispose();
 			await embedded?.handle.close().catch(() => undefined);

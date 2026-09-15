@@ -23,7 +23,7 @@ import { createRuntimeId, type AttemptId } from "../../runtime/protocol/ids.ts";
 import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import { CheckpointRepository } from "./checkpoint-repository.ts";
 import { appendEventInTransaction, appendDriverEventInTransaction } from "./event-append.ts";
-import { replaySessionEvents, rebuildFromEvents, projectSession } from "./session-projection.ts";
+import { latestSessionEventHead, replaySessionEvents, rebuildFromEvents, projectSession } from "./session-projection.ts";
 import type {
 	CommandAttemptBeginInput,
 	CommandAttemptBeginResult,
@@ -283,6 +283,11 @@ export class SessionStore {
 	/** §4.4 authority replay:按 sequence 返回全部事件(genesis 起),校验 hash 链完整。 */
 	public replaySessionEvents(sessionId: string): SessionEventRecord[] {
 		return replaySessionEvents(this.db, sessionId);
+	}
+
+	/** §4.5 写路径的链尾读取：单次倒序查询，不重放事件流。 */
+	public latestEventHead(sessionId: string): { readonly sequence: number; readonly hash: string | null } {
+		return latestSessionEventHead(this.db, sessionId);
 	}
 
 	/**

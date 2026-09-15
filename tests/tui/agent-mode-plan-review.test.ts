@@ -41,7 +41,8 @@ describe("Plan mode review", () => {
 				expectedRevision: 4, expectedPlanRevision: 1, expectedPlanDigest: state.plan!.digest,
 				approvalId: state.approval!.approvalId, decision: "approved",
 			}, expect.objectContaining({ expectedRevision: 4 }));
-			expect(notice).toHaveBeenCalledWith("/plan failed: domain_revision_conflict", "error");
+			// stale 审批必须作为 error 暴露出来，且不进入实施；具体文案不作断言。
+			expect(notice.mock.calls.some(([text, kind]) => kind === "error" && String(text).includes("domain_revision_conflict"))).toBe(true);
 		} finally { mode.quit(); }
 	});
 
