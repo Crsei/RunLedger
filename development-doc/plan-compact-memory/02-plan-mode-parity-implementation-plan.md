@@ -2,6 +2,7 @@
 
 > 状态:待实施;P0–P7 全部未开始。本文是 Plan Mode 用户可见行为交付的唯一账本。
 > 基线日期:2026-09-16;RunLedger 基线 `b25ff70`(分支 `rollback/before-composer-shape`)。
+> 修订记录:2026-09-16 §4.1 依据代码核实修正结论 2 的前提(撤销 `standard@3` 与 schema 迁移),补充 D4a(`inspect()` 全量重放缺陷)与 D3 的总字节上限前置。
 > 参考基线:oh-my-pi `3b3a6dc9bb`(`packages/coding-agent`,本机 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/oh-my-pi`)。
 > 适用范围:`src/runtime/{modes/plan,session-runtime,context,harness-profiles,protocol,contracts,tools}`、`src/security/integration`、`src/tui/**`、`src/cli/**`、canonical `runledgerHome` 与对应 tests。
 > 上位计划:Runtime 04(公共类型/schema/event catalog)、Runtime 06(Session Owner、owner fence)、Runtime 09/10(profile 冻结与 mode 入口)。
@@ -101,21 +102,35 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 **D1 — mode state 与 profile 正交。** Plan Mode 是 session-scoped durable state(`PlanModeState`),不是 profile 属性。`standard` 会话可以进入/退出 plan mode;`plan@1` 保持"只读 planning-only 组合"语义:它启动即 active,且其 profile 级只读不可在会话内解除。因此 plan@1 会话实施仍需新建会话(Runtime 10 的 D3 不变),standard 会话实施可以留在原会话。
 
-**D2 — 只读边界在 authorization 层表达,不动态改工具表。** Harness composition(tool manifest + prompt + digest)在 owner 启动时冻结并校验(`composition-receipt.ts:99`、`tool-projection.ts:35`)。因此 plan mode 不通过移除工具实现,而是:(a) authorization ceiling 按 mode 状态 deny(`policy.ts:39`),(b) ExecutionEnv 对 `plan@1` 保持只读包装,(c) mode 指令经 ContextEngine fragment 注入。计划工件工具在 mode 非受限状态一律 deny。
+**D2 — 只读边界在 authorization 层表达,不动态改工具表。** allowlist profile(`minimal`/`plan`)的工具表按描述符冻结并在投影与 receipt audit 时校验(`tool-projection.ts:22-45`、`composition-receipt.ts:93-104`);standard profile 的工具表是运行时投影,receipt 只做自一致性校验(`composition-receipt.ts:87-125` 对 standard 无冻结期望)。RunLedger 当前没有动态工具面:`addedToolNames` 只出现在消息转换与剪枝(`types.ts:137,146`、`model-request-adapter.ts:110`、`projection-prune.ts:48`),没有消费者据其增删工具,工具表在 owner 装配时固定。因此 plan mode 通过 (a) authorization ceiling 按 mode 状态 deny(`policy.ts:39`)、(b) `plan@1` 的 ExecutionEnv 只读包装、(c) ContextEngine fragment 注入表达,不通过会话内增删工具实现;计划工具在整会话对模型可见,非允许状态的调用一律 deny。
 
-**D3 — 计划正文的真源仍是 Session event。** 工件正文继续以 bounded payload(≤65536 字符 / 128 KiB / 255 revision)写入 owner-fenced event 并重放校验;canonical home 下的导出文件是可删除重建的投影,不是第二真源。与 01 §6.7"大正文进 Artifact Store"的偏差在此明确记录:避免 payload 变体、避免隐式格式迁移、避免双真源。若单会话 plan 事件总量成为实际负担,再以独立显式迁移入口处理。
+**D3 — 计划正文的真源仍是 Session event。** 工件正文继续以 bounded payload 写入 owner-fenced event 并重放校验(单条 ≤65536 字符 / 128 KiB,单 goal ≤255 revision);canonical home 下的导出文件是可删除重建的投影,不是第二真源。与 01 §6.7"大正文进 Artifact Store"的偏差在此明确记录并给出理由:Artifact Store 是异步文件系统组件(`runtime/trace/artifact-store.ts:36-83` 的临时文件 + rename),引入它会把 torn write、TOCTOU 与 digest drift 面加进 plan authority 路径,而 event 链已提供 hash-chain 与 digest 校验。**但必须同时满足两个前置**:① 单 goal 增加总字节上限(P0 冻结具体数值,提案 2 MiB),超限以 typed error 拒绝而不是静默截断;② `SessionPlanDomain` 必须缓存投影(见 D4 的实测),否则 `inspect()` 的重放成本会在每轮工具调用上重复支付。P0 以真实 owner 实测 `inspect()` 在 1/32/255 revision 下的耗时并在本文记录,作为上限数值的依据。
 
-**D4 — standard 会话新增 plan 工具必须走新 profile ref。** 新增 `plan_read`/`plan_write`/`enter_plan_mode`/`exit_plan_mode` 到 standard 工具表会改变 manifest digest,与 profile 冻结冲突。因此本次冻结 `standard@3 = standard@2 + plan 工具组`,旧 `standard@2` 会话保持原 ref 恢复;迁移沿用 Runtime 10 的 offline 结构性路径(schema 6 → 7),不改写历史 SQL。
+**D4 — standard 会话直接扩展工具表,不新增 profile ref,不做 schema 迁移。**(修正先前的 `standard@3` 方案)profile ref 的 SQLite 约束是 (id, version, descriptor digest) 三元组(`storage/session-store/schema.ts:320-359`),而 standard 描述符的 digest 只覆盖 `{id, version, prompt, tools.mode/allowlist/allowBackgroundHandle, extensions, multiAgent}`(`harness-profiles/builtins.ts:8-31`、`resolver.ts:21-23` 的 `runtimeDigest(descriptor)`),不包含实际工具表。因此把 `plan_read`/`plan_write`/`enter_plan_mode`/`exit_plan_mode` 加入 standard 的 governed composition:不改变 `standard@2` 描述符 digest、不需要新 trigger、不需要 schema 6 → 7、旧 ref 会话与旧 receipt audit 均不受影响(旧 receipt 的 `toolManifestDigest` 与新 receipt 各自自洽)。代价与约束:每个 standard 请求多 4 个工具 schema(P1 记录 token 增量);standard 会话的 mode 判权必须依赖 `planState` 提供的 durable 状态,不能依赖工具是否注册。审计语义差异需记录:allowlist profile 的 receipt audit 能证明确切工具集,standard 只能证明 receipt 自洽(完整性由 event hash-chain 保证),因此"旧 standard 会话未注册 plan 工具"不能由 receipt 证明,只能由代码版本与 composition 事实说明。
+
+**D4a — `inspect()` 不得每次全量重放(实测缺陷)。** `SessionPlanDomain.inspect()` 调用 `load()`(`plan-domain.ts:58-59`),而 `load()` 重放全部 plan 事件、重建 `PlanArtifactStore` 并对每个 revision 重新计算 digest(`plan-domain.ts:182-221`);`inspect()` 又被注入为 `planState`,在**每次工具授权判定**时求值(`domain.ts:313` → `runtime-tool-authorization.ts:81-88`),并且在每次模型上下文组装时求值(`domain.ts:341`)。实测下界:255 × 128 KiB 的 `JSON.parse` + sha256 单次遍历为 607 ms(本机 Xeon Gold 5218,`/tmp` 临时脚本,基线 `b25ff70`),尚未计入 SQLite 读取、`PlanArtifactStore.put` 校验与 per-event `reproject`。plan@1 今日已支付该成本;P1 让 standard 会话也走同一 `planState` 后,成本扩散到所有会话。因此**缓存是 P1 的前置条件**:domain 作为唯一 writer 在 `commit` 成功后失效缓存,`inspect()` 只读缓存;崩溃恢复仍走完整重放。
 
 **D5 — 工件写例外从单一 writer 实例扩展为显式 plan 工具集合,仍按对象身份判定。** 集合由 composition 注入,不看工具名、不受用户输入影响;`plan_write`/`enter_plan_mode`/`exit_plan_mode` 在允许后仍受 state 状态约束(仅 active 或 pending 的合法转移)。plan 工具之外的一切 `workspace_write`/`process`/`network`/未知效果继续 deny。
 
 **D6 — 审批绑定不变,决策集扩展。** 继续绑定 state revision + artifact revision + digest + approvalId;新增 `changes_requested` 决策回到 `active`,反馈文本作为**下一 planning turn 的 user 输入**,不写入工件正文。
 
-**D7 — 实施交接三条路径,不用 `session.fork`。** `session.fork` 固化继承源 profile(`domain-router.ts:461-480`),plan@1 的 fork 仍是只读。因此 fresh-context 实施改为:新建 standard@3 会话 + 显式 approved plan handoff(带源 sessionId、revision、digest、审批 receipt digest),只带已批准计划与来源引用,不带未批准的 planning tail。
+**D7 — 实施交接三条路径,不用 `session.fork`。** `session.fork` 从同一事务快照原样复制源 catalog 的 profile(id/version/digest)与工作区身份(`session-store/catalog-repository.ts:285-322`),SQLite trigger 也只接受固定三元组,因此 fork 不是 profile 迁移机制,plan@1 的 fork 仍是只读。故 fresh-context 实施 = `session.create`(目标 standard) + 显式 `planHandoff`;目标会话自包含:写入 `plan.handoff_created` 与自己的 plan artifact revision(含已批准正文,受 D3 上限约束),首个请求以 required fragment 注入已批准正文与来源引用(源 sessionId、revision、digest、审批 receipt digest),不带未批准的 planning tail。plan@1 会话只有 fresh 路径;keep/compact 路径仅对 standard 会话开放,TUI 在 plan@1 会话中对这两个动作给出明确说明。
 
 **D8 — 不引入 plan 专用模型与 model role。** RunLedger 无 model role 概念;进入/退出 plan mode 不切换模型,模型与 thinking 仍由用户显式选择。
 
 **D9 — 不移植 `local://` 通用沙箱与子代理计划交接。** 计划产物经 `plan_write`(无路径参数)与 canonical home 导出落地;child 委派保持 Runtime 08 边界。
+
+## 4.1 三个结论的核实与处理
+
+本节记录首版计划中三个"必须显式处理"的结论经代码核实后的最终处理;结论 2 的前提被证伪,已按 §4 的 D4 修正。
+
+| # | 首版结论 | 核实后的事实 | 处理 | 落地位置 | 推翻条件 |
+|---|---|---|---|---|---|
+| 1 | fresh-context 不能用 fork,需新建会话 + handoff | 成立:Fork 原样复制源 profile 三元组(`catalog-repository.ts:285-322`),trigger 只接受固定三元组,无 override 入口 | 不扩展 fork;`session.create` 增加 `planHandoff` 载荷,目标会话自包含并写 `plan.handoff_created`;plan@1 只有 fresh 路径,keep/compact 仅 standard | P0(契约)、P5(实现) | 若未来引入 profile 迁移语义,须先改 Runtime 10 D1,再改本节 |
+| 2 | 必须冻结 `standard@3` 并做 schema 6 → 7 迁移 | **不成立**:standard 描述符 digest 不含工具表;standard 的 receipt 无冻结 manifest 期望 | 直接把 plan 工具组加入 standard governed composition;不改 ref、不改 schema、不改 trigger;新增 guard 测试锁定"standard 无冻结工具 manifest"这一事实 | P0(guard 测试)、P1(装配与 token 增量记录) | 若日后决定把 standard 工具表纳入冻结,则按新 version 走 Runtime 10 的 offline 迁移路径 |
+| 3 | 计划正文进 event 是偏差,需重新论证 | 成立但理由需加强;另发现**当前即有**的 `inspect()` 全量重放缺陷(每轮工具授权触发,255 × 128 KiB 下界 607 ms) | 保留 event 真源;补单 goal 总字节上限与 typed 拒绝;把投影缓存列为 P1 前置;以真实 owner 实测 1/32/255 revision 耗时作为上限依据 | P0(上限数值 + 实测)、P1(缓存)、P7(回归) | 若实测显示缓存后单会话成本仍不可接受,再评估把正文迁到 Artifact Store 的显式迁移入口 |
+
+三个结论的共同处理原则:**先证伪再改设计**。任何"某处冻结/某处必须迁移"的判断都要落到具体约束(谁的 digest 覆盖什么、trigger 接受什么、receipt 校验什么),不以上一层文档的措辞为依据。§4 中每条决策都带文件行号即为此;后续阶段若发现引用失效,先更新决策再改阶段。
 
 ## 5. 阶段
 
@@ -131,8 +146,9 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 - [ ] 新增 reducer 命令 `reactivate`:`pending` + 目标为当前 working revision 的合法工件 → `active`(`modes/plan/reducer.ts`);既有 `activate` 继续要求 revision 0,首次激活的不变量不放宽。
 - [ ] 新增事件名并登记 catalog 与 inventory:`plan.revision_written`、`plan.approval_rejected`、`plan.changes_requested`、`plan.approval_invalidated`、`plan.handoff_created`、`plan.exported`(`runtime/protocol/events.ts`、`runtime/contracts/inventory.ts:348`)。
 - [ ] 冻结 domain operation 名:`plan.enter`、`plan.exit`、`plan.reenter`、`plan.export`;`plan.resolve_approval` 的 `decision` 取值 `approved|rejected|changes_requested`。
-- [ ] 冻结 session handoff 载荷形状:`session.create` 的 `planHandoff`(源 sessionId、源 artifact revision、digest、审批 receipt digest)与目标 profile 为 `standard@3`。
-- [ ] 冻结 `standard@3` ref 与 plan 工具组描述符;登记 composition receipt 期望摘要与 schema 迁移边界(schema 6 → 7)。
+- [ ] 冻结 session handoff 载荷形状:`session.create` 的 `planHandoff`(源 sessionId、源 artifact revision、digest、审批 receipt digest)与目标 profile 为 `standard`;目标会话自包含写入(D7)。
+- [ ] 冻结单 goal 总字节上限与超限错误码(提案 2 MiB,最终值以本次实测为准)与真实 owner 的 `inspect()` 基线:1 / 32 / 255 revision 各测一次,记录耗时与事件字节数,写入本文(D3、D4a)。
+- [ ] 新增 guard 测试锁定 standard 工具表非冻结这一事实:standard 会话的 descriptor digest 与 SQLite 三元组白名单加入 plan 工具组前后一致,且既有 `harness.composed` receipt 仍通过 `auditHarnessCompositionReceipts`(D4)。
 - [ ] 更新 01 Phase 3–5 的状态入口注记,指向本文。
 
 测试:
@@ -140,6 +156,7 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 - [ ] `tests/runtime-contracts/plan-context-memory/{passive-contracts,contract-consumer}.test.ts`:新枚举、新事件名、handoff 载荷的 public surface 断言。
 - [ ] `tests/runtime-contracts/public-surface.test.ts`:无重复类型、无私有 current payload。
 - [ ] `tests/runtime/modes/plan/reducer-store.test.ts`:`reactivate` 的合法/非法转移与 `activate` 的 revision 0 不变量。
+- [ ] `tests/runtime/harness-profiles/*`(guard):standard 描述符 digest 与 plan 工具组无耦合;allowlist profile 的冻结摘要不受影响。
 
 完成门槛:
 
@@ -156,9 +173,11 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] 装配改动(`session-runtime/domain.ts:207-224`):SessionPlanDomain 对所有 profile 装配;新增 `planCompositionReadonly`(仅 `plan@1`)控制只读 ExecutionEnv(`:214`)与 authorizaton 的 `enforceReadonly`(`:312-314`);plan 工具组在 standard 会话注册但按 mode 状态判权。
-- [ ] `standard@3` profile 与 schema 6 → 7 offline 迁移(`harness-profiles/{builtins,agent-mode,resolver,composition-receipt,tool-projection}.ts`、`storage/migration.ts`);旧 ref 会话按原 ref 恢复,不改写历史行。
+- [ ] 装配改动(`session-runtime/domain.ts:207-224`):SessionPlanDomain 对所有 profile 装配;新增 `planCompositionReadonly`(仅 `plan@1`)控制只读 ExecutionEnv(`:214`)与 authorizaton 的 `enforceReadonly`(`:312-314`);plan 工具组在 standard 会话注册但按 mode 状态判权。不新增 profile ref、不改 schema、不改 trigger(D4)。
+- [ ] **投影缓存(本阶段前置)**:`SessionPlanDomain` 持有已校验投影,`commit` 成功后失效,`inspect()` 与 `planState` 只读缓存,不在稳态下重放;崩溃/重启仍完整重放。记录 1/32/255 revision 下 `inspect()` 的 before/after 耗时(D4a)。
+- [ ] 记录 standard 会话加入 4 个 plan 工具后的请求体积/token 增量,写入本文(D4)。
 - [ ] `plan-domain.ts` 补齐 `plan.enter`(inactive → pending → active)与 `plan.exit`(active → inactive,不经审批);`mutate()` 的 active 幂等快照保持不变(`:77`)。
+- [ ] 单 goal 总字节上限落地:超限以 typed error 拒绝,重复写入不越过上限,已存在的超限会话仍可重放与 inspect(D3)。
 - [ ] 安全点:mode 转移只在 turn 边界投递(无在飞 model request、无未完成 tool batch);未投递的 pending 可跨重启恢复,不得出现"半 active"。
 - [ ] 恢复语义:owner 重启重放后 `active`/`awaiting_approval`/`pending` 与重启前一致;crash 于投递边界不产生伪 exit 事件。
 - [ ] TUI:`/plan` 在空闲且可用时提供 `Enter plan mode` / `Exit plan mode`(`tui/interactive/plan-workflow.ts:39`);Footer `mode` 段显示 plan 状态(`tui/components/footer.ts:63`);`PlanRenderView.status` 映射 mode 状态(`tui/adapters/session-resources.ts:336`)。
@@ -167,6 +186,9 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 测试:
 
 - [ ] `tests/runtime/session-runtime/plan-domain.test.ts`:standard 会话 enter → pending → active;active 期间写型/进程/网络被拒;exit 后恢复原权限;stale revision conflict;重启后状态一致;response-loss 不重复 mutation。
+- [ ] `tests/runtime/session-runtime/plan-domain-cache.test.ts`(新增):N revision 后连续 `inspect()` 不触发重放(以 store 调用或耗时上界断言);`commit` 成功后缓存失效并反映新 revision;重启后仍完整重放且结果一致。
+- [ ] `tests/runtime/session-runtime/plan-bounds.test.ts`(新增):总字节上限被拒绝、错误码稳定、既有超限数据仍可 inspect、上限不因重试漂移。
+- [ ] `tests/runtime/harness-profiles/*`:standard 会话装配 plan 工具后 descriptor digest 不变、receipt audit 通过(D4 guard 的装配侧复核)。
 - [ ] `tests/runtime/session-runtime/agent-mode-plan.test.ts`:plan@1 仍自动 active,且 exit 不使其变为可写会话。
 - [ ] `tests/security/plan-mode-tool-admission.test.ts`:standard 会话进入后 unknown effect、`bash`、写型 MCP、child 仍 deny;always-approve 不覆盖。
 - [ ] `tests/tui/{blocks/plan-update,agent-mode-plan-review}.test.ts`:菜单项、Footer 状态、Esc 无 mutation、不可用时提示。
@@ -176,7 +198,7 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 - mode 状态不来自 prompt 或 TUI 布尔;重启后一致。
 - plan@1 行为零回归(既有 41 用例全绿)。
-- 迁移仅在隔离数据库验证,不触碰真实用户 home。
+- 稳态下 `inspect()` 不做全量重放;上限拒绝路径有测试;未改动 schema、trigger 或 profile ref。
 
 建议 commit:`plan: make plan mode a durable in-session lifecycle`
 
@@ -269,9 +291,9 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 任务:
 
-- [ ] keep context:`settle_exit` → inactive 后提交实施 user turn,注入 approved 正文(`required` fragment,绑定 revision + digest)。
-- [ ] compact context:先走既有 manual compaction(`compact.run` 同一 service),再提交实施 turn;压缩不得丢 approved plan。
-- [ ] fresh session:实现 `session.create` 的 `planHandoff`(D7):新 standard@3 会话,注入 approved 正文与来源引用,不带未批准的 planning tail;源会话保留完整历史可查。
+- [ ] keep context:`settle_exit` → inactive 后提交实施 user turn,注入 approved 正文(`required` fragment,绑定 revision + digest)。仅 standard 会话;plan@1 不提供该路径(D7)。
+- [ ] compact context:先走既有 manual compaction(`compact.run` 同一 service),再提交实施 turn;压缩不得丢 approved plan。仅 standard 会话。
+- [ ] fresh session:实现 `session.create` 的 `planHandoff`(D7):目标 standard 会话自包含写入已批准正文与 `plan.handoff_created`,首个请求注入 approved 正文与来源引用,不带未批准的 planning tail;源会话保留完整历史可查;目标会话的写入同样受单 goal 总字节上限约束(D3)。
 - [ ] 审计:写 `plan.handoff_created`,含源 sessionId、revision、digest、审批 receipt digest;实施请求的 ContextAssemblyReceipt 含 approved plan digest。
 - [ ] 边界复核:批准/退出不改变 profile permission authority;plan@1 仍需新建会话实施。
 
@@ -327,6 +349,7 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 - [ ] 端到端场景(真实 owner + 本地 HTTP fixture):进入 → 探索 → 写 revision → 请求审批 → 要求修改 → 再写 → 批准 → keep / compact / fresh 三路径实施 → 重启恢复 → 压缩后重注入 → 导出。
 - [ ] built CLI/TTY:隔离 `RUNLEDGER_DIR` + tmux,覆盖 Footer 状态、审批动作、导出、Ctrl+D 退出码 0、无残留进程。
 - [ ] 负路径:拒绝、取消、stale revision、digest drift、driver 断连重连、owner takeover、response-loss 重试。
+- [ ] 性能与上限回归:255 revision 上限会话下 `inspect()`/工具授权耗时不随历史线性增长;单 goal 总字节上限生效;standard 会话工具表扩展后 descriptor digest 与旧 receipt audit 复核。
 - [ ] 文档:更新 `development-doc/00-index.md` 模块行、01 的接口注记、`docs/` 操作手册与 `tui/components/tips.txt`。
 - [ ] 验收口径:人工键盘/中文 IME/鼠标、macOS/Windows runner 保持 pending,不因自动化通过而关闭。
 
@@ -350,7 +373,7 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 | `src/runtime/modes/plan/{types,schema,reducer,prompt,title}.ts` | P0(类型/schema/reducer)、P2/P4/P6(消费) | 单所有者串行 |
 | `src/runtime/session-runtime/plan-domain.ts` | P1 → P3 → P4 → P5 → P6 | 单所有者串行,每阶段独立可验收 |
 | `src/runtime/session-runtime/domain.ts` | P1(装配)、P2(fragment)、P5(handoff) | 多领域共享;需串行窗口与当期单一所有者 |
-| `src/runtime/harness-profiles/*`、`src/storage/migration.ts` | P0/P1 | 与 Runtime 09/10 叠加;迁移必须在隔离库验证 |
+| `src/runtime/harness-profiles/*`、`src/storage/migration.ts` | P0(guard 测试) | 本次不新增 profile ref、不改 schema/trigger(D4);`migration.ts` 只在 guard 测试中作为对照 |
 | `src/security/integration/runtime-tool-authorization.ts` | P1、P3 | claim 与判权同步修改 |
 | `src/tui/interactive/plan-workflow.ts`、`tui/adapters/session-resources.ts`、`tui/components/footer.ts` | P1 → P4 → P6 | TUI 只消费 projection,不持状态 |
 | `src/cli/control-commands.ts` | P1 → P4 → P6 | 与 TUI 同 PR 内对称补齐 |
@@ -375,7 +398,8 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 |---|---|
 | Mode 生命周期 | 用户进入/退出、agent 发起进入(批准/拒绝)、mid-turn 安全点、cancel、resume、重启、takeover |
 | 授权 | built-in 写型、`bash`、MCP unknown、child、symlink/绝对路径、always-approve、plan 工具集合身份 |
-| 工件 | 空/大正文、并发 revision、stale revision、digest drift、255 revision 上限、损坏诊断 |
+| 工件 | 空/大正文、并发 revision、stale revision、digest drift、255 revision 上限、单 goal 总字节上限、损坏诊断 |
+| 性能 | `inspect()` 在 1/32/255 revision 下不重放、缓存失效后可见新 revision、standard 会话请求体积增量 |
 | 审批 | 绑定一致性、stale 审批、外部修改失效、断连不重复实施、changes_requested 反馈通道 |
 | Context | fragment 稳定性、required 优先级、revision 去重、压缩后重注入、prune 保护 |
 | 交接 | keep / compact / fresh 三路径、伪造 digest、未批准 tail 不外泄、receipt 可追溯 |
@@ -389,7 +413,9 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 
 | 风险 | 后果 | 缓解 |
 |---|---|---|
-| `standard@3` 迁移失败 | 会话无法恢复 | offline 迁移 + 事务内复验 + 旧 ref 保留;迁移只在隔离库验证 |
+| `inspect()` 重放成本扩散到所有 standard 会话 | 每轮工具授权延迟上升 | P1 前置投影缓存 + before/after 耗时记录 + 回归断言 |
+| 计划正文事件膨胀越过上限 | 单会话事件与内存增长 | 单条 65536 字符 / 128 KiB 与单 goal 总字节上限;超限 typed 拒绝;实测数据作为数值依据 |
+| standard 工具表被判为"已冻结"而误加版本 | 无谓的 profile/schema 迁移与旧库不兼容 | P0 guard 测试锁定 standard 无冻结工具 manifest;凡声称"必须迁移"先给出 digest/trigger/receipt 三处证据(D4、§4.1) |
 | 动态只读边界表达错误 | 写型工具在 plan mode 泄漏 | authorization 层 deny + ExecutionEnv 只读 + 红队用例(§8 授权行) |
 | mode fragment 未注入或丢失 | 模型绕过只读约定 | fragment 为 required + receipt 校验 + HTTP fixture 断言请求体 |
 | 计划正文事件膨胀 | 单会话事件量增大 | 保留 65536 字符 / 255 revision 硬上限;超阈值再加显式迁移入口 |
@@ -410,6 +436,9 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 - [ ] 未批准计划无法触发写型实施 turn。
 - [ ] keep / compact / fresh 三条实施路径都有 event 证据与 approved digest 追溯。
 - [ ] 计划产物可导出到 canonical home,且导出不是第二真源。
+- [ ] 计划正文受单 goal 总字节上限约束,超限为 typed 拒绝而非静默截断。
+- [ ] 稳态下 `inspect()` 不重放事件;重启仍完整重放并得到同一投影。
+- [ ] 本次未新增 profile ref、未改 schema/trigger;standard descriptor digest 与既有 receipt audit 不变。
 - [ ] 重启、reconnect、takeover、response-loss 均不产生重复 mutation 或丢失状态。
 - [ ] `npm run check`、`npm test`、`npm run build` 完整通过。
 - [ ] built CLI/TTY 在隔离 `RUNLEDGER_DIR` 通过并保留帧与退出码证据。
@@ -422,7 +451,7 @@ oh-my-pi 没有而 RunLedger 已有的能力(不因对齐而回退):durable even
 |---|---|
 | Runtime 04 | 消费公共类型/schema/event catalog;增量需求在 §7 声明,由契约 PR 落地 |
 | Runtime 06 | mode mutation 走 owner fence、driver admission、attempt receipt、恢复路径 |
-| Runtime 09/10 | profile 集合新增 `standard@3`,frozen ref 与 receipt 期望摘要同步;plan@1 语义不变 |
+| Runtime 09/10 | 本次不新增 profile ref(D4):plan@1 语义、`minimal@1/2`、`standard@1/2` 与既有 receipt 摘要期望全部不变;仅在新增 standard 工具组后复核 composition digest 按设计变化 |
 | Runtime 08 | child 边界不变;plan mode 不放开委派 |
 | 权限专题 | Plan Mode 只读 ceiling 与权限预设正交;`request_permissions` 不能放宽 mode deny |
 | Compact 专题 | 压缩 service 与 checkpoint 不变;plan 只提供 required fragment 与剪枝保护 |
