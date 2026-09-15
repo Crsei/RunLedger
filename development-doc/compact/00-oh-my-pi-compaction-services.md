@@ -45,7 +45,7 @@ omp 把「缩小 model-visible context」拆成三条正交路径，加一层触
 | `:273` | `hasContextTokenUsage(usage)` | 是否存在可信 context 占用 |
 | `:298` | `getLastAssistantUsage(entries)` | 从 journal 末尾向前取最近非 aborted/error 的 assistant usage |
 | `:313` | `effectiveReserveTokens(window, settings)` | `max(floor(window*0.15), settings.reserveTokens ?? 16384)` |
-| `:329` | `resolveBudgetReserveTokens(window, settings)` | **仅当 `reserveTokens` 未显式设置**且默认值对该窗口不可行（≥ `window-15%` 或 ≥ `window`）时改用 `max(1, floor(window*0.15))`；显式值即使等于默认也保留（用「未设置」而非「值等于默认」判别 provenance） |
+| `:329` | `resolveBudgetReserveTokens(window, settings)` | 默认值未显式设置且 ≥ `window-15%`，或任何 reserve ≥ `window` 时改用 `max(1, floor(window*0.15))`；仍小于窗口的显式值保留（用「未设置」判别 provenance；显式超窗值仍回落） |
 | `:343` | `shouldCompact(tokens, window, settings)` | `!enabled \|\| strategy==="off" \|\| window<=0` → false；否则 `tokens > resolveThresholdTokens(...)` |
 | `:364` | `compactionContextTokens(providerContextTokens, storedConversationEstimate)` | 两者各自 clamp(≥0) 后取 **max**：provider usage 是下界，本地估算做地板，防止 on-wire 压缩（Headroom 类扩展）压低上报值而让真实历史无界增长 |
 | `:368` | `resolveThresholdTokens(window, settings)` | `thresholdTokens>0` 优先且 clamp `[1, window-1]`；否则 `thresholdPercent` clamp `[1,99]`；两者无效则 `max(0, min(window-1, window - resolveBudgetReserveTokens(...)))` |

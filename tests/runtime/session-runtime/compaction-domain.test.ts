@@ -26,6 +26,7 @@ async function fixture(native = false) {
 	const home = join(root, "home"); mkdirSync(home, { mode: 0o700 });
 	const requests: Record<string, unknown>[] = [];
 	let rejectSummary = false;
+	let promptUsage = 0;
 	let rejectNormal = 0;
 	let summaryGate: Promise<void> | undefined;
 	let releaseSummary: (() => void) | undefined;
@@ -49,7 +50,7 @@ async function fixture(native = false) {
 		if (!summarizing && rejectNormal > 0) { rejectNormal -= 1; res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "maximum context length is 100000 tokens", type: "invalid_request_error" } })); return; }
 		const content = summarizing ? "Goal and constraints: keep release scope. Decisions and completed work: compact-sentinel. Files and tool outcomes: none. Unresolved tasks: continue release. Verification evidence: none. Source references: original conversation." : "Turn finished.";
 		res.writeHead(200, { "content-type": "text/event-stream" });
-		res.end(`data: ${JSON.stringify({ id: "compact-test", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+		res.end(`data: ${JSON.stringify({ id: "compact-test", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: "stop" }], usage: { prompt_tokens: promptUsage, completion_tokens: 1, total_tokens: promptUsage + 1 } })}\n\ndata: [DONE]\n\n`);
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address(); if (address === null || typeof address === "string") throw new Error("listener missing");
@@ -61,7 +62,7 @@ async function fixture(native = false) {
 	const store = new SessionStore(db); const ownerStore = new OwnerStore(db);
 	const sessionId = createRuntimeId("session", "compact-production");
 	store.createSession({ sessionId, workspaceId: createRuntimeId("workspace", "compact"), repositoryId: createRuntimeId("repository", "compact"), settingsDigest: "d".repeat(64), harnessProfile: standardHarnessProfileRef() });
-	const settings = { autoTitle: false, provider: model.provider, model: "fixture", recording: { mode: "off" as const } };
+	const settings = { compaction: { retainRecentTokens: 1 }, autoTitle: false, provider: model.provider, model: "fixture", recording: { mode: "off" as const } };
 	await saveProjectSettings({ layout }, settings);
 	let embedded: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
 	let client: SessionInteractiveController | undefined;
@@ -75,7 +76,7 @@ async function fixture(native = false) {
 		await claimDriver(embedded, client); await client.resumeEvents();
 		return client;
 	};
-	return { root, model, layout, store, rejectReceipt: () => db.execSync("CREATE TEMP TRIGGER reject_compact_receipt BEFORE INSERT ON command_attempt_receipts WHEN NEW.outcome = 'committed' AND NEW.command_id LIKE 'command_compact-%' BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END"), hold: () => { summaryGate = new Promise<void>((resolve) => { releaseSummary = resolve; }); }, release: () => releaseSummary?.(), sessionId, requests, start, stop, overflow: (count: number) => { rejectNormal = count; }, configure: (threshold: number) => saveProjectSettings({ layout }, { ...settings, compaction: { auto: true, threshold } }), reject: () => { rejectSummary = true; },
+	return { root, model, layout, store, usage: (value: number) => { promptUsage = value; }, rejectReceipt: () => db.execSync("CREATE TEMP TRIGGER reject_compact_receipt BEFORE INSERT ON command_attempt_receipts WHEN NEW.outcome = 'committed' AND NEW.command_id LIKE 'command_compact-%' BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END"), hold: () => { summaryGate = new Promise<void>((resolve) => { releaseSummary = resolve; }); }, release: () => releaseSummary?.(), sessionId, requests, start, stop, overflow: (count: number) => { rejectNormal = count; }, configure: (threshold: number) => saveProjectSettings({ layout }, { ...settings, compaction: { retainRecentTokens: 1, auto: true, threshold } }), reject: () => { rejectSummary = true; },
 		close: async () => { releaseSummary?.(); await stop(); db.close(); server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); rmSync(root, { recursive: true, force: true }); },
 	};
 }
@@ -163,6 +164,22 @@ describe("manual compact through the production Session Owner", () => {
 			expect(records[1].count).toBeGreaterThan(records[0].count);
 			await client.prompt("continue-chain"); await client.waitForIdle();
 			expect(JSON.stringify(f.requests.at(-1)!.messages)).toContain("chain-new");
+		} finally { await f.close(); }
+	}, 60_000);
+
+	it("uses provider occupancy after restart and invalidates pre-compaction samples", async () => {
+		const f = await fixture();
+		try {
+			let client = await f.start();
+			f.usage(30_000);
+			for (let index = 0; index < 3; index += 1) { await client.prompt(`usage-${index} ${"detail ".repeat(100)}`); await client.waitForIdle(); }
+			await f.stop(); client = await f.start();
+			await f.configure(0.2); f.usage(10);
+			await client.prompt("provider-floor-trigger"); await client.waitForIdle();
+			expect(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed")).toHaveLength(1);
+			await f.stop(); client = await f.start();
+			await client.prompt("no-stale-trigger"); await client.waitForIdle();
+			expect(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed")).toHaveLength(1);
 		} finally { await f.close(); }
 	}, 60_000);
 

@@ -13,6 +13,7 @@ import type { ModelRequestRouter } from "../interactive-session-controller.ts";
 import { defaultConvertToLlm } from "../agent-loop/context-conversion.ts";
 import { isCurrentLedgerEntry } from "../ledger/types.ts";
 import { assembleAgentModelContext } from "../context/model-request-adapter.ts";
+import { compactionContextTokens, observeCompactionBudget, resolveThresholdTokens } from "../context/compaction/budget.ts";
 import { conservativeTokenEstimate } from "../context/token-estimator.ts";
 import { historyDigest, planHistoryCut, hasSummarySecret, redactSummaryInput } from "../context/compaction/history.ts";
 import { parseCompactionSettings, type CompactionSettings } from "../context/compaction/settings.ts";
@@ -39,6 +40,7 @@ const MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object.freeze([
 ] as const);
 interface LoadedCompaction {
 	readonly revision: number;
+	readonly usageStartCount: number;
 	readonly terminal: readonly CompactionRecord[];
 	readonly active?: CompactionRecord;
 }
@@ -120,12 +122,15 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		let loaded = this.load();
 		const settings = await this.settings();
 		const projected = await this.project(input, loaded.active);
+		const observation = observeCompactionBudget(projected.context.messages, input.model, Math.max(0, loaded.usageStartCount - (loaded.active?.count ?? 0) + (projected.requiredHistoryPrefixCount ?? 0)));
+		const localTokens = observation.estimator.estimate(JSON.stringify({ ...projected.context, compaction: undefined }))
+			+ (projected.context.compaction?.estimatedTokens ?? 0) + (projected.sources ?? []).reduce((total, source) => total + observation.estimator.estimate(source.content), 0);
 		const last = loaded.terminal.at(-1);
 		const durableSuppression = last?.checkpoint.status === "failed" && last.checkpoint.reason === "auto" && last.configDigest.digest === runtimeDigest(settings).digest
 			&& last.requestModel.provider === input.model.provider && last.requestModel.id === input.model.id && last.requestModel.contextWindow === input.model.contextWindow;
 		const suppressionKey = runtimeDigest({ model: { provider: input.model.provider, id: input.model.id, contextWindow: input.model.contextWindow }, settings }).digest;
 		if (settings.enabled && settings.auto && input.requestKind === "interactive" && !durableSuppression && this.suppressedModel !== suppressionKey
-			&& (contextTokens(projected) + input.model.maxTokens) / input.model.contextWindow >= settings.threshold) {
+			&& compactionContextTokens(observation.contextTokens, localTokens) + input.model.maxTokens >= resolveThresholdTokens(input.model.contextWindow, settings)) {
 			try {
 				const operationId = runtimeDigest({ sessionId: input.sessionId, prefix: historyDigest(input.context.messages), revision: loaded.revision, suppressionKey }).digest;
 				const compacted = await this.run(input, settings, "auto", { correlationId: operationId, effectId: operationId, expectedRevision: loaded.revision }, {}, input.signal ?? new AbortController().signal);
@@ -179,8 +184,9 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		const requestedStrategy = typeof payload.strategy === "string" ? payload.strategy : settings.strategy;
 		const native = requestedStrategy === "openai-responses-native";
 		const previousCount = loaded.active?.count ?? 0;
-		await this.project(input, loaded.active);
-		const cut = planHistoryCut(input.context.messages, settings.retainRecentTurns, previousCount);
+		const cutProjection = await this.project(input, loaded.active);
+		const observation = observeCompactionBudget(cutProjection.context.messages, input.model, Math.max(0, loaded.usageStartCount - (loaded.active?.count ?? 0) + (cutProjection.requiredHistoryPrefixCount ?? 0)));
+		const cut = planHistoryCut(input.context.messages, settings.retainRecentTokens, previousCount, observation.promptTokens);
 		if (!cut.ok) return failure(operation, cut.code);
 		const model = settings.summaryModel === undefined ? input.model : this.options.models.getModel(settings.summaryModel.provider, settings.summaryModel.id);
 		if (model === undefined) return failure(operation, "summary_model_unavailable");
@@ -303,18 +309,26 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		return persisted;
 	}
 	private load(): LoadedCompaction {
-		const records = this.options.store.replaySessionEvents(this.options.fence.sessionId).filter((event) => event.eventType.startsWith("compaction."));
+		const records = this.options.store.replaySessionEvents(this.options.fence.sessionId);
 		const receipts = this.options.store.listAllAttemptReceipts(this.options.fence.sessionId);
 		const starts = new Map<string, CompactionRecord>();
 		const terminal: CompactionRecord[] = [];
 		let active: CompactionRecord | undefined;
 		let revision = 0;
+		let messageCount = 0;
+		let usageStartCount = 0;
 		for (const event of records) {
+			if (event.eventType === "ledger.message") {
+				const entry: unknown = JSON.parse(event.payloadJson);
+				if (!isCurrentLedgerEntry(entry)) throw new Error("compaction_source_invalid");
+				messageCount += defaultConvertToLlm(projectSessionReplay([entry]).messages).length;
+			}
+			if (!event.eventType.startsWith("compaction.")) continue;
 			if (event.eventType === "compaction.inherited") {
 				if (terminal.length > 0 || starts.size > 0) throw new Error("compaction_inheritance_order_corrupt");
 				const inherited = decodeInheritedCompaction(event.payloadJson).record;
 				if (active !== undefined && inherited.count <= active.count) throw new Error("compaction_inheritance_range_corrupt");
-				active = inherited; continue;
+				active = inherited; usageStartCount = messageCount; continue;
 			}
 			const record = decodeCompactionRecord(event);
 			if (record.checkpoint.status === "started") {
@@ -331,11 +345,11 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 			if (receipt === undefined || runtimeDigest(JSON.parse(JSON.stringify(receipt))).digest !== record.checkpoint.terminalReceiptRef?.digest.digest || receipt.resultDigest?.digest !== settlementDigest(record).digest) throw new Error("compaction_receipt_binding_corrupt");
 			if (record.checkpoint.status === "completed") {
 				if (record.count <= (active?.count ?? 0)) throw new Error("compaction_range_corrupt");
-				active = record;
+				active = record; usageStartCount = messageCount;
 			}
 			terminal.push(record); revision = record.revision;
 		}
-		return { revision, terminal, ...(active === undefined ? {} : { active }) };
+		return { revision, usageStartCount, terminal, ...(active === undefined ? {} : { active }) };
 	}
 	private async readSummary(record: CompactionRecord): Promise<string> {
 		if (record.artifact === undefined) throw new Error("compaction_artifact_missing");

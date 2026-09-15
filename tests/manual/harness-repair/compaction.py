@@ -21,7 +21,8 @@ class CompactProvider(Provider):
         body = json.loads(raw)
         messages = body.get("messages", [])
         summarizing = bool(messages and "Summarize the supplied historical conversation" in str(messages[0].get("content")))
-        last_user = next((str(item.get("content")) for item in reversed(messages) if item.get("role") == "user"), "")
+        last_content = next((item.get("content", "") for item in reversed(messages) if item.get("role") == "user"), "")
+        last_user = last_content if isinstance(last_content, str) else "\n".join(part.get("text", "") for part in last_content if isinstance(part, dict))
         if summarizing or last_user.startswith("COMPACT_HISTORY_"):
             self.server.wire_requests.append(body)
             summary = ("Goal and constraints: preserve compact verification. "
@@ -63,6 +64,8 @@ def main():
     server.requests, server.wire_requests = [], []
     threading.Thread(target=server.serve_forever, daemon=True).start()
     probe = Probe(shutil.which("runledger"), root, server.server_port)
+    probe.settings["compaction"] = {"retainRecentTokens": 1000}
+    probe.write_settings()
     report = {"passed": False, "root": str(root), "executable": str(probe.executable),
               "provider": "local HTTP fixture; real OpenAI provider remains pending"}
     print(json.dumps(report), flush=True)
@@ -100,6 +103,9 @@ def main():
         wire = json.dumps(server.wire_requests[-1])
         assert "compact-cli-sentinel" in wire and "COMPACT_HISTORY_0" not in wire
         probe.save_frame("resumed-turn")
+        time.sleep(0.5)
+        before = probe.submit("COMPACT_HISTORY_NEW")
+        probe.end(before, "stop")
         report["second_exit"] = probe.close()
         session_id = probe.session_ids()[0]
         control_raw = records(probe, "ledger.message")

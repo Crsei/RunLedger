@@ -1,6 +1,6 @@
 # RunLedger × oh-my-pi 压缩服务接入实施计划
 
-> 状态：**in_progress**。O0 合同冻结完成，O1–O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
+> 状态：**in_progress**。O0 合同冻结完成，O1 完成，O2–O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
 > 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`；事实清单见 [00-oh-my-pi-compaction-services.md](00-oh-my-pi-compaction-services.md)。
 > 检索入口见 [README.md](README.md)。
@@ -164,6 +164,10 @@
 不得声称：任何能力已实现。
 
 ### O1：切点与预算（token 预算 + provider usage 地板）
+
+状态：`done` / `implemented`（本地生产组合）。切点已收敛至 `planHistoryCut`，默认保留 20,000 估算 token、至少一个最新完整 turn；旧 turn 设置明确拒绝。provider usage 观测从同一模型的持久响应恢复，并按已提交 compact/inheritance 事件顺序排除旧投影样本，不依赖时钟。默认 reserve 的小窗口语义以来源源码为准：任何超窗 reserve 都回落，显式且小于窗口的值保留。当前代码验证：focused 3 文件 33 用例通过（`/tmp/runledger-omp-o1-focused-final.log`）；完整 `npm run check`、`npm run build`、`npm test` 通过（分别保存完整输出于 `/tmp/runledger-omp-o1-{check-final,build-final,test}.log`，全套 543 文件 / 3594 用例）。真实 PATH `runledger` 指向本仓 `bin/runledger.js`，隔离 home + 本地 HTTP + tmux 验证两次压缩、raw ledger 不变、重启恢复与正常退出，结果 `/tmp/runledger-compact-cli-gmhz41qi/result.json`，无遗留测试进程。手工夹具同步修复数组形式 user content 的解析，确保真正生成长历史；该证据不代表真实 provider 或人工视觉验收。
+
+原有 current-format 门禁把上游协议标签识别为内部代际标记；本阶段只为 compact 目录三份既定上游资料登记明确 allowlist，并回归验证无关文档仍拒绝，主账本/总索引使用语义名称。没有扩大运行时代码的豁免。
 
 前置：O0；C1–C2 的适配器核心可用。
 文件边界：`context/compaction/history.ts`、`settings.ts`、`cut-planner.ts`（收敛决定）、`session-runtime/compaction-domain.ts`（阈值与剪枝调用点预留）、对应测试。

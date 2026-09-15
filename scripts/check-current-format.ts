@@ -34,6 +34,7 @@ const EXTERNAL_VERSION_ALLOWLIST: readonly RegExp[] = [
 	/^docs\/pi-architecture\.md$/,
 	/^tests\/providers\//,
 	/^development-doc\/providers\//,
+	/^development-doc\/compact\/(?:00-oh-my-pi-compaction-services|01-integration-plan|README)\.md$/,
 	// 权威适配计划保留上游版本标签,不属于 RunLedger 运行时代际标记。
 	/^development-doc\/plan\/04-lsp-server-adaptation-plan\.md$/,
 	/^development-doc\/plan\/07-idle-recap-replication-plan\.md$/,

@@ -125,7 +125,7 @@ src/cli/main.ts
 
 ### 0.6 2026-09-15 oh-my-pi 压缩服务接入入口
 
-把 oh-my-pi 的压缩机制（token 预算切点与比率校正、摘要格式 seam 与迭代 update、文件操作清单、投影级剪枝、handoff、provider 原生 V2、`stopReason === "length"` 有界恢复）接入上述适配器的**增量**方案，见 [compact/README.md](../compact/README.md)、[compact/00-oh-my-pi-compaction-services.md](../compact/00-oh-my-pi-compaction-services.md)、[compact/01-integration-plan.md](../compact/01-integration-plan.md)。该目录只承载 omp 侧取证与接入阶段 O0–O7，不重复记账：本文件仍是 Model/Plan/Context/Compaction/Memory 的唯一执行账本，C0–C5 阶段状态、公共契约与 authority 以本文件与 `runtime/04` 为准；两者冲突时先改本文件再改该目录。O0 已基于 `9ab7977` 冻结接入合同（含 §4.4 契约变更顺序），未改变本节任何实现状态。
+把 oh-my-pi 的压缩机制（token 预算切点与比率校正、摘要格式 seam 与迭代 update、文件操作清单、投影级剪枝、handoff、provider 原生流式压缩、`stopReason === "length"` 有界恢复）接入上述适配器的**增量**方案，见 [compact/README.md](../compact/README.md)、[compact/00-oh-my-pi-compaction-services.md](../compact/00-oh-my-pi-compaction-services.md)、[compact/01-integration-plan.md](../compact/01-integration-plan.md)。该目录只承载 omp 侧取证与接入阶段 O0–O7，不重复记账：本文件仍是 Model/Plan/Context/Compaction/Memory 的唯一执行账本，C0–C5 阶段状态、公共契约与 authority 以本文件与 `runtime/04` 为准；两者冲突时先改本文件再改该目录。O0 已基于 `9ab7977` 冻结接入合同（含 §4.4 契约变更顺序），未改变本节任何实现状态。O1 的 token 切点、provider usage 地板及本地生产验收已完成，增量证据仅记在 `compact/01` 的 O1 小节。
 
 ## 1. 目标、成功标准与非目标
 

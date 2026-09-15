@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +54,18 @@ describe("current format boundary", () => {
 		} finally {
 			await rm(fixtureRoot, { recursive: true, force: true });
 		}
+	});
+
+	it("allows pinned upstream compact documents without allowing runtime or unrelated compact files", async () => {
+		const fixtureRoot = await mkdtemp(join(tmpdir(), "runledger-current-upstream-compact-"));
+		try {
+			const docs = join(fixtureRoot, "development-doc", "compact");
+			await mkdir(docs, { recursive: true });
+			const marker = "V" + "2";
+			await writeFile(join(docs, "00-oh-my-pi-compaction-services.md"), marker);
+			await writeFile(join(docs, "new-runtime-format.md"), marker);
+			expect(scanCurrentFormatMarkers(fixtureRoot).map((entry) => entry.file)).toEqual(["development-doc/compact/new-runtime-format.md"]);
+		} finally { await rm(fixtureRoot, { recursive: true, force: true }); }
 	});
 
 	it("rejects glued internal generation identifiers", async () => {

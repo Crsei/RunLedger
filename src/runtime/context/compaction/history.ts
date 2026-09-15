@@ -1,6 +1,7 @@
 /** 压缩仅选择完成的对话前缀；原消息仍由 ledger 持有。 */
 import type { Message } from "../../../types.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../protocol/foundation.ts";
+import { adjustedRetainTokens, estimateHistoryTokens } from "./budget.ts";
 import { isCompleteToolBatch } from "./cut-planner.ts";
 
 export function historyDigest(messages: readonly Message[]): RuntimeDigest {
@@ -13,19 +14,31 @@ export function historyDigest(messages: readonly Message[]): RuntimeDigest {
 export type HistoryCut = { readonly ok: true; readonly count: number; readonly units: readonly string[] }
 	| { readonly ok: false; readonly code: "insufficient_history" | "incomplete_history" };
 
-export function planHistoryCut(messages: readonly Message[], retainRecentTurns: number, previousCount = 0): HistoryCut {
-	if (!Number.isSafeInteger(retainRecentTurns) || retainRecentTurns < 1 || !Number.isSafeInteger(previousCount) || previousCount < 0) return { ok: false, code: "incomplete_history" };
+export function planHistoryCut(messages: readonly Message[], retainRecentTokens: number, previousCount = 0, providerPromptTokens = 0): HistoryCut {
+	if (!Number.isSafeInteger(retainRecentTokens) || retainRecentTokens < 1 || !Number.isSafeInteger(previousCount) || previousCount < 0) return { ok: false, code: "incomplete_history" };
 	const ends: number[] = [];
 	for (let index = 0; index < messages.length; index += 1) {
 		const message = messages[index]!;
 		if (message.role === "assistant" && message.stopReason === "stop" && !message.content.some((part) => part.type === "toolCall")) ends.push(index + 1);
 	}
-	const eligible = ends.slice(0, Math.max(0, ends.length - retainRecentTurns)).filter((end) => end > previousCount);
+	if (previousCount > messages.length || (previousCount > 0 && !ends.includes(previousCount))) return { ok: false, code: "incomplete_history" };
+	const retain = adjustedRetainTokens(retainRecentTokens, providerPromptTokens, estimateHistoryTokens(messages.slice(previousCount)));
+	let tailTokens = 0;
+	let firstKept = messages.length;
+	// 从新到旧跨完整 turn 累计；至少保留最新完整 turn，未完成尾部一并保留。
+	for (let index = ends.length - 2; index >= -1; index -= 1) {
+		const start = ends[index] ?? 0;
+		tailTokens += estimateHistoryTokens(messages.slice(start, firstKept));
+		firstKept = start;
+		if (tailTokens >= retain) break;
+	}
+	const eligible = ends.filter((end) => end > previousCount && end <= firstKept);
 	if (eligible.length === 0) return { ok: false, code: "insufficient_history" };
 	const units: string[] = [];
 	let start = previousCount;
 	for (const end of eligible) {
 		const members = messages.slice(start, end);
+		if (members[0]?.role !== "user") return { ok: false, code: "incomplete_history" };
 		if (!isCompleteToolBatch({
 			toolCallIds: members.flatMap((message) => message.role === "assistant" ? message.content.flatMap((part) => part.type === "toolCall" ? [part.id] : []) : []),
 			toolResultIds: members.flatMap((message) => message.role === "toolResult" ? [message.toolCallId] : []),
