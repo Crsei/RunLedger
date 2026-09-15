@@ -5,6 +5,7 @@ import {
   findCommand,
   isCommandVisibleForContext,
   popupCommandsForFilter,
+  suggestCommand,
 } from "../../../src/tui/commands/registry.ts";
 
 describe("slash command registry", () => {
@@ -79,15 +80,25 @@ describe("slash command registry", () => {
 		expect(findCommand("settings")).toBeUndefined();
 	});
 
-	it("registers /permissions as the only Permissions entrypoint", () => {
+	it("registers /permissions as the only Permissions entrypoint, with /permission as its alias", () => {
 		expect(findCommand("permissions")).toMatchObject({
 			canonicalName: "permissions",
-			aliases: [],
+			aliases: ["permission"],
 			actionType: "config.permissions",
 			category: "config",
 			availableDuringTask: false,
 		});
+		expect(findCommand("permission")?.canonicalName).toBe("permissions");
 		expect(findCommand("settings")?.actionType).not.toBe("config.permissions");
+	});
+
+	it("suggestCommand 只对唯一最近命中给出建议", () => {
+		expect(suggestCommand("permissons")).toBe("permissions");
+		expect(suggestCommand("recovry")).toBe("recovery");
+		// canonical 与 alias 同为最近命中时保持沉默,不猜。
+		expect(suggestCommand("permissionz")).toBeUndefined();
+		expect(suggestCommand("nonsense-command-name")).toBeUndefined();
+		expect(suggestCommand("")).toBeUndefined();
 	});
 
   it("commandsForContext 隐藏 /help,但直接输入与 /commands 别名仍可解析", () => {

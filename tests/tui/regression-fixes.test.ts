@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../../src/runtime/agent.ts";
 import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import type { Terminal } from "../../src/tui/index.ts";
 import type { HostFrameEnvelope } from "../../src/runtime/host/types.ts";
@@ -110,6 +111,12 @@ function conversationText(mode: InteractiveMode): string {
 		if (block.kind === "select") return block.options.map((option) => option.label).join("\n");
 		return "";
 	}).join("\n");
+}
+
+/** InteractiveMode 不公开 ui/refs；测试按已知私有形状读取一次。 */
+interface InteractiveModeSurface {
+	readonly ui: { getOverlay(): { render(width: number): readonly string[] } | undefined };
+	readonly refs: { readonly editor: { getText(): string } };
 }
 
 describe("P1 regression fixes at InteractiveMode level", () => {
@@ -291,6 +298,75 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 			await new Promise<void>((resolve) => setTimeout(resolve, 20));
 			expect(conversationText(mode)).toContain("historical conversation");
 			expect(ui.hasOverlay()).toBe(false);
+		} finally {
+			mode.quit();
+			await running;
+		}
+	});
+
+	it("P2-1: suspends approval keys while the permissions page loads and restores the prompt on cancel", async () => {
+		let releaseLoad: (() => void) | undefined;
+		const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+		let settingsInspectStarted = false;
+		const controller = new ContractController({
+			supportedOperations: ["security.settings.inspect", "session.security.inspect", "session.security.apply"],
+			querySessionDomain: async (operation) => {
+				if (operation === "security.settings.inspect") {
+					settingsInspectStarted = true;
+					await loadGate;
+					return {
+						profile: "workspace-write", securityRevision: 1, scope: "user", editable: true,
+						document: { profile: "workspace-write" },
+						sourceDigest: runtimeDigest({ saved: "workspace-write" }),
+					};
+				}
+				return { profile: "workspace-write", securityRevision: 1, presetAvailability: [] };
+			},
+			commandSessionDomain: async () => ({ ok: false, code: "unused" }),
+		});
+		const terminal = new ContractTerminal();
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			const pending = mode.handleReverseRequest({
+				...reverseFrame(),
+				body: {
+					requestType: "permission",
+					toolName: "bash",
+					summary: "run the workspace check",
+					cwd: "/tmp",
+					requests: [{ kind: "shell", command: "npm run check", cwd: "/tmp", analysis: "known" }],
+				},
+			}, new AbortController().signal);
+			let settledDecision: Record<string, unknown> | undefined;
+			void pending.then((body) => { settledDecision = body; });
+			await settleFrames();
+			// why as: InteractiveMode 不公开 ui/refs;测试按已知私有形状读取一次。
+			const surface: InteractiveModeSurface = mode as unknown as InteractiveModeSurface;
+			expect(surface.ui.getOverlay()?.render(120).join("\n") ?? "").toContain("Would you like to run the following command?");
+
+			// `/` 打开的是异步权限页;页面接管前的按键既不能决策,也不能落进 Composer。
+			terminal.send("/");
+			await settleFrames();
+			expect(settingsInspectStarted).toBe(true);
+			terminal.send("p");
+			terminal.send("y");
+			terminal.send("\r");
+			await settleFrames();
+			expect(settledDecision).toBeUndefined();
+			expect(surface.refs.editor.getText()).toBe("");
+
+			releaseLoad!();
+			await settleFrames();
+			expect(surface.ui.getOverlay()?.render(120).join("\n") ?? "").toContain("Apply permissions to this Session and save as the default.");
+
+			// Esc 返回原审批弹窗,此时按键重新生效。
+			terminal.send("\x1b");
+			await settleFrames();
+			expect(surface.ui.getOverlay()?.render(120).join("\n") ?? "").toContain("Would you like to run the following command?");
+			terminal.send("y");
+			await expect(pending).resolves.toEqual({ ok: true, decision: "allow-once" });
 		} finally {
 			mode.quit();
 			await running;

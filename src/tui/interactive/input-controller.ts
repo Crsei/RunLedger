@@ -10,7 +10,7 @@ import { SecondarySelectionView } from "../components/list-selection-modal.ts";
 import { SlashCommandPopup } from "../components/slash-command-popup.ts";
 import { matchesKey } from "../primitives.ts";
 import { makeSelectListTheme } from "../theme/factories.ts";
-import { findCommand, commandsForContext, type RegisteredSlashCommand } from "../commands/registry.ts";
+import { findCommand, suggestCommand, commandsForContext, type RegisteredSlashCommand } from "../commands/registry.ts";
 import type { OverlayHandle } from "../primitives.ts";
 import type { InteractiveModePorts } from "./types.ts";
 
@@ -35,10 +35,14 @@ export class InputController {
 			const name = rawCommand ?? "";
 			const arg = argParts.join(" ");
 			this.hideSlashPopup();
-			// 注册表唯一事实源:未知命令 → 原 default 分支行为(报错提示)
+			// 注册表唯一事实源:未知命令 → 原 default 分支行为(报错提示 + 近似建议)
 			const command = findCommand(name);
 			if (command === undefined) {
-				this.port.showNotice(`Unknown command: /${name}. Type "/" for a list of supported commands.`, "error");
+				const suggestion = suggestCommand(name);
+				this.port.showNotice(
+					`Unknown command: /${name}.${suggestion === undefined ? "" : ` Did you mean /${suggestion}?`} Type "/" for a list of supported commands.`,
+					"error",
+				);
 				return;
 			}
 			this.port.dispatchCommand(command, arg);

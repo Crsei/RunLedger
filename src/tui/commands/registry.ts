@@ -237,6 +237,7 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
     }),
     command("permissions", "Configure permissions for new Sessions", 13.5, {
 		actionType: "config.permissions",
+		aliases: ["permission"],
 		category: "config",
 		policy: IDLE_ONLY_POLICY,
 		availableDuringTask: false,
@@ -366,6 +367,52 @@ export function findCommand(name: string): RegisteredSlashCommand | undefined {
   const exact = entries.find((entry) => entry.canonicalName === normalized);
   if (exact !== undefined) return exact;
   return entries.find((entry) => entry.aliases.includes(normalized));
+}
+
+/**
+ * 未注册命令的近似建议:仅在唯一最近命中时返回名字,否则 undefined。
+ * 提示里给候选名,避免用户只能面对 "Unknown command";名字更短时收紧距离,避免乱猜。
+ */
+export function suggestCommand(name: string): string | undefined {
+  const normalized = name.trim().toLowerCase();
+  if (normalized.length === 0) return undefined;
+  const maxDistance = normalized.length <= 4 ? 1 : 2;
+  let bestName: string | undefined;
+  let bestDistance = maxDistance + 1;
+  let ambiguous = false;
+  for (const entry of builtinCommandDescriptors()) {
+    for (const candidate of [entry.canonicalName, ...entry.aliases]) {
+      const distance = editDistanceWithin(normalized, candidate, maxDistance);
+      if (distance > maxDistance) continue;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestName = candidate;
+        ambiguous = false;
+      } else if (distance === bestDistance) {
+        ambiguous = true;
+      }
+    }
+  }
+  return bestName === undefined || ambiguous ? undefined : bestName;
+}
+
+/** 有界编辑距离:超过 max 立即返回 max + 1,不继续计算。 */
+function editDistanceWithin(left: string, right: string, max: number): number {
+  if (Math.abs(left.length - right.length) > max) return max + 1;
+  let previous: number[] = Array.from({ length: right.length + 1 }, (_value, index) => index);
+  for (let row = 1; row <= left.length; row += 1) {
+    const current: number[] = [row];
+    let rowBest = row;
+    for (let column = 1; column <= right.length; column += 1) {
+      const cost = left[row - 1] === right[column - 1] ? 0 : 1;
+      const value = Math.min(previous[column]! + 1, current[column - 1]! + 1, previous[column - 1]! + cost);
+      current.push(value);
+      if (value < rowBest) rowBest = value;
+    }
+    if (rowBest > max) return max + 1;
+    previous = current;
+  }
+  return previous[right.length]!;
 }
 
 /** 非空过滤时展示所有命令(含 hiddenInFullList 别名);空过滤只展示 full-list 命令。 */

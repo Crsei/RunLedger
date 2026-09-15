@@ -108,6 +108,12 @@ export class ApprovalWorkflow {
 				}
 			};
 			const choices = approvalChoices(view);
+			// 权限页异步加载期间挂起审批按键;返回时只有仍未结算的弹窗会被恢复。
+			const restore = (): void => {
+				if (settled || signal.aborted) return;
+				permissionView.resumeInput();
+				port.showOverlayModal(permissionView, { anchor: "bottom-left" });
+			};
 			const permissionView = new PermissionRequestView({
 				request: view,
 				choices,
@@ -115,9 +121,12 @@ export class ApprovalWorkflow {
 				onCancel: () => choose({ decision: "cancel" }),
 				onChange: () => port.uiRequestRender(),
 				...(port.openPermissions === undefined || port.controller?.supports?.("session.security.apply") !== true ? {} : {
-					onPermissions: () => port.openPermissions!(() => {
-						if (!settled && !signal.aborted) port.showOverlayModal(permissionView, { anchor: "bottom-left" });
-					}),
+					onPermissions: () => {
+						if (settled || signal.aborted) return;
+						permissionView.suspendInput();
+						port.uiRequestRender();
+						port.openPermissions!({ onCancel: restore, onUnavailable: restore });
+					},
 				}),
 			});
 			signal.addEventListener("abort", onAbort, { once: true });

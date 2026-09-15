@@ -116,8 +116,15 @@
 - 验证：`npm run check`、完整 `npm test`、`npm run build` 均 exit 0，完整日志在 `/tmp/runledger-permission-fix-validation/`。PATH/global npm link 指向本仓库。`cross-session.py` 在真实 tmux TTY 中验证两个会话相同 updateId、四个不同 eventId、两次切换和两次工具执行均成功，两个 CLI exit 0，无存活 owner/进程；证据 `/tmp/runledger-permission-cross-session-znq5cl3h/result.json`。既有 `run.py` 也通过审批中切换、原操作仅一次、后续权限收紧及模型上下文更新，revision 1→2→3，CLI exit 0、无存活进程；证据 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/runledger-active-permissions-86t71low/result.json`。这些是 Linux、本地 HTTP fixture 与构建后 CLI/TUI 证据，不替代真实外部模型、人工或跨平台验收。
 - 已经运行的旧 CLI 需要正常退出后恢复原会话以加载新构建；旧失败留下的 uncertain attempt 仍受既有 recovery barrier 约束，本修复不修改真实用户数据或静默清除待核验副作用。
 
-#### 交付顺序与完成标准
+### 2026-09-16 审批弹窗 `/` 竞态与未注册权限命令提示修复
 
+- 缺陷 1（安全相关）：审批弹窗底部提示 `Enter confirms; Esc denies; / changes Session permissions`，但 `/` 触发的 `PermissionsWorkflow.open()` 要先经两次 domain query 才 `showOverlay`。页面接管 overlay 之前的按键仍路由给审批弹窗，`p` 被解析成持久批准快捷键并直接提交 `allow-session`/`allow-with-prefix-rule`，命令在用户只打算打开权限页时被执行；其余字符在 overlay 关闭后落入 Composer。构建后 CLI 在隔离 `RUNLEDGER_DIR`、本地 HTTP 模型夹具的真实 tmux TTY 中复现：输入 `/permissions` 出现 `approval allow-session for bash` 与 composer 残留 `ermissions`。
+- 缺陷 2：`/permission`（单数）、`/approve` 等未注册名字只得到 `Unknown command: /xxx.`，没有候选提示；用户在这种等待态下最容易输错。
+- 修复：`PermissionRequestView` 增加挂起态，`/` 同步挂起按键后异步打开权限页；`PermissionsOpenCallbacks.onCancel/onUnavailable` 覆盖“用户放弃”和“页面未能展示”两条返回路径，只有仍未结算且未被中止的弹窗才恢复并解除挂起。权限页的 onCancel/onUnavailable 全部经该回调返回，不再让弹窗悬挂在不可见状态。`/permissions` 增加 `permission` 别名，未注册命令在有唯一最近候选时提示 `Did you mean /xxx?`（canonical 与 alias 同为最近命中时保持沉默）。
+- 回归：`tests/tui/regression-fixes.test.ts` 新增用例在加载期发送 `/`、`p`、`y`、回车，断言审批未结算且 Composer 为空，返回后 `y` 才产生 `allow-once`；移除挂起守卫时该用例以 `allow-with-prefix-rule` 失败，证明其守卫的正是本缺陷。registry 测试覆盖别名与建议。
+- 验证：`npm run check`、`npm run build` exit 0；构建后 CLI（`~/.npm-global/bin/runledger` → 本仓库）在 120×36 真实 tmux TTY 复验：`/permissions` 不再误批、无 composer 残留、`Waiting for input` 保持、Esc 返回审批弹窗、`y` 得到 `allow-once`；`/recovry` 提示 `Did you mean /recovery?`，`/permission` 打开权限页；Ctrl+D 退出码 0，无残留进程。真实外部 provider、人工视觉/IME 与 macOS/Windows 未执行。
+
+#### 交付顺序与完成标准
 按 R1 contract/失败恢复表 → R2 生产接线 → R3 审批及故障恢复 → R4 TUI → R5 集成/TTY 顺序实现，R2–R4 未闭环前不将功能标记完成。阶段可分提交，但最终交付必须包含同一会话即时生效、待审批重新评估、反向收紧、审计恢复和真实 TTY 证据；仅改提示、默认值或要求用户重开 session 均不算修复。
 
 ### 2026-09-07 Full Access 与独立系统确认

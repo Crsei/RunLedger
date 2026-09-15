@@ -27,6 +27,8 @@ export class PermissionRequestView extends SecondarySelectionView {
 	readonly #request: ApprovalReverseRequestView;
 	readonly #choices: readonly ApprovalChoice[];
 	readonly #onPermissions?: () => void;
+	/** 权限页异步加载期间的挂起态:到达的按键不触发任何决策,也不落到 composer。 */
+	#inputSuspended = false;
 
 	public constructor(props: PermissionRequestViewProps) {
 		const choices = codexPermissionChoices(props.choices);
@@ -61,13 +63,31 @@ export class PermissionRequestView extends SecondarySelectionView {
 		this.#onPermissions = props.onPermissions;
 	}
 
+	/**
+	 * `/` 打开权限页是异步的(先查询 Host 再换 overlay)。在页面接管前挂起输入,
+	 * 否则后续按键仍会被解析成 y/p/数字快捷键,造成未经确认的 allow-session。
+	 */
+	public suspendInput(): void {
+		this.#inputSuspended = true;
+	}
+
+	public resumeInput(): void {
+		this.#inputSuspended = false;
+	}
+
 	public override handleInput(data: string): void {
+		if (this.#inputSuspended) return;
 		if (data === "/" && this.#onPermissions !== undefined) { this.#onPermissions(); return; }
 		super.handleInput(data);
 	}
 
 	public present(width: number): PresentationBlock[] {
 		const command = shellCommand(this.#request);
+		const footer = this.#inputSuspended
+			? "Opening Session permissions…"
+			: this.#onPermissions === undefined
+				? undefined
+				: "Enter confirms; Esc denies; / changes Session permissions";
 		return [
 			{
 				kind: "text",
@@ -90,7 +110,7 @@ export class PermissionRequestView extends SecondarySelectionView {
 				})),
 				selectedIndex: this.selectedIndex,
 			},
-			...(this.#onPermissions === undefined ? [] : [{ kind: "text" as const, content: "Enter confirms; Esc denies; / changes Session permissions" }]),
+			...(footer === undefined ? [] : [{ kind: "text" as const, content: footer }]),
 		];
 	}
 }

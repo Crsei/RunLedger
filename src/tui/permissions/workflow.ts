@@ -45,18 +45,25 @@ const LABELS: Readonly<Record<BuiltinPermissionPresetId, string>> = Object.freez
 	"danger-full-access": "Full Access",
 });
 
+export interface PermissionsOpenCallbacks {
+	/** 用户在权限页放弃并返回(例如返回原审批弹窗)。 */
+	readonly onCancel?: () => void;
+	/** 权限页没能展示(Host 不可用/inspection 失败/recovery 要求);调用方必须恢复被挂起的输入。 */
+	readonly onUnavailable?: () => void;
+}
+
 export class PermissionsWorkflow {
 	readonly #options: PermissionsWorkflowOptions;
 	#applying = false;
 	#overlay?: Component;
-	#onCancel?: () => void;
+	#callbacks: PermissionsOpenCallbacks = {};
 
 	public constructor(options: PermissionsWorkflowOptions) {
 		this.#options = options;
 	}
 
-	public async open(onCancel?: () => void): Promise<void> {
-		this.#onCancel = onCancel;
+	public async open(callbacks: PermissionsOpenCallbacks = {}): Promise<void> {
+		this.#callbacks = callbacks;
 		const controller = this.#options.controller;
 		if (
 			controller?.supports?.("security.settings.inspect") !== true ||
@@ -65,6 +72,7 @@ export class PermissionsWorkflow {
 			controller.commandSessionDomain === undefined
 		) {
 			this.#options.showNotice("Permissions settings are unavailable from this Session Host.", "error");
+			callbacks.onUnavailable?.();
 			return;
 		}
 		try {
@@ -75,16 +83,19 @@ export class PermissionsWorkflow {
 				: undefined;
 			if (availability?.ok && availability.value.applicationState === "recovery_required") {
 				this.#options.showNotice("Session permissions require recovery. Reconnect before running more tools.", "error");
+				callbacks.onUnavailable?.();
 				return;
 			}
 			const view = inspection(result, availability);
 			if (view === undefined) {
 				this.#options.showNotice("Permissions settings could not be inspected.", "error");
+				callbacks.onUnavailable?.();
 				return;
 			}
 			this.#openCards(view);
 		} catch {
 			this.#options.showNotice("Permissions settings could not be inspected. Reconnect and try again.", "error");
+			callbacks.onUnavailable?.();
 		}
 	}
 
@@ -117,7 +128,7 @@ export class PermissionsWorkflow {
 				if (item.value === "danger-full-access") this.#openFullAccessConfirmation(view);
 				else void this.#save(view, item.value as BuiltinPermissionPresetId);
 			},
-			onCancel: () => { this.#close(); this.#onCancel?.(); },
+			onCancel: () => { this.#close(); this.#callbacks.onCancel?.(); },
 		});
 		this.#overlay = modal;
 		this.#options.showOverlay(modal);

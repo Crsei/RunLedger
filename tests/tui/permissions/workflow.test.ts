@@ -189,7 +189,7 @@ describe("active permission UI state", () => {
 			closeOverlay: () => { overlay = undefined; }, showNotice: () => undefined, requestRender: () => undefined,
 			nextRequest: () => ({ correlationId: "apply", effectId: "apply" }), onApplied,
 		});
-		await workflow.open(onCancel);
+		await workflow.open({ onCancel });
 		const rendered = stripAnsi(overlay!.render(120).join("\n"));
 		expect(rendered).toContain("Ask for approval (current)");
 		expect(rendered).toContain("Saved default: danger-full-access");

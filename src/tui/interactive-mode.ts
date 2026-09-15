@@ -493,7 +493,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       sessionPort: this.ports.session,
       showNotice: (text, kind) => this.showNotice(text, kind),
       showOverlayModal: (component, options, kind) => this.showOverlayModal(component, options, kind),
-      openPermissions: (onCancel) => { void this.permissionsWorkflow.open(onCancel); },
+      openPermissions: (callbacks) => { void this.permissionsWorkflow.open(callbacks); },
       closeOverlay: () => this.closeOverlay(),
       createEffect: (type, extra) => this.createEffect(type, extra),
       waitForWorkflow: (key, requestId) => this.waitForWorkflow(key, requestId),

@@ -28,6 +28,7 @@ import type { TuiPreferencesPort, TuiShimmerMode } from "../preferences/types.ts
 import type { InteractiveSessionAdapter } from "../adapters/interactive-session.ts";
 import type { InteractiveExitIntent } from "../interactive-mode.ts";
 import type { RequestDump } from "../../runtime/model-request-snapshots.ts";
+import type { PermissionsOpenCallbacks } from "../permissions/workflow.ts";
 
 /** 原始正文与说明分开；文件写入不增加标题、不清洗、不追加换行。 */
 export interface PromptDumpDocument extends RequestDump {
@@ -103,7 +104,8 @@ export interface InteractiveModePorts {
 
 	showNotice(text: string, kind?: "note" | "error"): void;
 	showOverlayModal(component: Component, options?: OverlayOptions, kind?: Exclude<TuiOverlayState["state"], "closed">): void;
-	readonly openPermissions?: (onCancel?: () => void) => void;
+	/** Session 权限页;调用方在 `onCancel`/`onUnavailable` 时恢复被挂起的输入。 */
+	readonly openPermissions?: (callbacks?: PermissionsOpenCallbacks) => void;
 	closeOverlay(): void;
 	createEffect(type: TuiEffect["type"], extra?: Record<string, unknown>): TuiEffect;
 	waitForWorkflow(key: WorkflowKey, requestId: string): Promise<WorkflowResult>;
