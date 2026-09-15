@@ -34,6 +34,23 @@ describe("FooterFieldRegistry", () => {
 		if (width === 143) expect(fields.find((entry) => entry.id === "identity.tools")?.segment.text).toBe("Tools: shell");
 	});
 
+	it("omits the default mode badge and the standard tool summary, keeping abnormal values visible", () => {
+		const registry = createDefaultFooterFieldRegistry();
+		const idsAt = (partial: Partial<FooterSnapshot>): readonly string[] =>
+			fitProjectedFooterRows(registry.project({ ...snapshot, ...partial }).rows, 120).flatMap((row) => row.fields.map((entry) => entry.id));
+		expect(idsAt({ agentMode: "default", toolsSummary: "standard" })).not.toContain("identity.mode");
+		expect(idsAt({ agentMode: "default", toolsSummary: "standard" })).not.toContain("identity.tools");
+
+		const limited = fitProjectedFooterRows(registry.project({ ...snapshot, agentMode: "plan", toolsSummary: "readonly + plan" }).rows, 120).flatMap((row) => row.fields);
+		expect(limited.find((entry) => entry.id === "identity.mode")?.segment.text).toBe("Mode: plan");
+		expect(limited.find((entry) => entry.id === "identity.tools")?.segment.text).toBe("Tools: readonly + plan");
+
+		// profile 解析失败必须仍然可见，不能与 default 一起被抑制。
+		const broken = fitProjectedFooterRows(registry.project({ ...snapshot, agentMode: "unavailable", toolsSummary: "unavailable" }).rows, 120).flatMap((row) => row.fields);
+		expect(broken.find((entry) => entry.id === "identity.mode")?.segment.text).toBe("Mode: unavailable");
+		expect(broken.find((entry) => entry.id === "identity.tools")?.segment.text).toBe("Tools: unavailable");
+	});
+
 	it("orders registered fields by order and registration sequence", () => {
 		const registry = new FooterFieldRegistry();
 		expect(registry.register(field("identity.model", 20)).ok).toBe(true);

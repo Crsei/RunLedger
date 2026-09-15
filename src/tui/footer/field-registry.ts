@@ -1,7 +1,7 @@
 import type { ModelThinkingLevel } from "../../types.ts";
 import { formatUsageSegments, type UsageDisplayFieldId, type UsageSnapshot } from "../../runtime/usage/index.ts";
 import type { StatusLineAccent, StatusLineSegment } from "../highlight/status-style.ts";
-import { sanitizeLabel } from "../presentation/projectors.ts";
+import { agentModeBadge, sanitizeLabel } from "../presentation/projectors.ts";
 import { visibleWidth } from "../primitives.ts";
 import { fitToWidth } from "../components/render-width.ts";
 
@@ -208,8 +208,8 @@ function projectedField(definition: FooterFieldDefinition, text: string): Projec
 function builtinFooterFields(): readonly FooterFieldDefinition[] {
 	return [
 		field("activity.queue", "activity", 10, "metadata", queueText),
-		{ ...field("identity.mode", "identity", 0, "state", (snapshot) => snapshot.agentMode === undefined ? undefined : `Mode: ${snapshot.agentMode}`), minWidth: 13 },
-		field("identity.tools", "identity", 45, "metadata", (snapshot) => snapshot.toolsSummary === undefined ? undefined : `Tools: ${snapshot.toolsSummary}`, 10),
+		{ ...field("identity.mode", "identity", 0, "state", (snapshot) => agentModeBadge(snapshot.agentMode)), minWidth: 13 },
+		field("identity.tools", "identity", 45, "metadata", toolsText, 10),
 		field("identity.permission", "identity", 46, "metadata", (snapshot) => snapshot.permissionProfile === undefined ? undefined : `Permission: ${snapshot.permissionProfile}`, 60),
 		field("identity.state", "identity", 10, "state", statusText),
 		field("identity.path", "identity", 20, "path", (snapshot) => snapshot.workspaceDisplayAbsolutePath),
@@ -254,6 +254,11 @@ function usageField(
 function usageText(snapshot: FooterSnapshot, id: UsageDisplayFieldId): string | undefined {
 	if (snapshot.usage === undefined) return undefined;
 	return formatUsageSegments(snapshot.usage).find((segment) => segment.id === id)?.text;
+}
+
+/** standard 是标准 Session 的完整工具表，属常态；只展示 shell / readonly + plan 等受限工具集。 */
+function toolsText(snapshot: FooterSnapshot): string | undefined {
+	return snapshot.toolsSummary === undefined || snapshot.toolsSummary === "standard" ? undefined : `Tools: ${snapshot.toolsSummary}`;
 }
 
 function queueText(snapshot: FooterSnapshot): string | undefined {

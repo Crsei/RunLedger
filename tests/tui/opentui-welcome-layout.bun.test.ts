@@ -49,6 +49,7 @@ describe("80x24 startup layout", () => {
 	test("keeps the Harness profile above Welcome when a model adds a context footer row", async () => {
 		const frame = await renderStartup(true, true);
 		expect(frame).toContain("Harness: standard@1");
+		expect(frame).not.toContain("Mode: default");
 		expect(frame).toContain("RunLedger vtest");
 		expect(frame).toContain("/ for commands");
 		expect(frame).toContain("think:off");

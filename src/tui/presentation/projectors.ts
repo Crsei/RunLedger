@@ -35,6 +35,14 @@ export function sanitizeLabel(value: unknown, maxBytes = 80): string {
   return `${text.replace(/\uFFFD$/u, "")}…`;
 }
 
+/**
+ * 身份条与状态栏共用的 Mode 徽标文案：default 档是常态，返回 undefined 表示不展示；
+ * unavailable 等异常值仍需展示，不能静默隐藏 profile 解析失败。
+ */
+export function agentModeBadge(mode: unknown): string | undefined {
+  return typeof mode !== "string" || mode.length === 0 || mode === "default" ? undefined : `Mode: ${mode}`;
+}
+
 /** TuiField<string> 形态的有界标签；unknown/unavailable 保形。 */
 export function boundedField(value: unknown, maxBytes = 80): TuiField<string> {
   const text = sanitizeLabel(value, maxBytes);
