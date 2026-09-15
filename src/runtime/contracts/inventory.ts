@@ -381,7 +381,7 @@ export const CONTRACT_INVENTORY = [
 		modules: ["src/runtime/context/compaction/types.ts", "src/runtime/context/compaction/schema.ts"],
 		types: ["CompactionCheckpoint"],
 		schemas: ["CompactionCheckpointSchema"],
-		events: ["compaction.started", "compaction.completed", "compaction.failed"],
+		events: ["compaction.started", "compaction.completed", "compaction.failed", "compaction.inherited"],
 		ports: [],
 		fixtures: [
 			"tests/runtime-contracts/plan-context-memory/contract-consumer.test.ts",

@@ -1181,7 +1181,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         void this.sessionWorkflow.resumeSession(arg || undefined);
         return;
       case "session.fork":
-        void this.sessionWorkflow.forkCurrentSession();
+        void this.sessionWorkflow.forkCurrentSession(arg);
         return;
       case "session.rename":
         void this.sessionWorkflow.renameCurrentSession(arg);
@@ -1240,6 +1240,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       case "compaction.list":
         void this.planWorkflow.runDomainCommand("compaction.list", {}, "/compact", true);
+        return;
+      case "compact.run":
+        void this.planWorkflow.runCompaction(arg);
         return;
       case "memory.inspect":
         void this.planWorkflow.runDomainCommand("memory.inspect", {}, "/memory", true);

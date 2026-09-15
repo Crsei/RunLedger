@@ -7,7 +7,6 @@
  */
 
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
-import { isRuntimeEventRangeRef } from "../runtime/protocol/schemas.ts";
 
 export type ControlGroup =
 	| "security"
@@ -136,10 +135,8 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	if (group === "memory" && (rawAction === "reject" || rawAction === "revoke") && args.length < 1) return { ok: false, error: `${rawAction} requires an id` };
 	if (group === "worktree" && rawAction === "release" && args[0] !== "confirm") return { ok: false, error: "release requires the explicit confirm token" };
 	if (group === "compact" && rawAction === "run") {
-		if (args.length < 2) return { ok: false, error: "compact run requires a JSON source range and transcript" };
-		let sourceRange: unknown;
-		try { sourceRange = JSON.parse(args[0]!) as unknown; } catch { return { ok: false, error: "compact run source range must be valid JSON" }; }
-		if (!isRuntimeEventRangeRef(sourceRange)) return { ok: false, error: "compact run source range is invalid" };
+		if (args.some((arg) => arg.startsWith("--") && arg !== "--strategy=single-pass" && arg !== "--strategy=hierarchical" && arg !== "--strategy=openai-responses-native")) return { ok: false, error: "compact run accepts --strategy=single-pass|hierarchical|openai-responses-native and optional focus text" };
+		if (args.filter((arg) => arg.startsWith("--strategy=")).length > 1) return { ok: false, error: "compact strategy must be specified once" };
 	}
 	if (group === "context" && rawAction === "assemble") {
 		if (args.length < 2) return { ok: false, error: "context assemble requires request JSON and sources JSON" };
@@ -223,9 +220,8 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			body.decision = command.action === "reject" ? "rejected" : "approved";
 			break;
 		case "compact.run":
-			body.reason = "manual";
-			body.sourceRange = JSON.parse(command.args[0]!) as unknown;
-			body.transcript = command.args.slice(1).join(" ");
+			if (command.args.some((arg) => arg.startsWith("--strategy="))) body.strategy = command.args.find((arg) => arg.startsWith("--strategy="))!.slice("--strategy=".length);
+			if (command.args.some((arg) => !arg.startsWith("--strategy="))) body.focus = command.args.filter((arg) => !arg.startsWith("--strategy=")).join(" ");
 			break;
 		case "context.assemble":
 			body.request = JSON.parse(command.args[0]!) as unknown;
@@ -248,6 +244,7 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 	return {
 		operation: key === "security.inspect" ? "session.security.inspect"
 			: command.group === "dump" ? "session.request.inspect"
+			: key === "compact.list" ? "compaction.list"
 			: key === "plugin.reload" ? "extension.reload"
 			: key === "remember.propose" ? "memory.propose"
 			: (key === "plan.approve" || key === "plan.reject") ? "plan.resolve_approval"
@@ -311,9 +308,9 @@ export function controlCommandHelp(): string {
 		"  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",
 		"    plugin inspect / mcp inspect are unavailable in standard Sessions; use plugin list / mcp list|doctor.",
 		"  runledger plan inspect|enter|activate|write|request_approval|approve|reject <approval-id>|cancel|settle_exit",
-		"  runledger compact list|run '<source-range-json>' <transcript>",
+		"  runledger compact list|run [--strategy=single-pass|hierarchical|openai-responses-native] [focus]",
 		"  runledger dump [request|system|assembled|base]   (raw content to stdout; metadata to stderr)",
 		"  runledger memory search|get|approve|reject|revoke   runledger remember <text>",
-		"    worktree, compact, context, memory/remember and plan mutations are unavailable in standard Sessions.",
+		"    worktree, context and memory/remember mutations are unavailable in standard Sessions.",
 	].join("\n");
 }

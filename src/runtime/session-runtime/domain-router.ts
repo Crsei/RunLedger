@@ -421,6 +421,8 @@ export class SessionDomainRouter {
 				return { ok: false, status: "stale", code: "domain_revision_conflict", operation, currentRevision: catalogRevision };
 			}
 			const payload = recordValue(input.payload);
+			if (payload.compaction !== undefined && payload.compaction !== "inherit" && payload.compaction !== "raw") return { ok: false, status: "failed", code: "fork_compaction_invalid", operation };
+			if (payload.throughSequence !== undefined && (typeof payload.throughSequence !== "number" || !Number.isSafeInteger(payload.throughSequence) || payload.throughSequence < 1)) return { ok: false, status: "failed", code: "fork_boundary_invalid", operation };
 			const sourceSessionId = typeof payload.sourceSessionId === "string" ? payload.sourceSessionId : undefined;
 			const expectedSourceHeadSequence = typeof payload.expectedSourceHeadSequence === "number" && Number.isSafeInteger(payload.expectedSourceHeadSequence)
 				? payload.expectedSourceHeadSequence
@@ -444,7 +446,7 @@ export class SessionDomainRouter {
 				effectId: input.effectId,
 				expectedRevision: input.expectedRevision,
 				sourceSessionId,
-				expectedSourceHeadSequence,
+				expectedSourceHeadSequence, compaction: payload.compaction ?? "inherit", throughSequence: payload.throughSequence ?? null,
 			}));
 			if ("error" in begun) {
 				return {
@@ -461,7 +463,8 @@ export class SessionDomainRouter {
 					sessionId: targetSessionId,
 					sourceSessionId,
 					expectedSourceHeadSequence,
-					expectedCatalogRevision: catalogRevision,
+					expectedCatalogRevision: catalogRevision, inheritCompaction: payload.compaction !== "raw",
+					...(typeof payload.throughSequence === "number" ? { throughSequence: payload.throughSequence } : {}),
 				});
 				const settled = this.attempts.settleAttempt(begun.attemptId, "committed", runtimeDigest({ operation, targetSessionId, sourceSessionId, sourceHeadSequence: expectedSourceHeadSequence }));
 				if (!settled.ok) return { ok: false, status: "failed", code: settled.code, operation };

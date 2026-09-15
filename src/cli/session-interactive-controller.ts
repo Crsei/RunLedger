@@ -48,6 +48,7 @@ export interface SessionInteractiveSnapshot {
 	readonly eventCursor: number;
 	readonly driverRevision: number;
 	readonly agentRuns?: readonly AgentRunSummary[];
+	readonly compactionInFlight?: boolean;
 }
 
 /** R7:TUI 的 session-owner 适配器(替代 legacy RemoteInteractiveSessionController)。 */
@@ -72,6 +73,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	private toolCountValue: number;
 	private selectionValue: RuntimeSelection;
 	private inFlightValue = false;
+	private compactionInFlightValue = false;
 	private eventCursor: number;
 	private driverRevision: number;
 	private sequence = 0;
@@ -96,6 +98,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.eventCursor = snapshot.eventCursor;
 		this.driverRevision = snapshot.driverRevision;
 		this.runSummaryState = snapshot.agentRuns ?? [];
+		this.compactionInFlightValue = snapshot.compactionInFlight === true;
 		// attach 的 cursor 可能已越过 agent_start；从同一快照恢复活跃 run。
 		this.inFlightValue = this.runSummaryState.some((run) => run.status === "active");
 		this.removeTransportListener = handle.transport.onEvent((frame) => this.receive(frame));
@@ -177,7 +180,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	}
 
 	public get inFlight(): boolean {
-		return this.inFlightValue;
+		return this.inFlightValue || this.compactionInFlightValue;
 	}
 
 	public get currentSelection(): RuntimeSelection {
@@ -276,6 +279,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	}
 
 	public async prompt(text: string, behavior?: "steer" | "followUp"): Promise<void> {
+		if (this.compactionInFlightValue && !this.inFlightValue) throw new Error("Wait for compaction to finish, or interrupt it first.");
 		const kind = this.inFlightValue ? (behavior === "followUp" ? "follow_up" : "steer") : "prompt";
 		await this.command(kind, kind === "prompt" ? { promptText: text } : { text });
 	}
@@ -294,7 +298,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	}
 
 	public waitForIdle(): Promise<void> {
-		if (!this.inFlightValue) return Promise.resolve();
+		if (!this.inFlight) return Promise.resolve();
 		return new Promise<void>((resolve) => this.idleWaiters.push(resolve));
 	}
 
@@ -437,6 +441,11 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		if (sequence !== undefined && sequence <= this.eventCursor) return;
 		if (sequence !== undefined) this.eventCursor = sequence;
 		const event = frame.body.payload;
+		if (frame.body.eventType === "compaction.started" || frame.body.eventType === "compaction.completed" || frame.body.eventType === "compaction.failed") {
+			this.compactionInFlightValue = frame.body.eventType === "compaction.started";
+			if (!this.inFlight) for (const resolve of this.idleWaiters.splice(0)) resolve();
+			this.ackCursor(); return;
+		}
 		if (frame.body.eventType === "session.security.update" && isRecord(event) && event.stage === "applied" && typeof event.profile === "string") {
 			this.permissionProfile = event.profile;
 			for (const listener of this.permissionListeners) {
@@ -487,7 +496,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		if (event.type === "agent_start") this.inFlightValue = true;
 		if (event.type === "agent_end") {
 			this.inFlightValue = false;
-			for (const resolve of this.idleWaiters.splice(0)) resolve();
+			if (!this.compactionInFlightValue) for (const resolve of this.idleWaiters.splice(0)) resolve();
 		}
 		if (this.listeners.size === 0) {
 			if (this.pendingListenerEvents.length >= SESSION_PROTOCOL_BOUNDS.maxPreActivationPending) {

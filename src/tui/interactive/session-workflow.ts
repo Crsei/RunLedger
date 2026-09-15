@@ -153,7 +153,13 @@ export class SessionWorkflow {
 	}
 
 	/** S2:/fork 从 catalog 的 current row 读取 durable head，并同时 fence catalog/head。 */
-	public async forkCurrentSession(): Promise<void> {
+	public async forkCurrentSession(argument = ""): Promise<void> {
+		const args = argument.trim().split(/\s+/u).filter(Boolean);
+		const at = args.find((arg) => arg.startsWith("--at="));
+		if (new Set(args).size !== args.length || args.filter((arg) => arg.startsWith("--at=")).length > 1
+			|| args.some((arg) => arg !== "--raw" && !/^--at=[1-9][0-9]*$/u.test(arg)) || (at !== undefined && !Number.isSafeInteger(Number(at.slice(5))))) {
+			this.port.showNotice("Usage: /fork [--raw] [--at=sequence]", "error"); return;
+		}
 		if (this.rejectSessionTransition()) return;
 		const catalog = await this.loadSessionCatalog();
 		if (catalog === undefined) return;
@@ -164,6 +170,8 @@ export class SessionWorkflow {
 		}
 		const transition = await this.runSessionTransition("session.fork", {
 			sourceSessionId: current.sessionId,
+			...(args.includes("--raw") ? { compaction: "raw" } : {}),
+			...(at === undefined ? {} : { throughSequence: Number(at.slice(5)) }),
 			expectedSourceHeadSequence: current.headSequence,
 			expectedRevision: catalog.revision,
 		});

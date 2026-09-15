@@ -55,6 +55,7 @@ export type SlashCommandActionType =
   | "extension.hooks"
   | "plan.inspect"
   | "compaction.list"
+  | "compact.run"
   | "memory.inspect"
   | "memory.propose"
   | "prompt.select";
@@ -162,7 +163,7 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       usage: "[sessionId]",
       argumentSchema: [schema("sessionId", "Session id to resume", false)],
     }),
-    command("fork", "Fork the current durable head", 6, { actionType: "session.fork", category: "session", policy: IDLE_ONLY_POLICY }),
+    command("fork", "Fork the current durable head", 6, { actionType: "session.fork", category: "session", policy: IDLE_ONLY_POLICY, supportsInlineArgs: true, usage: "[--raw] [--at=sequence]" }),
     command("rename", "Set the current Session display title", 6.5, {
       actionType: "session.rename",
       category: "session",
@@ -271,11 +272,14 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/plan is available when the current turn is idle.",
     }),
-	    command("compact", "List compaction checkpoints", 23, {
-      actionType: "compaction.list",
+	    command("compact", "Summarize older conversation history", 23, {
+      actionType: "compact.run",
       category: "domain",
-      policy: READONLY_POLICY,
-      requiredOperation: "compaction.list",
+      policy: IDLE_ONLY_POLICY,
+      requiredOperation: "compact.run",
+      supportsInlineArgs: true,
+      usage: "[--strategy=single-pass|hierarchical] [focus]",
+      argumentSchema: [schema("focus", "Optional strategy and summary focus", false)],
       unavailableHint: "Start a new session with /new, then include a short summary.",
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/compact is available when the current turn is idle.",

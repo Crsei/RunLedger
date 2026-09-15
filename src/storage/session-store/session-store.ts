@@ -16,7 +16,11 @@
 
 import type { SessionDatabase } from "./database.ts";
 import { CatalogRepository } from "./catalog-repository.ts";
-import { AttemptRepository } from "./attempt-repository.ts";
+import { AttemptRepository, appendAttemptReceiptInTransaction } from "./attempt-repository.ts";
+import { rowToAttemptReceipt } from "./row-mappers.ts";
+import { SessionStoreError } from "./session-store-error.ts";
+import { createRuntimeId, type AttemptId } from "../../runtime/protocol/ids.ts";
+import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import { CheckpointRepository } from "./checkpoint-repository.ts";
 import { appendEventInTransaction, appendDriverEventInTransaction } from "./event-append.ts";
 import { replaySessionEvents, rebuildFromEvents, projectSession } from "./session-projection.ts";
@@ -91,6 +95,10 @@ export interface CreateSessionInput {
 }
 
 export interface ForkSessionInput {
+	/** 显式 raw fork 保留原历史，放弃继承 provider-private 投影。 */
+	readonly inheritCompaction?: boolean;
+	/** 可选的历史完成轮次边界；源 Session 不变。 */
+	readonly throughSequence?: number;
 	readonly sessionId: SessionId;
 	readonly sourceSessionId: string;
 	readonly expectedSourceHeadSequence?: number;
@@ -195,6 +203,27 @@ export class SessionStore {
 			appended = appendEventInTransaction(tx, fence, input);
 		});
 		return appended!;
+	}
+
+	/** compact 的完成事件（含 projection 引用）与 attempt 收口必须同事务。 */
+	public appendEventAndSettleAttempt(
+		fence: OwnerFence, input: (receipt: CommandAttemptReceipt) => AppendEventInput, attemptId: AttemptId,
+		outcome: "committed" | "rejected", resultDigest: RuntimeDigest,
+	): SessionEventRecord {
+		return this.db.withImmediateTransactionSync((tx) => {
+			const row = tx.querySingle("SELECT * FROM command_attempt_receipts WHERE session_id = ? AND attempt_id = ? ORDER BY created_at_ms DESC, receipt_id DESC LIMIT 1", [fence.sessionId, attemptId]);
+			if (row === undefined) throw new SessionStoreError("invalid_input", "attempt missing");
+			const started = rowToAttemptReceipt(row);
+			if (started.outcome !== "started" || started.originGeneration !== fence.generation) throw new SessionStoreError("invalid_input", "attempt is not active in this owner generation");
+			const receipt: CommandAttemptReceipt = {
+				...started, receiptId: createRuntimeId("receipt", `compact-${attemptId.slice(-48)}`),
+				outcome, settledGeneration: fence.generation, resultDigest,
+				createdAtMs: Math.max(Date.now(), started.createdAtMs + 1),
+			};
+			const event = appendEventInTransaction(tx, fence, input(receipt));
+			appendAttemptReceiptInTransaction(tx, fence, receipt);
+			return event;
+		});
 	}
 
 	/**

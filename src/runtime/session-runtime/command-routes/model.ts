@@ -63,7 +63,11 @@ export function createModelCommandRoutes(port: SessionCommandPort): Pick<Session
 			port.invalidateIdleRecap();
 			if (port.domain === undefined) return { ok: false, code: "domain_unavailable" };
 			if (typeof request.body.provider !== "string" || typeof request.body.model !== "string") return { ok: false, code: "invalid_input" };
-			await port.domain.controller.selectModel({ provider: request.body.provider, id: request.body.model } as Model<Api>);
+			try { await port.domain.controller.selectModel({ provider: request.body.provider, id: request.body.model } as Model<Api>); }
+			catch (error) {
+				if (error instanceof Error && ["native_compaction_incompatible", "model_context_requires_compaction"].includes(error.message)) return { ok: false, code: error.message };
+				throw error;
+			}
 			return { ok: true, kind: "select_model", result: { selection: port.domain.snapshot().selection } };
 		},
 		set_thinking: async (request) => {

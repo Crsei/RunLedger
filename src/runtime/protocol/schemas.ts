@@ -131,9 +131,9 @@ const SessionTitleModelRefSchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
-const RuntimeModelRequestKindSchema = Type.Unsafe<"interactive" | "idle-recap" | "auto-title">({
+const RuntimeModelRequestKindSchema = Type.Unsafe<"interactive" | "idle-recap" | "auto-title" | "compaction-summary">({
 	type: "string",
-	enum: ["interactive", "idle-recap", "auto-title"],
+	enum: ["interactive", "idle-recap", "auto-title", "compaction-summary"],
 });
 
 function eventAction(type: RuntimeEventType): string {

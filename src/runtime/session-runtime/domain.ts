@@ -1,3 +1,4 @@
+import { defaultConvertToLlm } from "../agent-loop/context-conversion.ts";
 import { TrajectoryService } from "../trajectory/service.ts";
 import { SessionPlanDomain } from "./plan-domain.ts";
 import { buildStandardExecutionPrompt } from "./standard-system-prompt.ts";
@@ -58,7 +59,8 @@ import { SessionTitleLifecycle } from "./title-lifecycle.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition, type SessionExtensionComposition } from "./extension-composition.ts";
 import { createSessionPlanInspection, type SessionPlanInspection } from "./plan-composition.ts";
-import { assembleAgentModelContext } from "../context/model-request-adapter.ts";
+import type { ModelContextAssemblyInput } from "../types.ts";
+import { SessionCompactionDomain } from "./compaction-domain.ts";
 import { createLspTool, type LspToolOptions } from "../../lsp/tool.ts";
 import { shutdownAll } from "../../lsp/client.ts";
 import { clearLinterClientCache } from "../../lsp/clients/index.ts";
@@ -244,11 +246,7 @@ export async function assembleSessionDomain(
 		}),
 		attemptPort: () => attemptPort.get(),
 	});
-	const resources = composeSessionResourceDomains([
-		...(extensions === undefined ? [] : [extensions.resources]),
-		securitySettings,
-		...(planDomain === undefined ? [] : [planDomain]),
-	]);
+
 	const governedTools = [
 		...baseTools,
 		...(extensions === undefined || !harnessProfile.descriptor.extensions.tools ? [] : extensions.tools),
@@ -280,6 +278,23 @@ export async function assembleSessionDomain(
 		};
 	const titleListeners = new Set<(event: SessionTitleChangedEvent) => void>();
 	let titleLifecycle: SessionTitleLifecycle | undefined;
+	let compaction: SessionCompactionDomain;
+	const withContextSources = (input: ModelContextAssemblyInput): ModelContextAssemblyInput => ({
+			...input,
+			sources: [
+				...(harnessProfile.descriptor.prompt.mode !== "assembled" ? [] : [{
+					fragmentId: "session-effective-permissions", key: "session-effective-permissions",
+					layer: "policy" as const, trust: "trusted" as const, taint: "none" as const, priority: "required" as const,
+					content: [
+						"Current Session permissions (runtime authority):",
+						`profile: ${security.snapshot.profile.name}; revision: ${security.snapshot.securityRevision}`,
+						`approval_policy: ${security.snapshot.profile.approvalPolicy}; filesystem: ${security.snapshot.profile.filesystemMode}; network: ${security.snapshot.profile.network.mode}`,
+						"The runtime governs every operation. Only the user can change this Session's permission preset. System-destructive operations still require explicit one-time confirmation.",
+					].join("\n"),
+				}]),
+				...(extensions === undefined || !harnessProfile.descriptor.extensions.context ? [] : extensions.contextSources(input.model.contextWindow)),
+			],
+		});
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
@@ -311,23 +326,36 @@ export async function assembleSessionDomain(
 		onModelSelectionChanged: () => titleLifecycle?.selectionChanged(),
 		...(runBudgetUsage === undefined ? {} : { runBudgetUsage }),
 		onAcceptedUserPrompt: (text) => titleLifecycle?.handleAcceptedInput(text),
-		modelContextAssembler: async (input) => assembleAgentModelContext({
-			...input,
-			sources: [
-				...(harnessProfile.descriptor.prompt.mode !== "assembled" ? [] : [{
-					fragmentId: "session-effective-permissions", key: "session-effective-permissions",
-					layer: "policy" as const, trust: "trusted" as const, taint: "none" as const, priority: "required" as const,
-					content: [
-						"Current Session permissions (runtime authority):",
-						`profile: ${security.snapshot.profile.name}; revision: ${security.snapshot.securityRevision}`,
-						`approval_policy: ${security.snapshot.profile.approvalPolicy}; filesystem: ${security.snapshot.profile.filesystemMode}; network: ${security.snapshot.profile.network.mode}`,
-						"The runtime governs every operation. Only the user can change this Session's permission preset. System-destructive operations still require explicit one-time confirmation.",
-					].join("\n"),
-				}]),
-				...(extensions === undefined || !harnessProfile.descriptor.extensions.context ? [] : extensions.contextSources(input.model.contextWindow)),
-			],
-		}),
+		modelContextAssembler: async (input) => compaction.assemble(withContextSources(input)),
+		modelSelectionPreflight: (model) => compaction.preflightModel(model),
+		modelContextOverflowRecovery: async (input) => compaction.recoverOverflow(withContextSources(input)),
+
 	});
+	compaction = new SessionCompactionDomain({
+		store, fence, layout: options.layout, models: options.models,
+		getInput: (model) => withContextSources(controller.compactionInput(model)),
+		getHistory: () => defaultConvertToLlm([...controller.messages]),
+		withExclusive: (work) => controller.withContextMutation(work),
+		attemptPort: () => attemptPort.get(),
+		hasPendingApproval: () => planDomain?.inspect().state.status === "awaiting_approval",
+		protectedState: () => {
+			const plan = planDomain?.inspect().state;
+			return {
+				securityRevision: security.snapshot.securityRevision, policyDigest: security.snapshot.policyDigest,
+				workspaceId: catalog.workspaceId, harnessProfile: catalog.harnessProfile,
+				plan: plan === undefined ? null : { revision: plan.revision, status: plan.status, plan: plan.plan, approval: plan.approval },
+				steering: controller.getSteeringMessages(), followUp: controller.getFollowUpMessages(),
+			};
+		},
+		...(options.modelRequestRouter === undefined ? {} : { router: options.modelRequestRouter }),
+		...(traceRecorderFactory === undefined ? {} : { traceRecorderFactory }),
+	});
+	await compaction.validateRestored();
+	const resources = composeSessionResourceDomains([
+		...(extensions === undefined ? [] : [extensions.resources]),
+		securitySettings, compaction,
+		...(planDomain === undefined ? [] : [planDomain]),
+	]);
 	const childRuntime = !harnessProfile.descriptor.multiAgent
 		? undefined
 		: {
@@ -417,6 +445,7 @@ export async function assembleSessionDomain(
 	return {
 		controller,
 		trajectory,
+		subscribeCompaction: (listener) => compaction.subscribe(listener),
 		subscribeTitleChanged: (listener: (event: SessionTitleChangedEvent) => void) => {
 			titleListeners.add(listener);
 			return () => titleListeners.delete(listener);
@@ -431,6 +460,7 @@ export async function assembleSessionDomain(
 			await extensions?.start();
 		},
 		shutdown: async (reason) => {
+			compaction.cancel();
 			titleLifecycle?.dispose();
 			if (planDomain !== undefined) await process.shutdown(reason);
 			removeExtensionLifecycle?.();
@@ -482,6 +512,7 @@ export async function assembleSessionDomain(
 			toolCount: controller.toolCount,
 			harnessToolNames: compositionReceipt.tools.map((tool) => tool.name),
 			inFlight: controller.inFlight,
+			compactionInFlight: compaction.busy,
 			providerStatuses: [],
 		}),
 	};

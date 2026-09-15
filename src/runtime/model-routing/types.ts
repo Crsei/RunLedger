@@ -5,7 +5,7 @@ import type { CommandId, SessionId, TraceId } from "../protocol/ids.ts";
 
 export type ModelRouteOperation = "request" | "switch" | "summarize" | "compact";
 export type ModelRouteOutcome = "compatible" | "fork" | "deny";
-export type ModelRequestKind = "interactive" | "idle-recap" | "auto-title";
+export type ModelRequestKind = "interactive" | "idle-recap" | "auto-title" | "compaction-summary";
 
 export interface ModelCapabilityProfile {
 	readonly profileId: string;

@@ -21,7 +21,7 @@ import type {
 	SetSessionTitleInput,
 } from "./session-store.ts";
 import { SessionStoreError } from "./session-store-error.ts";
-import { ForkLedgerProjector } from "./fork-projector.ts";
+import { ForkLedgerProjector, prepareForkHistory } from "./fork-projector.ts";
 import { resolveHarnessProfile } from "../../runtime/harness-profiles/index.ts";
 
 export function catalogRevisionInTransaction(db: Pick<SessionDatabase, "querySingle">): number {
@@ -292,6 +292,8 @@ export class CatalogRepository {
 			if (input.expectedSourceHeadSequence !== undefined && Number(source.head_sequence) !== input.expectedSourceHeadSequence) {
 				throw new SessionStoreError("fork_source_head_conflict", "fork source head advanced before the fork transaction");
 			}
+			const history = prepareForkHistory(tx.queryAll("SELECT sequence, event_id, event_type, payload_json, current_event_hash, created_at_ms FROM session_events WHERE session_id = ? ORDER BY sequence", [input.sourceSessionId]), input.sourceSessionId, Number(source.head_sequence), input.throughSequence);
+			const { events: sourceEvents, sourceHeadSequence } = history;
 			const harnessProfile = rowToHarnessProfile(source);
 			tx.runSync(
 				`INSERT INTO sessions
@@ -313,21 +315,14 @@ export class CatalogRepository {
 					harnessProfile.id,
 					harnessProfile.version,
 					harnessProfile.descriptorDigest.digest,
-					source.title === null ? null : String(source.title),
-					source.title_source === null ? null : String(source.title_source),
-					source.title_updated_at_ms === null ? null : Number(source.title_updated_at_ms),
+					history.title === undefined ? (source.title === null ? null : String(source.title)) : history.title?.title ?? null,
+					history.title === undefined ? (source.title_source === null ? null : String(source.title_source)) : history.title?.source ?? null,
+					history.title === undefined ? (source.title_updated_at_ms === null ? null : Number(source.title_updated_at_ms)) : history.title?.updatedAtMs ?? null,
 				],
 			);
-			const sourceEvents = tx.queryAll(
-				"SELECT sequence, event_id, event_type, payload_json, current_event_hash, created_at_ms FROM session_events WHERE session_id = ? ORDER BY sequence",
-				[input.sourceSessionId],
-			);
-			if (sourceEvents.length !== Number(source.head_sequence)) {
-				throw new SessionStoreError("fork_source_head_conflict", "fork source event count does not match its frozen head");
-			}
 			let previous: string | null = null;
 			let sequence = 0;
-			const projector = new ForkLedgerProjector(input.sourceSessionId, input.sessionId);
+			const projector = new ForkLedgerProjector(input.sourceSessionId, input.sessionId, input.inheritCompaction ?? true);
 			for (const event of sourceEvents) {
 				const projected = projector.project({
 					eventId: String(event.event_id),
@@ -372,14 +367,15 @@ export class CatalogRepository {
 				canonicalDigest({
 					type: "session.forked",
 					sourceSessionId: input.sourceSessionId,
-					sourceHeadSequence: Number(source.head_sequence),
+					sourceHeadSequence,
 					targetSessionId: input.sessionId,
 				}).slice(0, 32),
 			);
 			const lineagePayload = JSON.stringify({
 				sourceSessionId: input.sourceSessionId,
-				sourceHeadSequence: Number(source.head_sequence),
+				sourceHeadSequence,
 				sourceHeadHash,
+				...(input.inheritCompaction === false ? { compaction: "raw" } : {}),
 			});
 			const lineageHash = sessionEventHash(input.sessionId, sequence, lineageEventId, "session.forked", lineagePayload, previous);
 			tx.runSync(

@@ -117,39 +117,7 @@ export class AttemptRepository {
 
 	/** §4.3:append-only attempt receipt;settledGeneration >= originGeneration 由 guard 保证。 */
 	public appendAttemptReceipt(fence: OwnerFence, receipt: CommandAttemptReceipt): void {
-		this.db.withImmediateTransactionSync((tx) => {
-			tx.querySingle("SELECT 1 FROM store_control WHERE singleton_id = 1 AND admission = 'ready'");
-			if (!verifyOwnerFence(tx, fence)) {
-				throw new SessionStoreError("owner_fenced", "owner fenced");
-			}
-			const intent = tx.querySingle("SELECT origin_generation FROM commands WHERE session_id = ? AND command_id = ?", [
-				receipt.sessionId,
-				receipt.commandId,
-			]);
-			if (!intent) throw new SessionStoreError("command_intent_conflict", "attempt receipt requires a recorded command intent");
-			if (Number(intent.origin_generation) !== receipt.originGeneration) {
-				throw new SessionStoreError("receipt_origin_mismatch", "receipt origin generation does not match the intent");
-			}
-			tx.runSync(
-				`INSERT INTO command_attempt_receipts
-				 (receipt_id, session_id, command_id, attempt_id, origin_generation, settled_generation,
-				  effect_class, outcome, result_json, result_digest, evidence_digest, created_at_ms)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
-				[
-					receipt.receiptId,
-					receipt.sessionId,
-					receipt.commandId,
-					receipt.attemptId,
-					receipt.originGeneration,
-					receipt.settledGeneration ?? null,
-					receipt.effectClass,
-					receipt.outcome,
-					receipt.resultDigest?.digest ?? null,
-					receipt.evidenceDigest?.digest ?? null,
-					receipt.createdAtMs,
-				],
-			);
-		});
+		this.db.withImmediateTransactionSync((tx) => appendAttemptReceiptInTransaction(tx, fence, receipt));
 	}
 
 	public listAttemptReceipts(sessionId: string, commandId: string): readonly CommandAttemptReceipt[] {
@@ -167,4 +135,39 @@ export class AttemptRepository {
 			.queryAll("SELECT * FROM command_attempt_receipts WHERE session_id = ? ORDER BY created_at_ms, receipt_id", [sessionId])
 			.map((row) => rowToAttemptReceipt(row));
 	}
+}
+
+/** 只供 SessionStore 已持有的事务使用，避免领域事件和收口 receipt 分离。 */
+export function appendAttemptReceiptInTransaction(tx: SessionDatabase, fence: OwnerFence, receipt: CommandAttemptReceipt): void {
+	tx.querySingle("SELECT 1 FROM store_control WHERE singleton_id = 1 AND admission = 'ready'");
+	if (!verifyOwnerFence(tx, fence)) {
+		throw new SessionStoreError("owner_fenced", "owner fenced");
+	}
+	const intent = tx.querySingle("SELECT origin_generation FROM commands WHERE session_id = ? AND command_id = ?", [
+		receipt.sessionId,
+		receipt.commandId,
+	]);
+	if (!intent) throw new SessionStoreError("command_intent_conflict", "attempt receipt requires a recorded command intent");
+	if (Number(intent.origin_generation) !== receipt.originGeneration) {
+		throw new SessionStoreError("receipt_origin_mismatch", "receipt origin generation does not match the intent");
+	}
+	tx.runSync(
+		`INSERT INTO command_attempt_receipts
+		 (receipt_id, session_id, command_id, attempt_id, origin_generation, settled_generation,
+		  effect_class, outcome, result_json, result_digest, evidence_digest, created_at_ms)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+		[
+			receipt.receiptId,
+			receipt.sessionId,
+			receipt.commandId,
+			receipt.attemptId,
+			receipt.originGeneration,
+			receipt.settledGeneration ?? null,
+			receipt.effectClass,
+			receipt.outcome,
+			receipt.resultDigest?.digest ?? null,
+			receipt.evidenceDigest?.digest ?? null,
+			receipt.createdAtMs,
+		],
+	);
 }

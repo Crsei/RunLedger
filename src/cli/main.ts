@@ -558,6 +558,8 @@ export async function resolveSessionId(
 		store.forkSession({
 			sessionId,
 			sourceSessionId: source.sessionId as SessionId,
+			inheritCompaction: args.forkRaw !== true,
+			...(args.forkAt === undefined ? {} : { throughSequence: args.forkAt }),
 		});
 		return sessionId;
 	}
@@ -605,6 +607,7 @@ export async function fetchDomainSnapshot(embedded: EmbeddedSessionRuntimeResult
 		selection: (body.selection ?? { thinkingLevel: "off" }) as SessionInteractiveSnapshot["selection"],
 		harnessToolNames: Array.isArray(body.harnessToolNames) && body.harnessToolNames.every((name) => typeof name === "string") ? body.harnessToolNames : undefined,
 		toolCount: typeof body.toolCount === "number" ? body.toolCount : 0,
+		compactionInFlight: body.compactionInFlight === true,
 		eventCursor: typeof body.headSequence === "number" && Number.isSafeInteger(body.headSequence) ? body.headSequence : 0,
 		driverRevision: 0,
 		agentRuns: Array.isArray(body.agentRuns) ? body.agentRuns as SessionInteractiveSnapshot["agentRuns"] : [],

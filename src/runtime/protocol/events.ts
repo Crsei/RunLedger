@@ -115,6 +115,7 @@ export const RUNTIME_EVENT_TYPES = [
 	"compaction.started",
 	"compaction.completed",
 	"compaction.failed",
+	"compaction.inherited",
 	"memory.proposed",
 	"memory.approved",
 	"memory.revoked",
@@ -293,6 +294,7 @@ export const EVENT_REF_REQUIRED_ACTIONS = [
 ] as const;
 
 export const EVENT_REF_REQUIRED_TYPES = [
+	"compaction.inherited",
 	"task.created",
 	"artifact.created",
 	"change_proposal.created",
@@ -411,7 +413,7 @@ export interface SessionTitleChangedPayloadFields {
 }
 
 /** Model route evidence may carry purpose, but never prompt or provider secrets. */
-export type RuntimeModelRequestKind = "interactive" | "idle-recap" | "auto-title";
+export type RuntimeModelRequestKind = "interactive" | "idle-recap" | "auto-title" | "compaction-summary";
 
 export interface ModelRoutedPayloadFields {
 	readonly requestKind?: RuntimeModelRequestKind;

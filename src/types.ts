@@ -1,3 +1,4 @@
+import type { OpenAICompactionState } from "./api/openai-compaction-state.ts";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
@@ -507,6 +508,8 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 }
 
 export interface Context {
+	/** 仅由 Responses adapter 消费的原生历史窗口。 */
+	compaction?: OpenAICompactionState;
 	systemPrompt?: string;
 	messages: Message[];
 	tools?: Tool[];

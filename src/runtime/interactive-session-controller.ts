@@ -1,3 +1,4 @@
+import type { ModelContextOverflowRecovery } from "./types.ts";
 import type { TrajectoryClientPort } from "./contracts/trajectory.ts";
 import type { AuthInteraction, AuthType, Credential } from "../auth/types.ts";
 import { clampThinkingLevel, type Models, type Provider } from "../models.ts";
@@ -24,6 +25,8 @@ import type {
   AgentRunBudgetUsage,
 } from "./types.ts";
 import { DEFAULT_AGENT_RUN_BUDGET } from "./types.ts";
+import { defaultConvertToLlm } from "./agent-loop/context-conversion.ts";
+import type { ModelContextAssemblyInput } from "./types.ts";
 import type { ExtensionHookRuntime, ExtensionHookRuntimeResult } from "../extensions/turn-lifecycle.ts";
 import type { ContextAssemblySink, ModelContextAssembler, PromptInspection } from "./types.ts";
 import { ModelRequestSnapshots, type RequestDumpView, type RequestDumpResult } from "./model-request-snapshots.ts";
@@ -75,6 +78,8 @@ export interface InteractiveSessionControllerOptions {
   toolResultOverflowStore?: ToolResultOverflowStore;
   /** Host-owned bounded model request assembly; local tests may omit it. */
   modelContextAssembler?: ModelContextAssembler;
+  modelSelectionPreflight?: (model: Model<Api>) => Promise<void>;
+  modelContextOverflowRecovery?: ModelContextOverflowRecovery;
   /** Host-owned canonical receipt sink; local tests may omit it. */
   contextAssemblySink?: ContextAssemblySink;
   /** Session-owned catalog/budget route receipt; provider dispatch is forbidden when it denies. */
@@ -238,6 +243,8 @@ export class InteractiveSessionController {
   private readonly executionEnv: ExecutionEnv | undefined;
   private readonly toolResultOverflowStore: ToolResultOverflowStore | undefined;
   private readonly modelContextAssembler: ModelContextAssembler | undefined;
+  private readonly modelSelectionPreflight: ((model: Model<Api>) => Promise<void>) | undefined;
+  private readonly modelContextOverflowRecovery: ModelContextOverflowRecovery | undefined;
   private readonly contextAssemblySink: ContextAssemblySink | undefined;
   private readonly modelRequestRouter: ModelRequestRouter | undefined;
 	private readonly isModelSelectable: ((model: Model<Api>) => boolean) | undefined;
@@ -281,6 +288,8 @@ export class InteractiveSessionController {
     this.executionEnv = opts.executionEnv;
     this.toolResultOverflowStore = opts.toolResultOverflowStore;
     this.modelContextAssembler = opts.modelContextAssembler;
+    this.modelSelectionPreflight = opts.modelSelectionPreflight;
+    this.modelContextOverflowRecovery = opts.modelContextOverflowRecovery;
     this.contextAssemblySink = opts.contextAssemblySink;
     this.modelRequestRouter = opts.modelRequestRouter;
 	this.isModelSelectable = opts.isModelSelectable;
@@ -325,7 +334,18 @@ export class InteractiveSessionController {
   }
 
   get inFlight(): boolean {
-    return this.agent?.inFlight ?? false;
+    return this.contextMutation !== undefined || (this.agent?.inFlight ?? false);
+  }
+
+  private contextMutation: AbortController | undefined;
+
+  /** 手动 compact 独占请求投影；等待模型期间也阻止新的 prompt/model mutation。 */
+  async withContextMutation<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.inFlight || this.promptPending || this.selectionChangePending || this.getSteeringMessages().length > 0 || this.getFollowUpMessages().length > 0) throw new Error("session_busy");
+    const controller = new AbortController();
+    this.contextMutation = controller;
+    try { return await work(controller.signal); }
+    finally { if (this.contextMutation === controller) this.contextMutation = undefined; }
   }
 
   get currentSelection(): RuntimeSelection {
@@ -339,6 +359,16 @@ export class InteractiveSessionController {
 
   get messages(): readonly AgentMessage[] {
     return this.agent?.state.messages ?? this.replay.messages;
+  }
+
+  /** compact 捕获生产请求所用的完整输入，避免从 TUI/dump 反向拼接。 */
+  compactionInput(model = this.selection.model): ModelContextAssemblyInput {
+    if (model === undefined) throw new Error("model_unavailable");
+    return {
+      sessionId: this.sessionId, turn: 0, model,
+      thinkingLevel: this.selection.thinkingLevel,
+      context: { systemPrompt: this.systemPrompt, tools: this.tools, messages: defaultConvertToLlm([...this.messages]) },
+    };
   }
 
   get warnings(): readonly string[] {
@@ -493,6 +523,7 @@ export class InteractiveSessionController {
       if (!available.some((candidate) => candidate.provider === resolved.provider && candidate.id === resolved.id)) {
         throw new Error(`Model ${resolved.provider}/${resolved.id} is not available. Check provider login and enabled models.`);
       }
+      await this.modelSelectionPreflight?.(resolved);
       const thinkingLevel = clampThinkingLevel(resolved, this.selection.model ? this.selection.thinkingLevel : this.initialThinkingLevel ?? "high");
       await this.persistSelection({ provider: resolved.provider, model: resolved, thinkingLevel }, "model");
     } finally {
@@ -530,7 +561,7 @@ export class InteractiveSessionController {
       else agent.steer(text);
       return;
     }
-    if (this.selectionChangePending || this.promptPending) throw new Error("Wait for the pending request or model change to finish.");
+    if (this.contextMutation !== undefined || this.selectionChangePending || this.promptPending) throw new Error("Wait for the pending request or model change to finish.");
     this.promptPending = true;
     let admitted = false;
     try {
@@ -553,6 +584,7 @@ export class InteractiveSessionController {
 
 	/** Run a transient completion through this Session's one Agent/model pipeline. */
 	async runEphemeralTurn(request: EphemeralSessionTurnRequest): Promise<string | undefined> {
+		if (this.contextMutation !== undefined) return undefined;
 		const agent = this.agent;
 		if (agent === undefined || this.selection.model === undefined || agent.state.messages.length === 0) return undefined;
 		const result = await agent.runEphemeralTurn(request);
@@ -560,6 +592,7 @@ export class InteractiveSessionController {
 	}
 
   interrupt(): void {
+    this.contextMutation?.abort();
     this.agent?.interrupt();
   }
 
@@ -572,6 +605,7 @@ export class InteractiveSessionController {
   }
 
   dispose(): void {
+    this.contextMutation?.abort();
     this.unsubscribeAgent?.();
     this.unsubscribeAgent = undefined;
     this.listeners.clear();
@@ -632,6 +666,7 @@ export class InteractiveSessionController {
         ...(this.runBudgetUsage === undefined ? {} : { runBudgetUsage: this.runBudgetUsage }),
         ...(this.toolResultOverflowStore === undefined ? {} : { toolResultOverflowStore: this.toolResultOverflowStore }),
         ...(this.modelContextAssembler === undefined ? {} : { modelContextAssembler: this.modelContextAssembler }),
+        ...(this.modelContextOverflowRecovery === undefined ? {} : { modelContextOverflowRecovery: this.modelContextOverflowRecovery }),
         modelRequestObserver: this.requestSnapshots.observe,
         ...(this.contextAssemblySink === undefined ? {} : { contextAssemblySink: this.contextAssemblySink }),
       },

@@ -57,6 +57,7 @@ export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "
 export interface SessionDomainPort {
 	readonly controller: InteractiveSessionControllerPort;
 	/** Internal bridge for auto-title commits; the Runtime publishes the canonical event to clients. */
+	readonly subscribeCompaction?: (listener: (event: SessionControllerEvent) => void) => () => void;
 	readonly subscribeTitleChanged?: (listener: (event: SessionTitleChangedEvent) => void) => () => void;
 	/** Session-owned child runtime inputs; absent only on non-production test domains. */
 	readonly childRuntime?: SessionChildRuntimePort;
@@ -123,6 +124,7 @@ export interface SessionDomainSnapshot {
 	readonly toolCount: number;
 	readonly harnessToolNames?: readonly string[];
 	readonly inFlight: boolean;
+	readonly compactionInFlight?: boolean;
 	readonly providerStatuses: readonly ProviderStatus[];
 }
 
@@ -163,6 +165,7 @@ export class SessionRuntime implements SessionController {
 	private readonly domainRouter: SessionDomainRouter;
 	private readonly lifecycleCleanup: SessionRuntimeOptions["lifecycleCleanup"];
 	private readonly domainListener: (() => void) | undefined;
+	private readonly domainCompactionListener: (() => void) | undefined;
 	private readonly domainTitleListener: (() => void) | undefined;
 	private readonly listeners = new Set<(event: SessionControllerEvent) => void>();
 	private readonly persistence: SessionEventPersistence;
@@ -224,6 +227,7 @@ export class SessionRuntime implements SessionController {
 				this.trajectoryListener?.();
 				this.domainListener?.();
 				this.domainTitleListener?.();
+				this.domainCompactionListener?.();
 			},
 		});
 		this.attempts = new SessionAttemptController({
@@ -279,6 +283,7 @@ export class SessionRuntime implements SessionController {
 				this.domain?.trajectory?.invalidate();
 				this.idleRecap.handleDomainAgentEvent(event);
 				});
+			this.domainCompactionListener = this.domain.subscribeCompaction?.((event) => this.emit(event));
 			this.domainTitleListener = this.domain.subscribeTitleChanged?.((event) => {
 				this.emit({
 					eventType: "session.title_changed",
@@ -429,6 +434,7 @@ export class SessionRuntime implements SessionController {
 				toolCount: domain.toolCount,
 				harnessToolNames: domain.harnessToolNames,
 				inFlight: domain.inFlight,
+				compactionInFlight: domain.compactionInFlight === true,
 				providerStatuses: domain.providerStatuses,
 			};
 		return {

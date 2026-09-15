@@ -1,6 +1,7 @@
+import { compactionEndpointDigest, isOpenAICompactionState, type OpenAICompactionState } from "./openai-compaction-state.ts";
 import { notifyRequestPrepared } from "./request-observer.ts";
 import OpenAI from "openai";
-import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import type { ResponseCreateParamsStreaming, ResponseUsage } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -246,6 +247,12 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		deferredTools: toolPlacement.deferred,
 	});
 
+	if (context.compaction !== undefined) {
+		assertCompactionCompatible(model, context.compaction);
+		const policy = context.systemPrompt ? messages.splice(0, 1) : [];
+		messages.unshift(...policy, ...context.compaction.output);
+	}
+
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
@@ -324,4 +331,22 @@ function applyServiceTierPricing(
 	usage.cost.cacheRead *= multiplier;
 	usage.cost.cacheWrite *= multiplier;
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+}
+
+function assertCompactionCompatible(model: Model<"openai-responses">, state: OpenAICompactionState): void {
+	if (!isOpenAICompactionState(state) || model.provider !== state.provider || model.id !== state.model || compactionEndpointDigest(model.baseUrl) !== state.endpointDigest) throw new Error("native_compaction_incompatible");
+}
+
+/** 复用 Responses client 的认证、headers、代理及重试设置。调用者负责 Owner attempt。 */
+export async function compactOpenAIResponses(model: Model<"openai-responses">, context: Context, options: StreamOptions): Promise<{ readonly state: OpenAICompactionState; readonly usage: ResponseUsage }> {
+	if (model.provider !== "openai") throw new Error("native_compaction_incompatible");
+	if (context.compaction !== undefined) assertCompactionCompatible(model, context.compaction);
+	const client = createClient(model, context, getClientApiKey(model.provider, options.apiKey, options.headers), options.headers, options.sessionId, options.env);
+	const input = [...(context.compaction?.output ?? []), ...convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, { includeSystemPrompt: false })];
+	const response = await client.responses.compact({ model: model.id, input, ...(context.systemPrompt === undefined ? {} : { instructions: context.systemPrompt }) }, { signal: options.signal, maxRetries: 0, ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }) });
+	const state: OpenAICompactionState = { kind: "openai-responses-compaction", formatVersion: 1, provider: model.provider, model: model.id,
+		endpointDigest: compactionEndpointDigest(model.baseUrl), output: response.output,
+		estimatedTokens: Math.max(Math.ceil(Buffer.byteLength(JSON.stringify(response.output)) / 3) + 8, response.usage.output_tokens) };
+	if (!isOpenAICompactionState(state)) throw new Error("native_compaction_output_invalid");
+	return { state, usage: response.usage };
 }

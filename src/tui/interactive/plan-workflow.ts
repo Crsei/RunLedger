@@ -17,6 +17,25 @@ export class PlanWorkflow {
 		this.port = port;
 	}
 
+	public async runCompaction(arg: string): Promise<void> {
+		const parts = arg.trim().split(/\s+/u).filter(Boolean);
+		const flags = parts.filter((part) => part.startsWith("--"));
+		if (flags.length > 1 || flags.some((flag) => flag !== "--strategy=single-pass" && flag !== "--strategy=hierarchical" && flag !== "--strategy=openai-responses-native")) {
+			this.port.showNotice("Usage: /compact [--strategy=single-pass|hierarchical|openai-responses-native] [focus]", "error"); return;
+		}
+		const inspection = await querySessionController(this.port.controller, "compaction.list", {}, {
+			correlationId: `corr-${this.port.nextCorrelationId()}`, effectId: `effect-${this.port.nextEffectId()}`,
+		}).catch(() => undefined);
+		if (inspection?.ok !== true) { this.port.showNotice("Compaction is unavailable in this Session.", "error"); return; }
+		const focus = parts.filter((part) => !part.startsWith("--")).join(" ");
+		this.port.showNotice("Compacting older history…", "note");
+		await this.runDomainCommand("compact.run", {
+			expectedRevision: inspection.domainRevision,
+			...(flags[0] === undefined ? {} : { strategy: flags[0].slice("--strategy=".length) }),
+			...(focus.length === 0 ? {} : { focus }),
+		}, "/compact", false);
+	}
+
 	/** B7:/plan 走 plan.inspect workflow（typed adapter 投影，不再 raw 解析）。 */
 	public async openPlanWorkflow(): Promise<void> {
 		const port = this.port;
@@ -152,6 +171,7 @@ function compactDomainResult(operation: string, body: Record<string, unknown>): 
 		return text.length > max ? `${text.slice(0, max)}…` : text;
 	};
 	switch (operation) {
+		case "compact.run": return `estimated input ${String(body.beforeTokens)} → ${String(body.afterTokens)} tokens; original history preserved`;
 		case "plan.inspect": {
 			const state = isRecord(body.state) ? body.state : undefined;
 			if (state === undefined) return "no plan state";

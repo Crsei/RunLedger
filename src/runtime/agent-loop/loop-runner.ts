@@ -1,3 +1,4 @@
+import { isContextOverflow } from "../../utils/overflow.ts";
 /**
  * S4 拆分:outer turn / inner assistant stream 状态机。
  *
@@ -175,7 +176,7 @@ export async function runAgentLoop(
       break;
     }
     turn++;
-    const requestId = `request-${newId()}`;
+    let requestId = `request-${newId()}`;
     const observe = (event: Parameters<typeof observeModelRequest>[1]) => observeModelRequest(config.modelRequestObserver, event);
     const tStart = Date.now();
     await fire(
@@ -198,6 +199,7 @@ export async function runAgentLoop(
       });
     };
     let llmContext: LlmContext;
+    let rawContext: LlmContext;
     let traceModel: TraceModelHandle | undefined;
     try {
       await appendPendingMessages();
@@ -208,8 +210,9 @@ export async function runAgentLoop(
         messages: await convertFn(messages),
         tools: context.tools,
       };
+      rawContext = llmContext;
       if (config.modelContextAssembler !== undefined) {
-        const assembled = await config.modelContextAssembler({ model: loopModel, context: llmContext, sessionId, turn, thinkingLevel: loopReasoning ?? "off" });
+        const assembled = await config.modelContextAssembler({ model: loopModel, context: llmContext, sessionId, turn, thinkingLevel: loopReasoning ?? "off", signal, requestKind: config.requestKind ?? "interactive" });
         llmContext = assembled.context;
         observe({ kind: "assembled", requestId, runId, turn, requestKind: config.requestKind ?? "interactive", model: loopModel, thinkingLevel: loopReasoning ?? "off", context: llmContext });
         await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
@@ -250,6 +253,8 @@ export async function runAgentLoop(
     let providerMessage: AssistantMessage | undefined;
     let messageOpen = false;
     let streamStartedAt: number | undefined;
+    for (let overflowRetry = 0; ; overflowRetry += 1) {
+    providerMessage = undefined;
     try {
       const stream = await Promise.resolve(
         fn(loopModel, llmContext, {
@@ -330,6 +335,24 @@ export async function runAgentLoop(
     } catch (error) {
       observe({ kind: "finished", requestId, stopReason: signal?.aborted ? "aborted" : "error" });
       throw error;
+    }
+    // 仅在 provider 未打开消息、未产生任何内容时重试一次；工具执行在此边界之后。
+    if (overflowRetry === 0 && !messageOpen && assistantContent.length === 0 && providerMessage !== undefined
+      && providerMessage.content.length === 0 && isContextOverflow(providerMessage) && !signal?.aborted
+      && config.modelContextOverflowRecovery !== undefined) {
+      const recovered = await config.modelContextOverflowRecovery({ model: loopModel, context: rawContext, sessionId, turn, thinkingLevel: loopReasoning ?? "off", signal, requestKind: config.requestKind ?? "interactive" });
+      if (recovered !== undefined) {
+        observe({ kind: "finished", requestId, stopReason: assistantStopReason });
+        if (traceModel && config.traceRecorder) await config.traceRecorder.finishModel(traceModel, providerMessage);
+        requestId = `request-${newId()}`;
+        llmContext = recovered.context;
+        observe({ kind: "assembled", requestId, runId, turn, requestKind: config.requestKind ?? "interactive", model: loopModel, thinkingLevel: loopReasoning ?? "off", context: llmContext });
+        await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: recovered.receipt });
+        traceModel = await config.traceRecorder?.startModel({ turn, model: loopModel, context: llmContext });
+        continue;
+      }
+    }
+    break;
     }
     observe({ kind: "finished", requestId, stopReason: assistantStopReason });
     const measuredDurationMs = providerMessage !== undefined

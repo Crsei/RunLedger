@@ -103,9 +103,25 @@ src/cli/main.ts
 
 此切片不装配 summarizer、自动 compact、durable context receipt sink、Memory 或模型 Artifact 全量检索；这些能力的生产状态仍由本专题各阶段判定。
 
-### 0.5 2026-09-15 多策略 Compact 设计入口
+### 0.5 2026-09-15 多策略 Compact 实施
 
-接口、职责、策略扩展、Owner 原子提交与恢复、配置和 C0–C5 实施方案见 [§6.5.1](#compact-strategy-adapter)。本次仅设计；标准 Session 仍使用 §0.4 的预算选择，未接摘要压缩。本节细化 Phase 6–7，不改变当前实现状态。
+接口和 C0–C5 约束见 [§6.5.1](#compact-strategy-adapter)。标准 Session Owner 已装配 single-pass、hierarchical 和 OpenAI Responses native 三种策略；`/compact` / `runledger compact run` 执行受控 mutation，`compact list` 保留查询入口。原始 ledger 不变；每次请求只读取已提交 replacement。自动触发默认关闭，显式启用后在预算选择前尝试压缩；overflow 只允许在尚无 provider 内容和工具执行的请求边界重试一次。
+
+当前实现入口：`runtime/context/compaction/{strategy,summary-strategies,budgeted-model,history,settings,record}.ts`、`runtime/session-runtime/compaction-{domain,model,native-model}.ts`、`api/openai-compaction-state.ts`。`ContextEngine` 将 portable summary 作为 required history，native 窗口以带 digest/预算的 required history fragment 纳入选择，再由 Responses adapter 完整回传，均不变成 policy。
+
+- 用户级 `settings.json` 的 `compaction` 控制策略与预算，workspace 配置拒绝覆盖。默认 `enabled=true`、`strategy=single-pass`、`auto=false`、`threshold=0.85`、保留最近 1 个完成轮次、单摘要 4096 tokens / 32000 bytes、最多 16 次模型调用 / 1000000 输入 tokens / 65536 输出预留 tokens、5 层、120 秒。数值边界以 `settings.ts` 为准；无效配置失败，不静默换策略。可选 `summaryModel: {provider,id}` 只用于 portable 策略；native 必须匹配当前 Responses 模型。
+- `--strategy=single-pass|hierarchical|openai-responses-native` 只覆盖本次 manual 操作；其余文字是 focus hint。摘要调用无工具，复用 Models 认证、model route receipt、Trace，并禁用 provider 隐式重试。预算 usage 记录保守预留，Trace 保留 provider 返回的实际 usage。
+- Owner 先写 started，生成并校验候选，持久化并同步 artifact，然后在一个 SQLite 事务内写 completed/failed 与终态 attempt receipt。checkpoint 引用实际 receipt 的 digest；restore 同时验证 chain、源前缀、receipt 和 artifact。持久化错误保留旧投影；工件损坏明确报错，不自动付费重生成。
+- 普通 fork 继承 replacement 及来源证据，不继承 source attempt/approval authority。`/fork --raw` 或 `--fork <id> --fork-raw` 显式保留原始历史并放弃摘要投影，供切换不兼容 provider 使用。`/fork --at=<sequence>` 或 `--fork <id> --fork-at <sequence>` 从已完成 assistant 轮次边界创建回退分支，源 Session 保持不变；仅继承边界前已提交的压缩记录，拒绝 user/tool 中间边界。这里的回退是 fork，不提供原地删除历史。
+- 原生窗口绑定 provider、模型、endpoint digest 和格式；不兼容切换失败且保留原选择。完整 `output` 包含 retained items 与 opaque compaction item，禁止截取或解释 encrypted_content；未知输出类型/格式失败。当前 reader 接受 message、reasoning、function_call、function_call_output、compaction。reader 不依赖策略仍注册。
+
+验证记录（2026-09-15）：本地 HTTP + 真实 embedded Owner 覆盖手动两种 portable 策略、二次链、重启、取消/迟到、自动阈值/失败抑制、overflow 一次重试、native 完整窗口/恢复/切换、fork/raw fork/跨 cut 回退、工件和事务故障；源历史与 attempt receipts 均从真实 SQLite 核对。
+
+本任务隔离副本（`9057668` + 本次 scoped 改动）的完整 `npm run check` 通过，完整输出保存在 `/tmp/runledger-compact-isolated-check3.log`；主工作树的该入口被并行文档提交 `96b0e15` 中 upstream 版本标记触发的 current-format 规则拦截，详见 `/tmp/runledger-compact-current-format.log`，未修改或删除并行内容。`npm run build` 通过。
+
+默认 local 全部分桶验证完成：`npm test` 在隔离副本通过 fast / singleton / runtime / security-storage（492 文件、3288 测试）；随后 integration 因该副本缺少 dist 中止。主工作树的同一构建产物已补入副本，主工作树 `npm run test:integration` 重跑全部集成测试通过（27 文件、144 测试），`npm run test:tui-native` 通过（24 文件、156 测试）；日志依次为 `/tmp/runledger-compact-full-test3.log`、`/tmp/runledger-compact-integration-final.log`、`/tmp/runledger-compact-tui-native-final.log`。之前 Owner 十进程竞争用例出现一次 15 秒超时，独立复验及最终全量运行均通过，未调整测试阈值。
+
+`tests/manual/harness-repair/compaction.py` 用 PATH CLI、隔离 home、本地 HTTP 和独立 tmux 验证受控 bash 的完整 call/result 进入无工具摘要请求、hierarchical 选择、raw ledger 不变、下一请求使用摘要与 tail、重启恢复，两次退出均为 0；退出后独立 CLI 的 `compact list` 与 `compact run --strategy=single-pass` 通过，确认第二次 compact 共用同一提交链且 raw ledger 不变，无遗留自有进程；结果 `/tmp/runledger-compact-cli-r27fyf3j/result.json`。**真实 OpenAI provider 待验收**（用户明确保留）；本地 HTTP 不等于真实 provider，自动化 TUI 不等于人工视觉/中文 IME 或跨平台验收。
 
 ### 0.6 2026-09-15 oh-my-pi 压缩服务接入入口
 
@@ -647,17 +663,17 @@ validator 至少检查:
 
 <a id="compact-strategy-adapter"></a>
 
-### 6.5.1 多策略 Compact 适配器设计（2026-09-15，仅方案）
+### 6.5.1 多策略 Compact 适配器设计与实施（2026-09-15）
 
-本节是 Phase 6–7 的接口与实施细化，当前未实现，不改变上述复选框。用户本轮明确要求只设计接口和实施方案，不修改运行时代码。首阶段实现 manual single-pass，随后增加分段归并策略；provider 原生压缩只预留扩展位置，不预设任何 provider 已支持。这里的“本地摘要策略”指 RunLedger 编排算法，生成摘要仍可能调用远程模型，并不意味着离线运行。
+本节细化 Phase 6–7，C0–C5 已按 §0.5 接入标准 Session Owner，验收边界亦以 §0.5 为准。策略包括 manual single-pass、分段归并和 OpenAI Responses 原生压缩。这里的“本地摘要策略”指 RunLedger 编排算法，生成摘要仍可能调用远程模型，并不意味着离线运行。
 
 #### A. 当前接线与设计范围
 
-当前标准 Session 在 `session-runtime/domain.ts` 注入 `assembleAgentModelContext`，由 `agent-loop/loop-runner.ts` 在每次模型请求前执行。`context/model-request-adapter.ts` 按预算选择完整依赖组，保留 required 和近期历史，未生成压缩摘要。旧 `cli/runtime-host-summarizer.ts` 和 `runtime-host-model-context.ts` 有摘要调用与 checkpoint 切片，但不是标准 Session 的 compact 实现；不得恢复旧 Host 作为 fallback。
+当前标准 Session 在 `session-runtime/domain.ts` 注入 `assembleAgentModelContext`，由 `agent-loop/loop-runner.ts` 在每次模型请求前执行。`context/model-request-adapter.ts` 按预算选择完整依赖组，保留 required 和近期历史；SessionCompactionDomain 在预算选择前应用已提交摘要并处理自动触发。旧 `cli/runtime-host-summarizer.ts` 和 `runtime-host-model-context.ts` 有摘要调用与 checkpoint 切片，但不是标准 Session 的 compact 实现；不得恢复旧 Host 作为 fallback。
 
 可复用 `cut-planner.ts` 的稳定 turn 切分与配对检查，以及 checkpoint 的 exact schema/lifecycle 校验。`context/invariants.ts` 当前计算的是 checkpoint 字段 digest，不能证明权限、计划、pending approval 或目标状态在压缩前后保持一致；新编排必须另外捕获并比较受保护状态。
 
-本轮只新增本节设计和索引，不新增配置、公共 DTO、存储 schema、命令或策略实现。下文 TypeScript 是拟议的 runtime-private 接口草案，不是 Runtime 04 的新公共合同；实施 C0 时再冻结实际类型、schema、事件和存储方式。§6.5 原有伪代码也不替代当前 `compaction/types.ts` exact contract。
+本节保留设计约束与实施切片；当前实现与验证以 §0.5 为准。下文 TypeScript 解释 runtime-private adapter 边界；实际字段以 `compaction/{strategy,record,settings}.ts` 为准。公开 `CompactionCheckpoint` 仍使用 `compaction/{types,schema}.ts` exact contract，运行时恢复元数据由 `runledger.session-compaction` 和 `runledger.compaction-inheritance` exact reader 管理。
 
 #### B. 分层与职责
 
@@ -815,12 +831,12 @@ provider-native 的扩展契约单独演进：将候选结果改为 discriminate
 - **fork**：绑定合法 source head，继承该边界以前的 replacement 引用与来源证明，分配新的 session identity；不让旧 session 的 fence/命令身份进入新 session。
 - **rewind**：若目标位于一个 cut 内部，该摘要不能用于目标位置；选择更早可用 checkpoint 加 raw events 重建，不能携带未来信息。位于 cut 之后则使用对应 checkpoint + 截止目标的 tail。
 - **model switch**：portable summary 按目标模型重新估算并转换；provider-state 必须经过专用兼容判断。不兼容时明确拒绝或由已授权 fork 流程处理，不能静默抛弃私有状态。
-- **配置草案**：`compaction.enabled`、`strategy`（id/version）、`summaryModel`、`retainRecentTurns`、`maxSummaryTokens/Bytes`、`maxModelCalls`、累计 token 与 timeout；hierarchical 的层数/分组参数放在该策略配置中。auto threshold 单独放 TriggerPolicy，不混入 generate 参数。第一版默认关闭 auto，manual 使用显式已装配策略。
-- 配置名尚未实现。实施时沿用当前 canonical home、settings loader/校验/覆盖规则和模型目录，不读取历史其他工作树中的假定配置；数字范围、用户/工作区作用域与上限收紧规则在 C0 冻结。无效或不兼容策略配置不得静默改选另一策略。
+- **配置边界**：`compaction.enabled`、`strategy`（id/version）、`summaryModel`、`retainRecentTurns`、`maxSummaryTokens/Bytes`、`maxModelCalls`、累计 token 与 timeout；hierarchical 的层数/分组参数放在该策略配置中。auto threshold 单独放 TriggerPolicy，不混入 generate 参数。第一版默认关闭 auto，manual 使用显式已装配策略。
+- 当前配置与默认值见 §0.5，实际 exact 校验见 `compaction/settings.ts`；沿用 canonical home、settings loader 和模型目录。无效或不兼容策略配置不得静默改选另一策略。
 
 #### G. 实施顺序与验收
 
-所有条目目前为 planned。每阶段只有对应生产证据齐全才标完成；本次文档提交不关闭任何能力门禁。
+C0–C4 已实现，C5 已实现 OpenAI Responses adapter 并有本地 HTTP 协议证据，真实 provider 仍待验收。下表保留交付范围与验收要求，实际运行结果统一记录在 §0.5；未执行的人工和外部 provider 门禁不因此关闭。
 
 | 阶段 | 文件边界与交付物 | 必须验证 |
 |---|---|---|

@@ -96,9 +96,11 @@ describe("Host control command parsing", () => {
 		expect(proposal.body).toMatchObject({ title: "Keep the release check", content: "Keep the release check", scope: "workspace", sourceKind: "user" });
 	});
 
-	it("requires a bounded source range for manual compaction", () => {
-		expect(parseControlCommand(["compact", "run", "transcript"])).toMatchObject({ ok: false, error: /source range/i });
-		expect(parseControlCommand(["compact", "run", "{}", "transcript"])).toMatchObject({ ok: false, error: /source range/i });
+	it("lets the Owner capture history and accepts only known strategy flags", () => {
+		expect(parseControlCommand(["compact", "run"])).toMatchObject({ ok: true });
+		expect(controlCommandRequest({ group: "compact", action: "list", args: [], mutation: false })).toEqual({ operation: "compaction.list", body: {}, mutation: false });
+		expect(parseControlCommand(["compact", "run", "--strategy=unknown"])).toMatchObject({ ok: false });
+		expect(controlCommandRequest({ group: "compact", action: "run", args: ["--strategy=hierarchical", "pending", "work"], mutation: true })).toEqual({ operation: "compact.run", body: { strategy: "hierarchical", focus: "pending work" }, mutation: true });
 	});
 
 	it("derives Host domain and Plan revisions from a read before mutation", () => {

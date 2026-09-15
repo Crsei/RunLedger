@@ -495,6 +495,7 @@ class ModelsImpl implements MutableModels {
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
+			if (context.compaction !== undefined && model.api !== "openai-responses") throw new Error("native_compaction_incompatible");
 			const provider = this.requireProvider(model);
 			const { requestModel, requestOptions } = await this.applyAuth(
 				model,
@@ -514,6 +515,7 @@ class ModelsImpl implements MutableModels {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
+			if (context.compaction !== undefined && model.api !== "openai-responses") throw new Error("native_compaction_incompatible");
 			const provider = this.requireProvider(model);
 			const { requestModel, requestOptions } = await this.applyAuth(model, options);
 			return provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions);

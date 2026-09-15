@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { TraceArtifactRef } from "./types.ts";
 
@@ -100,6 +100,30 @@ export class FileArtifactStore {
 		const digest = createHash("sha256").update(bytes).digest("hex");
 		if (digest !== ref.digest || bytes.byteLength !== ref.size) throw new ArtifactIntegrityError(ref.artifactId);
 		return bytes;
+	}
+
+	/** 被 Session authority 引用前确保正文、metadata 和目录项持久化。 */
+	public async putDurable(input: ArtifactPutRequest): Promise<TraceArtifactRef> {
+		const ref = await this.put(input);
+		await this.read(ref);
+		await this.metadata(ref);
+		for (const file of [this.dataPath(ref), this.metadataPath(ref)]) {
+			const handle = await open(file, "r");
+			try { await handle.sync(); } finally { await handle.close(); }
+		}
+		// 从叶目录到两个 root 的共同父目录；不支持目录同步时明确失败。
+		const directories = new Set<string>();
+		for (const root of [this.dataRoot, this.metadataRoot]) {
+			directories.add(path.join(root, "sha256", ref.digest.slice(0, 2)));
+			directories.add(path.join(root, "sha256"));
+			directories.add(root);
+			directories.add(path.dirname(root));
+		}
+		for (const directory of directories) {
+			const handle = await open(directory, "r");
+			try { await handle.sync(); } finally { await handle.close(); }
+		}
+		return ref;
 	}
 
 	public async metadata(ref: TraceArtifactRef): Promise<ArtifactMetadata> {

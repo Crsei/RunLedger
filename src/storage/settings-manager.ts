@@ -20,6 +20,7 @@ import {
 } from "../runtime/agents/index.ts";
 import { canonicalDigest } from "../runtime/protocol/canonical-json.ts";
 import { runtimeDigest, type RuntimeDigest } from "../runtime/protocol/foundation.ts";
+import { parseCompactionSettings, type CompactionSettings } from "../runtime/context/compaction/settings.ts";
 
 const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
 const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
@@ -39,6 +40,8 @@ export interface SettingsStoreOptions {
 
 /** 用户级或 workspace 级 settings schema。sessionDir 不属于 canonical schema。 */
 export interface ProjectSettings {
+	/** 用户级压缩策略；工作区不能启用付费的自动摘要。 */
+	compaction?: Partial<CompactionSettings>;
 	/** 仅用户级新建默认；恢复与 TUI 新建继承 durable profile。 */
 	agentMode?: AgentMode;
 	/** 是否允许首个合格用户输入触发异步 Session 自动标题；缺省开启。 */
@@ -387,6 +390,10 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 		throw new Error("agentMode must be default|minimal|plan in user settings");
 	}
 	const out: ProjectSettings = {};
+	if (Object.hasOwn(raw, "compaction")) {
+		if (!allowRecording) throw new Error("compaction is only allowed in user settings");
+		out.compaction = parseCompactionSettings(raw.compaction);
+	}
 	if (isAgentMode(raw.agentMode)) out.agentMode = raw.agentMode;
 	if (typeof raw.autoTitle === "boolean") out.autoTitle = raw.autoTitle;
 	const recap = sanitizeRecapSettings(raw.recap);

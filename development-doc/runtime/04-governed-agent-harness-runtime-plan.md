@@ -337,6 +337,10 @@ manifest、frontmatter、配置文件、发现优先级、trust store、installe
 
 对应 event payload 至少覆盖 `model.routed`、context assembly、plan lifecycle、compaction lifecycle 和 memory proposal/approval/revocation。event 的实际名称必须在 catalog 中一次性冻结,不得由专项行为实现私建。
 
+2026-09-15 Compact 接线补充：公开 checkpoint 形状保持不变；`model.routed.requestKind` 增加 `compaction-summary`，Session 协商能力增加 `session.compaction`（`compact.run` mutation 与 `compaction.list` query），event catalog 增加 `compaction.inherited`。运行时私有 `runledger.session-compaction` exact record 保存 strategy/version、replacementKind、摘要模型与请求模型、配置/输入/受保护状态/源前缀 digest、源消息计数、previous link、artifact、保守 usage 和预算结果；`runledger.compaction-inheritance` 保存 fork 的来源与完整 committed record，不在 target 中复制 source receipt authority。
+
+`SessionStore.appendEventAndSettleAttempt` 在同一 immediate transaction 内校验活动 attempt/Owner fence，构造真实 receipt，再由同步 event builder 绑定 receipt digest，原子写事件和 receipt。source history 不变；artifact 正文、metadata 与目录项先同步，record reader 校验实际 receipt/result binding。`Context.compaction` 是 Responses adapter 的 typed provider-private 窗口，包含完整 opaque 输出、模型/endpoint identity 和预算；不进入公共 policy，也不跨不兼容 provider 透传。策略的生成能力与 immutable replacement reader 分离。相关行为与验收状态见专项 §0.5。
+
 router、manifest loader、Plan reducer/service、ContextEngine、token estimator、compaction planner/summarizer/store、Memory store/index/search/tools 和 UI/CLI 归 [Plan/Context/Compaction/Memory 专项](../plan-compact-memory/01-implementation-plan.md)。
 
 <a id="contract-control-telemetry"></a>

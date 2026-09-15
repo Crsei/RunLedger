@@ -67,6 +67,8 @@ export interface ParsedArgs {
   session?: string;
   sessionId?: string;
   fork?: string;
+  forkRaw?: boolean;
+  forkAt?: number;
   /** 仅 fresh create 可选；open/resume/continue/fork 由 durable row 决定。 */
   harnessProfile?: HarnessProfileId;
   mode?: AgentMode;
@@ -110,7 +112,9 @@ const HELP_TEXT = `Usage: runledger [options]
   -r, --resume                在 TUI 中选择当前项目的历史会话
       --session <path>        直接打开已知 session 文件
       --session-id <id>       按 sessionId 直接打开 canonical 会话
-      --fork <path>           从 canonical session 文件 fork 到当前 workspace
+      --fork <sessionId>      从 canonical Session fork 到当前 workspace
+      --fork-raw              配合 --fork，使用原始历史，不继承 compact 投影
+      --fork-at <sequence>    配合 --fork，回退至已完成 assistant 轮次的事件边界
       --mode <mode>           新建 Session: default|minimal|plan
       --harness-profile <profile>
                               新建 Session 的 standard|minimal profile
@@ -156,6 +160,8 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let session: string | undefined;
   let sessionId: string | undefined;
   let fork: string | undefined;
+  let forkRaw: boolean | undefined;
+  let forkAt: number | undefined;
   let harnessProfile: HarnessProfileId | undefined;
   let mode: AgentMode | undefined;
   let provider: string | undefined;
@@ -261,6 +267,12 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       sessionId = v;
       continue;
     }
+    if (a === "--fork-at") {
+      const value = argv[++i];
+      if (value === undefined || !/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) { error = "--fork-at requires a positive event sequence"; break; }
+      forkAt = Number(value); continue;
+    }
+    if (a === "--fork-raw") { forkRaw = true; continue; }
     if (a === "--fork") {
       const v = argv[++i];
       if (v === undefined) {
@@ -452,6 +464,8 @@ export function parseArgs(argv: readonly string[]): ParseResult {
     positional.push(a);
   }
 
+  if (error === undefined && forkAt !== undefined && fork === undefined) error = "--fork-at requires --fork";
+  if (error === undefined && forkRaw && fork === undefined) error = "--fork-raw requires --fork";
   if (error === undefined && mode !== undefined && harnessProfile !== undefined
       && (mode === "default" ? "standard" : mode) !== harnessProfile) {
     error = "--mode conflicts with --harness-profile";
@@ -475,6 +489,8 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       session,
       sessionId,
       fork,
+      ...(forkRaw === undefined ? {} : { forkRaw }),
+      ...(forkAt === undefined ? {} : { forkAt }),
       harnessProfile,
       mode,
       provider,

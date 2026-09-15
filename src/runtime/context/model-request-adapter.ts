@@ -21,6 +21,7 @@ const REQUEST_ENVELOPE_RESERVE = 128;
 export function assembleAgentModelContext(input: ModelContextAssemblyInput): ModelContextAssemblyResult {
 	const groups = groupRequestHistory(input.context.messages);
 	const requestContextDigest = runtimeDigest({
+		compaction: input.context.compaction ?? null,
 		systemPrompt: input.context.systemPrompt ?? null,
 		messages: input.context.messages.map(stableMessage),
 		tools: input.context.tools?.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) ?? [],
@@ -47,6 +48,11 @@ export function assembleAgentModelContext(input: ModelContextAssemblyInput): Mod
 			priority: "required",
 		},
 		...(input.sources ?? []),
+		...(input.context.compaction === undefined ? [] : [{
+			fragmentId: "agent-native-compaction", key: "agent-native-compaction", layer: "history" as const,
+			content: JSON.stringify({ kind: input.context.compaction.kind, digest: runtimeDigest(input.context.compaction) }),
+			estimatedTokens: input.context.compaction.estimatedTokens, trust: "mixed" as const, taint: "user_input" as const, priority: "required" as const,
+		}]),
 		...groups.map((group) => ({
 			fragmentId: `agent-history-${group.start}`,
 			key: `agent-history-${group.start}`,
@@ -55,7 +61,7 @@ export function assembleAgentModelContext(input: ModelContextAssemblyInput): Mod
 			order: input.context.messages.length - 1 - group.end,
 			trust: "mixed" as const,
 			taint: group.messages.some((message) => message.role === "toolResult") ? "tool_output" as const : "user_input" as const,
-			priority: group.required ? "required" as const : "normal" as const,
+			priority: group.required || group.start < (input.requiredHistoryPrefixCount ?? 0) ? "required" as const : "normal" as const,
 		})),
 	];
 	const outputReserve = input.model.maxTokens;
@@ -76,7 +82,7 @@ export function assembleAgentModelContext(input: ModelContextAssemblyInput): Mod
 	const messages = groups.filter((group) => selected.has(`agent-history-${group.start}`)).flatMap((group) => group.messages);
 	const baseSystemPrompt = selected.has("agent-system-prompt") ? input.context.systemPrompt : undefined;
 	const selectedSourceContent = assembled.fragments
-		.filter((fragment) => fragment.fragmentId !== "agent-system-prompt" && !fragment.fragmentId.startsWith("agent-history-"))
+		.filter((fragment) => fragment.fragmentId !== "agent-system-prompt" && fragment.fragmentId !== "agent-native-compaction" && !fragment.fragmentId.startsWith("agent-history-"))
 		.map((fragment) => assembled.contentByFragmentId[fragment.fragmentId])
 		.filter((content): content is string => typeof content === "string" && content.length > 0);
 	const systemPrompt = selectedSourceContent.length === 0
@@ -84,6 +90,7 @@ export function assembleAgentModelContext(input: ModelContextAssemblyInput): Mod
 		: [baseSystemPrompt, ...selectedSourceContent].filter((content): content is string => typeof content === "string" && content.length > 0).join("\n\n");
 	return {
 		context: {
+			...(input.context.compaction === undefined ? {} : { compaction: input.context.compaction }),
 			...(systemPrompt === undefined ? {} : { systemPrompt }),
 			messages,
 			tools: input.context.tools,

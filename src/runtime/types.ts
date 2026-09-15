@@ -1,3 +1,4 @@
+import type { OpenAICompactionState } from "../api/openai-compaction-state.ts";
 /**
  * Runtime 层类型定义 —— agent-loop / Agent / ledger / 工具的对外契约。
  *
@@ -337,12 +338,17 @@ export interface AgentContext {
  * 形态保留(streamFn 内部转 pi-ai Tool[] 时再做一次最小包装丢 execute)。
  */
 export interface LlmContext {
+  compaction?: OpenAICompactionState;
   systemPrompt?: string;
   messages: Message[];
   tools: AgentTool[] | undefined;
 }
 
 export interface ModelContextAssemblyInput {
+	readonly signal?: AbortSignal;
+	readonly requestKind?: "interactive" | "idle-recap" | "auto-title";
+	/** Owner 已验证的摘要历史前缀；必需保留但不提升为 system/policy。 */
+	readonly requiredHistoryPrefixCount?: number;
 	/** 本次请求冻结的思考配置。 */
 	readonly thinkingLevel?: ModelThinkingLevel;
 	readonly model: Model<Api>;
@@ -357,6 +363,8 @@ export interface ModelContextAssemblyResult {
 	readonly context: LlmContext;
 	readonly receipt: ContextAssemblyReceipt;
 }
+
+export type ModelContextOverflowRecovery = (input: ModelContextAssemblyInput) => Promise<ModelContextAssemblyResult | undefined>;
 
 export type ModelContextAssembler = (
 	input: ModelContextAssemblyInput,
@@ -487,6 +495,7 @@ export interface AgentLoopConfig {
   toolResultOverflowStore?: ToolResultOverflowStore;
   /** Production Host seam for the single bounded model-request projection. */
   modelContextAssembler?: ModelContextAssembler;
+  modelContextOverflowRecovery?: ModelContextOverflowRecovery;
   /** Canonical Host sink for the bounded `context.assembled` receipt. */
   contextAssemblySink?: ContextAssemblySink;
   /** 每次模型请求的装配、provider 输入与完成状态。 */
