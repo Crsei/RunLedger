@@ -93,6 +93,7 @@
     "test:rust-native": "tsx scripts/run-test-buckets.ts --mode all --bucket rust-native",
     "test:smoke": "tsx scripts/run-test-buckets.ts --mode all --bucket smoke && tsx scripts/run-smoke-tests.ts --with-pty",
     "test:watch": "vitest",
+    "time:gates": "tsx scripts/record-gate-timings.ts",
     "cli": "npm run build && ./bin/runledger.js",
     "cli:debug": "npm run build && RUNLEDGER_DEBUG=1 ./bin/runledger.js",
     "verify:multi-client-host": "tsx scripts/verify-multi-client-host.ts",

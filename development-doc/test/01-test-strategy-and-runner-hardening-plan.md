@@ -88,6 +88,8 @@ RunLedger 当前测试深度已经覆盖 Runtime、TUI、Storage、CLI、Provide
 | `syntax-highlighter-prebuild.yml` | native prebuild、smoke、checksum/signature | 不是全仓 PR test workflow |
 | `passWithNoTests: true` | 允许平台条件下文件零收集 | 若没有 inventory/skip 报告，可能把意外零收集误当正常 |
 
+耗时观测：`npm run time:gates`（`scripts/record-gate-timings.ts`）按门禁分别记录 `npm run check`、`npm test` 的墙钟耗时，逐次追加到 `tmp/gate-timings.jsonl`（本地证据，不进版本库），并汇总 last / median / min / max；它只提供 check 与 test 的独立耗时口径，不改变上表的职责归属与失败归属缺口。
+
 ## 3. 目标测试拓扑
 
 ### 3.1 两套正交分类
