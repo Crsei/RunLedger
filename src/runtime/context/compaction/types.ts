@@ -4,7 +4,7 @@ import type { RuntimeEventRangeRef } from "../../protocol/events.ts";
 import type { RuntimeContentRef, RuntimeDigest } from "../../protocol/foundation.ts";
 import type { SessionId, SnapshotId } from "../../protocol/ids.ts";
 
-export type CompactionReason = "manual" | "auto" | "overflow" | "model_switch";
+export type CompactionReason = "manual" | "auto" | "overflow" | "incomplete" | "model_switch";
 export type CompactionStatus = "planned" | "started" | "completed" | "failed";
 
 export interface CompactionCheckpoint {

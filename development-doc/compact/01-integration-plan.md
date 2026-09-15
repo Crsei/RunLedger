@@ -1,6 +1,6 @@
 # RunLedger × oh-my-pi 压缩服务接入实施计划
 
-> 状态：**in_progress**。O0 合同冻结完成，O1–O4 完成，O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
+> 状态：O0–O5 已完成本地实现与生产组合验收；O6 `deferred`，O7 `blocked`。真实 OpenAI provider 与人工 / 跨平台验收仍 pending。
 > 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`；事实清单见 [00-oh-my-pi-compaction-services.md](00-oh-my-pi-compaction-services.md)。
 > 检索入口见 [README.md](README.md)。
@@ -208,11 +208,29 @@
 
 ### O5：provider 原生 V2 + length-stop 恢复
 
+状态：`done` / `partial`（本地生产组合通过，真实 OpenAI provider 待验收）。先在 Runtime 04 与主账本登记 `incomplete` reason，再修改精确 schema 和循环接线；原生状态格式不变。`nativeMode` 默认 `standalone`，用户显式选择 `streaming` 才启用流式 trigger。恢复每次 run 最多两次，需 enabled + auto + interactive；完整回合落账后才进入恢复，保留未执行工具的失败结果，不重放已执行批次。沿用工具、时长、审批与失败预算，无新自动续跑提示。
+
+专项 6 文件 / 85 用例、完整 `npm run check`、build 与 `npm test` 通过（547 文件 / 3640 用例；完整输出 `/tmp/runledger-omp-o5-{focused,check,build,test}.log`）。流式协议用例覆盖请求形状、用户消息保留、旧 opaque 替换、缺项/重复/错误/截断/非法 usage 拒绝与整个流的超时；Owner 覆盖两种原生模式的恢复及不兼容换模，length 恢复后 governed write 仅执行一次。真实 PATH CLI + 隔离 home + tmux 验证普通摘要、handoff、raw ledger 不变与重启（`/tmp/runledger-compact-cli-e3gnqf_q/result.json`）；另一组经临时本地 TLS 代理验证内置 OpenAI Responses 序列化、流式压缩、重启与 length 恢复，不执行截断工具调用（`/tmp/runledger-native-compact-cli-iljeb2vp/result.json`）。两组全部正常退出，无遗留测试进程；代理不连接外网，临时证书只在测试子进程信任，私钥已删除。此证据不代表真实 OpenAI 服务接受该协议。
+
 前置：O2；V1 路径已有证据。
-文件边界：`api/openai-responses.ts`、`api/openai-compaction-state.ts`（如需）、`session-runtime/compaction-native-model.ts`、`compaction-domain.ts`、`agent-loop/loop-runner.ts`、`runtime/types.ts`（新钩子类型）、测试。
+文件边界：`api/openai-responses.ts`、`api/openai-compaction-state.ts`（如需）、`session-runtime/compaction-native-model.ts`、`compaction-domain.ts`、`agent-loop/loop-runner.ts`、`runtime/types.ts` 与 `interactive-session-controller.ts`（新钩子类型及传递）、`session-runtime/domain.ts`（接线）、`context/compaction/{settings,types,schema}.ts`（模式与 reason）、测试。
 交付物：V2 streaming 压缩请求/响应与状态恢复；端点与 provider 兼容校验；不兼容时**明确失败**（不静默降级为本地摘要）；`stopReason === "length"` 的有界恢复。
 必须验证：本地确定性 HTTP server 上的 V2 请求形状（尾部 `compaction_trigger`、恰好一个 compaction item、缺 item 或多项即失败）；重启恢复同一 provider 窗口；provider/模型切换拒绝；length 恢复计数上限与「不重放工具副作用」断言；overflow 路径不回归。
 不得声称：真实外部 provider E2E（需真实凭据与对应 provider 证据）。
+
+用户级 settings 示例（原生流式模式是显式选择，其他策略不使用 `nativeMode`）：
+
+```json
+{
+  "compaction": {
+    "strategy": "openai-responses-native",
+    "nativeMode": "streaming",
+    "auto": true
+  }
+}
+```
+
+手工策略可用 `/compact --strategy=single-pass`、`hierarchical`、`handoff` 或 `openai-responses-native`；`auto` 控制自动压缩与输出截断恢复，不影响显式手工操作。所有策略复用 Owner 的 Attempt、CAS、工件提交与恢复路径。
 
 ### O6（条件）：snapcompact 图像归档通道
 

@@ -1,6 +1,6 @@
 # Compact 专项入口：接入 oh-my-pi 压缩服务
 
-> 状态：**in_progress**：O0 合同冻结与 O1–O4 本地验收完成，O5 待实施；O6 `deferred`、O7 `blocked`。基线日期 2026-09-15。
+> 状态：O0 合同冻结与 O1–O5 本地生产验收完成；O6 `deferred`、O7 `blocked`，真实 OpenAI provider 与人工 / 跨平台验收仍 pending。基线日期 2026-09-15。
 > 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`。
 

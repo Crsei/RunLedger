@@ -345,6 +345,8 @@ O2 摘要格式接入：`SummaryFormatId` 与独立 `previousSummary` 只属于�
 
 O4 策略扩展：登记 `handoff@1`，使用 `handoff-document@1` 校验后仍生成 `portable-summary`，正文按现有工件提交与不可信 user 历史投影恢复。CLI/TUI/user settings 仅选择新操作的策略；已有 record、fork 继承、rewind 切点与权限 authority 不变。
 
+O5 原生流式与输出恢复：`CompactionReason` / 精确 schema 增加 `incomplete`，用于输出达到长度上限后的压缩，不冒充 `overflow`。`ModelIncompleteOutputRecovery` 是内部可选端口，Session Owner 仅在用户开启 `compaction.enabled` 与 `auto` 的 interactive run 中处理；loop 在当前 turn 与未执行工具结果落账后调用，每次 run 最多两次，取消、显式 stop 与运行预算优先。用户级 `nativeMode` 默认 `standalone`，显式 `streaming` 才发送 trigger；状态沿用现有 `OpenAICompactionState`，不新增持久字段。流式路径要求完成事件、恰好一个 compaction item、有效 usage 与有界超时，保留 user 消息和新 opaque item；超过工件预算就失败，不移植上游有损保留消息截断。schema 的既有历史 reason 继续读取，inventory 的模块与 owner 指针不变。
+
 router、manifest loader、Plan reducer/service、ContextEngine、token estimator、compaction planner/summarizer/store、Memory store/index/search/tools 和 UI/CLI 归 [Plan/Context/Compaction/Memory 专项](../plan-compact-memory/01-implementation-plan.md)。
 
 <a id="contract-control-telemetry"></a>

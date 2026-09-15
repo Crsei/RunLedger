@@ -1,6 +1,6 @@
 import type { TraceRecorderFactory } from "../trace/composition.ts";
 /** 原生 Responses compact 的受控 provider port；不提供工具执行能力。 */
-import { compactOpenAIResponses } from "../../api/openai-responses.ts";
+import { compactOpenAIResponses, compactOpenAIResponsesStreaming } from "../../api/openai-responses.ts";
 import { calculateCost } from "../../models.ts";
 import type { Models } from "../../models.ts";
 import type { Context, Model, Usage } from "../../types.ts";
@@ -16,6 +16,7 @@ import type { SummaryUsage } from "../context/compaction/budgeted-model.ts";
 
 export function createNativeCompactionPort(options: {
 	readonly models: Models;
+	readonly mode: "standalone" | "streaming";
 	readonly model: Model<"openai-responses">;
 	readonly router?: ModelRequestRouter;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
@@ -33,14 +34,15 @@ export function createNativeCompactionPort(options: {
 			// 已有 opaque 窗口按原样传递；新历史中的明文凭据先脱敏。
 			const context: Context = { ...options.context, tools: [], messages: JSON.parse(redactSummaryInput(JSON.stringify(options.context.messages))) as Context["messages"] };
 			const inputTokens = conservativeTokenEstimate(JSON.stringify(context));
+			const outputLimit = options.mode === "streaming" ? Math.min(options.model.maxTokens, options.limits.maxSummaryTokens) : options.model.maxTokens;
 			if (inputTokens > options.limits.maxInputTokensPerCall || inputTokens > options.limits.maxTotalInputTokens
-				|| options.model.maxTokens > options.limits.maxTotalOutputTokens || options.limits.maxModelCalls < 1) throw new Error("native_compaction_budget_exhausted");
-			options.onUsage({ calls: 1, input: inputTokens, output: options.model.maxTokens });
+				|| outputLimit > options.limits.maxTotalOutputTokens || options.limits.maxModelCalls < 1) throw new Error("native_compaction_budget_exhausted");
+			options.onUsage({ calls: 1, input: inputTokens, output: outputLimit });
 			const requestId = createRuntimeId("command", options.inputDigest.digest.slice(0, 48));
 			const routed = await (options.router ?? createCatalogModelRouter(options.models)).route({
 				requestId, operation: "summarize", requestKind: "compaction-summary", targetProfileId: `${options.model.provider}/${options.model.id}`,
 				contextDigest: runtimeDigest(JSON.parse(JSON.stringify(context))), planDigest: options.inputDigest, resourceDigest: runtimeDigest({ tools: [] }),
-				requiredContextTokens: inputTokens, requiredOutputTokens: options.model.maxTokens, requiresTools: false, requiresImages: false, requiresReasoningReplay: false,
+				requiredContextTokens: inputTokens, requiredOutputTokens: outputLimit, requiresTools: false, requiresImages: false, requiresReasoningReplay: false,
 				traceId: createRuntimeId("trace", runtimeDigest({ requestId }).digest.slice(0, 48)),
 			});
 			if (routed.outcome !== "compatible") throw new Error("native_compaction_model_incompatible");
@@ -50,8 +52,12 @@ export function createNativeCompactionPort(options: {
 			const recorder = await options.traceRecorderFactory?.create({ sessionId: options.sessionId, traceId: createRuntimeId("trace", runtimeDigest({ requestId }).digest.slice(0, 48)), metadata: { requestKind: "compaction-summary", strategy: "openai-responses-native" } });
 			const handle = await recorder?.startModel({ turn: 1, model, context: { ...context, tools: [] } });
 			try {
-				const result = await compactOpenAIResponses(model, context, { apiKey: auth.auth.apiKey, headers: auth.auth.headers, env: auth.env,
-					signal, sessionId: options.sessionId, timeoutMs: Math.max(1, options.limits.deadlineMs - Date.now()) });
+				const compact = options.mode === "streaming" ? compactOpenAIResponsesStreaming : compactOpenAIResponses;
+				const result = await compact(model, context, { apiKey: auth.auth.apiKey, headers: auth.auth.headers, env: auth.env,
+					signal, maxTokens: outputLimit, sessionId: options.sessionId, timeoutMs: Math.max(1, options.limits.deadlineMs - Date.now()) });
+				const observed = { calls: 1, input: Math.max(inputTokens, result.usage.input_tokens), output: Math.max(outputLimit, result.usage.output_tokens) };
+				options.onUsage(observed);
+				if (observed.input > options.limits.maxTotalInputTokens || observed.output > options.limits.maxTotalOutputTokens) throw new Error("native_compaction_budget_exhausted");
 				const cached = result.usage.input_tokens_details?.cached_tokens ?? 0;
 				const usage: Usage = { input: result.usage.input_tokens - cached, output: result.usage.output_tokens, cacheRead: cached, cacheWrite: 0, totalTokens: result.usage.total_tokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 				calculateCost(model, usage);

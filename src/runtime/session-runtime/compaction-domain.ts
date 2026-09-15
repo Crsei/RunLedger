@@ -154,6 +154,15 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		return assembleAgentModelContext(await this.project(input, this.load().active, settings));
 	}
 
+	public async recoverIncomplete(input: ModelContextAssemblyInput): Promise<boolean> {
+		const settings = await this.settings();
+		if (!settings.enabled || !settings.auto || input.requestKind !== "interactive" || input.signal?.aborted) return false;
+		const loaded = this.load();
+		const operationId = runtimeDigest({ kind: "incomplete", sessionId: input.sessionId, input: historyDigest(input.context.messages), revision: loaded.revision }).digest;
+		const result = await this.run(input, settings, "incomplete", { correlationId: operationId, effectId: operationId, expectedRevision: loaded.revision }, {}, input.signal ?? new AbortController().signal);
+		return result.ok;
+	}
+
 	public async preflightModel(model: Model<Api>): Promise<void> {
 		const loaded = this.load();
 		if (loaded.active === undefined) return;
@@ -244,7 +253,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 			startedWritten = true;
 			const previousSummary = loaded.active === undefined || native ? undefined : await this.readSummary(loaded.active);
 			const nativePort = !native || model.api !== "openai-responses" ? undefined : createNativeCompactionPort({
-				traceRecorderFactory: this.options.traceRecorderFactory, models: this.options.models, model: model as typeof model & { api: "openai-responses" }, router: this.options.router, sessionId: input.sessionId, inputDigest, limits,
+				mode: settings.nativeMode, traceRecorderFactory: this.options.traceRecorderFactory, models: this.options.models, model: model as typeof model & { api: "openai-responses" }, router: this.options.router, sessionId: input.sessionId, inputDigest, limits,
 				context: { ...previousProjection.context, messages: previousProjection.context.messages.slice(0, previousProjection.context.messages.length - (input.context.messages.length - cut.count)), tools: [] },
 				onUsage: (value) => { nativeUsage = value; },
 			});

@@ -71,6 +71,9 @@ describe("token compaction cut and budget", () => {
 	});
 	it("requires explicit token settings and rejects the removed turn-count setting", () => {
 		expect(parseCompactionSettings(undefined).retainRecentTokens).toBe(20_000);
+		expect(parseCompactionSettings(undefined).nativeMode).toBe("standalone");
+		expect(parseCompactionSettings({ nativeMode: "streaming" }).nativeMode).toBe("streaming");
+		expect(() => parseCompactionSettings({ nativeMode: "unknown" })).toThrow();
 		expect(parseCompactionSettings({ retainRecentTokens: 123 }).retainRecentTokens).toBe(123);
 		expect(() => parseCompactionSettings({ retainRecentTurns: 1 })).toThrow(/replaced/);
 		for (const value of [0, -1, NaN, 0.5]) expect(() => parseCompactionSettings({ retainRecentTokens: value })).toThrow();

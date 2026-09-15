@@ -21,6 +21,7 @@ export const CompactionCheckpointSchema = Type.Object(
 			Type.Literal("manual"),
 			Type.Literal("auto"),
 			Type.Literal("overflow"),
+			Type.Literal("incomplete"),
 			Type.Literal("model_switch"),
 		]),
 		status: Type.Union([

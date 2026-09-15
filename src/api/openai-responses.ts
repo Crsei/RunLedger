@@ -1,7 +1,7 @@
 import { compactionEndpointDigest, isOpenAICompactionState, type OpenAICompactionState } from "./openai-compaction-state.ts";
 import { notifyRequestPrepared } from "./request-observer.ts";
 import OpenAI from "openai";
-import type { ResponseCreateParamsStreaming, ResponseUsage } from "openai/resources/responses/responses.js";
+import type { ResponseCreateParamsStreaming, ResponseUsage, ResponseInputItem } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -349,4 +349,46 @@ export async function compactOpenAIResponses(model: Model<"openai-responses">, c
 		estimatedTokens: Math.max(Math.ceil(Buffer.byteLength(JSON.stringify(response.output)) / 3) + 8, response.usage.output_tokens) };
 	if (!isOpenAICompactionState(state)) throw new Error("native_compaction_output_invalid");
 	return { state, usage: response.usage };
+}
+
+/** 来源 oh-my-pi 3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec packages/agent/src/compaction/compaction-v2-streaming.ts；MIT 许可见 runtime/context/compaction/budget.ts。 */
+export async function compactOpenAIResponsesStreaming(model: Model<"openai-responses">, context: Context, options: StreamOptions): Promise<{ readonly state: OpenAICompactionState; readonly usage: ResponseUsage }> {
+	const endpoint = new URL(model.baseUrl);
+	const timeout = AbortSignal.timeout(Math.max(1, options.timeoutMs ?? 120_000));
+	const signal = options.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout]);
+	if (model.provider !== "openai" || model.api !== "openai-responses" || !["https:", "http:"].includes(endpoint.protocol)
+		|| endpoint.username || endpoint.password || endpoint.search || endpoint.hash) throw new Error("native_compaction_incompatible");
+	if (context.compaction !== undefined) assertCompactionCompatible(model, context.compaction);
+	const client = createClient(model, context, getClientApiKey(model.provider, options.apiKey, options.headers), options.headers, options.sessionId, options.env);
+	const params = buildParams(model, { ...context, tools: [] }, { ...options, maxTokens: options.maxTokens ?? model.maxTokens });
+	if (!Array.isArray(params.input)) throw new Error("native_compaction_input_invalid");
+	const originalInput = params.input;
+	// SDK 尚未声明 trigger 输入；仅此协议 item 收窄转换，其余输入沿用生产 serializer。
+	params.input = [...originalInput, { type: "compaction_trigger" } as unknown as ResponseInputItem];
+	const events = await client.responses.create(params, { signal, maxRetries: 0, ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }) });
+	let compaction: ResponseInputItem | undefined;
+	let completed = false;
+	let usage: ResponseUsage | undefined;
+	for await (const event of events) {
+		if (event.type === "response.failed" || event.type === "response.incomplete" || event.type === "error") throw new Error("native_compaction_stream_failed");
+		if (event.type === "response.output_item.done" && event.item.type === "compaction") {
+			if (compaction !== undefined || completed) throw new Error("native_compaction_stream_item_count");
+			compaction = event.item;
+		}
+		if (event.type === "response.completed") {
+			if (completed || event.response.status !== "completed") throw new Error("native_compaction_stream_invalid_completion");
+			completed = true;
+			usage = event.response.usage ?? undefined;
+		}
+	}
+	if (signal.aborted || !completed || compaction === undefined) throw new Error("native_compaction_stream_incomplete");
+	if (usage === undefined || ![usage.input_tokens, usage.output_tokens, usage.total_tokens, usage.input_tokens_details?.cached_tokens ?? 0, usage.output_tokens_details?.reasoning_tokens ?? 0].every((value) => Number.isSafeInteger(value) && value >= 0)
+		|| (usage.input_tokens_details?.cached_tokens ?? 0) > usage.input_tokens) throw new Error("native_compaction_usage_invalid");
+	// 保留真实 user 消息及新 opaque item；不迁移上游有损截断，超限由 Owner 明确拒绝。
+	const output = [...originalInput.filter((item) => (item.type === undefined || item.type === "message") && "role" in item && item.role === "user"), compaction];
+	const state: OpenAICompactionState = { kind: "openai-responses-compaction", formatVersion: 1, provider: model.provider, model: model.id,
+		endpointDigest: compactionEndpointDigest(model.baseUrl), output,
+		estimatedTokens: Math.max(Math.ceil(Buffer.byteLength(JSON.stringify(output)) / 3) + 8, usage.output_tokens) };
+	if (!isOpenAICompactionState(state)) throw new Error("native_compaction_output_invalid");
+	return { state, usage };
 }

@@ -364,6 +364,8 @@ export interface ModelContextAssemblyResult {
 	readonly receipt: ContextAssemblyReceipt;
 }
 
+export type ModelIncompleteOutputRecovery = (input: ModelContextAssemblyInput) => Promise<boolean>;
+
 export type ModelContextOverflowRecovery = (input: ModelContextAssemblyInput) => Promise<ModelContextAssemblyResult | undefined>;
 
 export type ModelContextAssembler = (
@@ -496,6 +498,7 @@ export interface AgentLoopConfig {
   /** Production Host seam for the single bounded model-request projection. */
   modelContextAssembler?: ModelContextAssembler;
   modelContextOverflowRecovery?: ModelContextOverflowRecovery;
+  modelIncompleteOutputRecovery?: ModelIncompleteOutputRecovery;
   /** Canonical Host sink for the bounded `context.assembled` receipt. */
   contextAssemblySink?: ContextAssemblySink;
   /** 每次模型请求的装配、provider 输入与完成状态。 */

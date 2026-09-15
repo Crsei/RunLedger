@@ -39,6 +39,9 @@ import type {
   ToolResultContent,
 } from "../types.ts";
 
+/** 每次 run 最多两次输出截断恢复，独立于工具及总运行预算。 */
+const MAX_INCOMPLETE_RECOVERIES = 2;
+
 export async function runAgentLoop(
   prompts: AgentMessage[],
   context: AgentContext,
@@ -116,6 +119,7 @@ export async function runAgentLoop(
   context.messages = messages.slice();
   let turn = 0;
   let toolTurns = 0;
+  let incompleteRecoveries = 0;
   let lastStopReason: StopReason = "stop";
   let terminationReason: AgentRunTerminationReason | undefined;
   let failureFingerprints: ReadonlyMap<string, number> = new Map();
@@ -539,13 +543,25 @@ export async function runAgentLoop(
 	  break;
 	}
 
+	// 输出截断只在完整 turn 已落账后恢复；保留失败 tool result，绝不重放该批副作用。
+	let incompleteRecovered = false;
+	if (assistantStopReason === "length" && incompleteRecoveries < MAX_INCOMPLETE_RECOVERIES && config.modelIncompleteOutputRecovery !== undefined) {
+		incompleteRecoveries += 1;
+		try {
+			const convertFn = config.convertToLlm ?? defaultConvertToLlm;
+			incompleteRecovered = await config.modelIncompleteOutputRecovery({ model: loopModel,
+				context: { systemPrompt: context.systemPrompt, messages: await convertFn(messages), tools: context.tools },
+				sessionId, turn, thinkingLevel: loopReasoning ?? "off", signal, requestKind: config.requestKind ?? "interactive" });
+		} catch { incompleteRecovered = false; }
+	}
+
     // steering 优先于 follow-up,且只在当前工具批次完成后注入。
     pendingMessages = await config.getSteeringMessages?.() ?? [];
     const hasMoreToolCalls = toolCalls.length > 0 && assistantStopReason === "toolUse";
     if (hasMoreToolCalls || pendingMessages.length > 0) continue;
 
     pendingMessages = await config.getFollowUpMessages?.() ?? [];
-    if (pendingMessages.length > 0) continue;
+    if (pendingMessages.length > 0 || incompleteRecovered) continue;
     break;
   }
 

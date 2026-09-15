@@ -187,6 +187,8 @@ describe("Model, plan, context, compaction, and memory passive contracts", () =>
 		};
 
 		expect(isCompactionCheckpoint(checkpoint)).toBe(true);
+		expect(isCompactionCheckpoint({ ...checkpoint, reason: "incomplete" })).toBe(true);
+		expect(isCompactionCheckpoint({ ...checkpoint, reason: "unknown" })).toBe(false);
 		expect(isCompactionCheckpoint({ ...checkpoint, terminalReceiptRef: undefined })).toBe(false);
 		expect(isCompactionCheckpoint({ ...checkpoint, summary: "unbounded model output" })).toBe(false);
 	});

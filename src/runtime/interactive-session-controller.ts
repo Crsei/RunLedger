@@ -1,4 +1,4 @@
-import type { ModelContextOverflowRecovery } from "./types.ts";
+import type { ModelContextOverflowRecovery, ModelIncompleteOutputRecovery } from "./types.ts";
 import type { TrajectoryClientPort } from "./contracts/trajectory.ts";
 import type { AuthInteraction, AuthType, Credential } from "../auth/types.ts";
 import { clampThinkingLevel, type Models, type Provider } from "../models.ts";
@@ -80,6 +80,7 @@ export interface InteractiveSessionControllerOptions {
   modelContextAssembler?: ModelContextAssembler;
   modelSelectionPreflight?: (model: Model<Api>) => Promise<void>;
   modelContextOverflowRecovery?: ModelContextOverflowRecovery;
+  modelIncompleteOutputRecovery?: ModelIncompleteOutputRecovery;
   /** Host-owned canonical receipt sink; local tests may omit it. */
   contextAssemblySink?: ContextAssemblySink;
   /** Session-owned catalog/budget route receipt; provider dispatch is forbidden when it denies. */
@@ -245,6 +246,7 @@ export class InteractiveSessionController {
   private readonly modelContextAssembler: ModelContextAssembler | undefined;
   private readonly modelSelectionPreflight: ((model: Model<Api>) => Promise<void>) | undefined;
   private readonly modelContextOverflowRecovery: ModelContextOverflowRecovery | undefined;
+  private readonly modelIncompleteOutputRecovery: ModelIncompleteOutputRecovery | undefined;
   private readonly contextAssemblySink: ContextAssemblySink | undefined;
   private readonly modelRequestRouter: ModelRequestRouter | undefined;
 	private readonly isModelSelectable: ((model: Model<Api>) => boolean) | undefined;
@@ -290,6 +292,7 @@ export class InteractiveSessionController {
     this.modelContextAssembler = opts.modelContextAssembler;
     this.modelSelectionPreflight = opts.modelSelectionPreflight;
     this.modelContextOverflowRecovery = opts.modelContextOverflowRecovery;
+    this.modelIncompleteOutputRecovery = opts.modelIncompleteOutputRecovery;
     this.contextAssemblySink = opts.contextAssemblySink;
     this.modelRequestRouter = opts.modelRequestRouter;
 	this.isModelSelectable = opts.isModelSelectable;
@@ -667,6 +670,7 @@ export class InteractiveSessionController {
         ...(this.toolResultOverflowStore === undefined ? {} : { toolResultOverflowStore: this.toolResultOverflowStore }),
         ...(this.modelContextAssembler === undefined ? {} : { modelContextAssembler: this.modelContextAssembler }),
         ...(this.modelContextOverflowRecovery === undefined ? {} : { modelContextOverflowRecovery: this.modelContextOverflowRecovery }),
+        ...(this.modelIncompleteOutputRecovery === undefined ? {} : { modelIncompleteOutputRecovery: this.modelIncompleteOutputRecovery }),
         modelRequestObserver: this.requestSnapshots.observe,
         ...(this.contextAssemblySink === undefined ? {} : { contextAssemblySink: this.contextAssemblySink }),
       },

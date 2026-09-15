@@ -1,6 +1,7 @@
 /** 用户级 compact 默认值；一次操作冻结一次配置。 */
 export interface CompactionSettings {
 	readonly enabled: boolean;
+	readonly nativeMode: "standalone" | "streaming";
 	readonly pruneSuperseded: boolean;
 	readonly dropUseless: boolean;
 	readonly strategy: "single-pass" | "hierarchical" | "handoff" | "openai-responses-native";
@@ -20,7 +21,7 @@ export interface CompactionSettings {
 }
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = Object.freeze({
-	enabled: true, pruneSuperseded: true, dropUseless: false, strategy: "single-pass", retainRecentTokens: 20_000,
+	enabled: true, nativeMode: "standalone", pruneSuperseded: true, dropUseless: false, strategy: "single-pass", retainRecentTokens: 20_000,
 	maxSummaryTokens: 4096, maxSummaryBytes: 32_000,
 	maxModelCalls: 16, maxTotalInputTokens: 1_000_000, maxTotalOutputTokens: 65_536,
 	maxLevels: 5, timeoutMs: 120_000, auto: false, threshold: 0.85,
@@ -36,7 +37,7 @@ export function parseCompactionSettings(value: unknown): CompactionSettings {
 		if (record[key] !== undefined && (typeof record[key] !== "number" || !Number.isSafeInteger(record[key]) || record[key] < 1 || record[key] > 4_000_000)) throw new Error(`invalid compaction ${key}`);
 	}
 	const merged = { ...DEFAULT_COMPACTION_SETTINGS, ...record };
-	if (typeof merged.pruneSuperseded !== "boolean" || typeof merged.dropUseless !== "boolean" || typeof merged.enabled !== "boolean" || typeof merged.auto !== "boolean" || (merged.strategy !== "single-pass" && merged.strategy !== "hierarchical" && merged.strategy !== "handoff" && merged.strategy !== "openai-responses-native")
+	if ((merged.nativeMode !== "standalone" && merged.nativeMode !== "streaming") || typeof merged.pruneSuperseded !== "boolean" || typeof merged.dropUseless !== "boolean" || typeof merged.enabled !== "boolean" || typeof merged.auto !== "boolean" || (merged.strategy !== "single-pass" && merged.strategy !== "hierarchical" && merged.strategy !== "handoff" && merged.strategy !== "openai-responses-native")
 		|| typeof merged.threshold !== "number" || !Number.isFinite(merged.threshold) || merged.threshold < 0.1 || merged.threshold > 0.95) throw new Error("invalid compaction policy");
 	const bounds = {
 		retainRecentTokens: [1, 1_000_000], maxSummaryTokens: [32, 32_768], maxSummaryBytes: [128, 131_072],

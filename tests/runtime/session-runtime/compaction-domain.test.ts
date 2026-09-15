@@ -28,7 +28,7 @@ function wireText(value: unknown): string {
 	if (!Array.isArray(value)) return "";
 	return value.flatMap((part: unknown) => typeof part === "object" && part !== null && "text" in part && typeof part.text === "string" ? [part.text] : []).join("\n");
 }
-async function fixture(native = false, fileHistory = false) {
+async function fixture(native = false, fileHistory = false, nativeMode: "standalone" | "streaming" = "standalone") {
 	const root = mkdtempSync(join(tmpdir(), "runledger-compact-"));
 	const home = join(root, "home"); mkdirSync(home, { mode: 0o700 });
 	const workspace = join(root, "workspace"); mkdirSync(workspace);
@@ -37,6 +37,7 @@ async function fixture(native = false, fileHistory = false) {
 	let promptUsage = 0;
 	let summaryOutput: string | undefined;
 	let rejectNormal = 0;
+	let lengthResponses = 0;
 	let summaryGate: Promise<void> | undefined;
 	let releaseSummary: (() => void) | undefined;
 	const server = createServer(async (req, res) => {
@@ -44,6 +45,11 @@ async function fixture(native = false, fileHistory = false) {
 		const request = JSON.parse(raw) as Record<string, unknown>; requests.push(request);
 		const summarizing = JSON.stringify((request.messages as unknown[] | undefined)?.[0] ?? {}).includes("Summarize the supplied historical conversation");
 		if (native) {
+			if ((request.input as { type?: string }[] | undefined)?.at(-1)?.type === "compaction_trigger") {
+				const item = { type: "compaction", id: "cmp_item", encrypted_content: "opaque-native-sentinel" };
+				res.writeHead(200, { "content-type": "text/event-stream" });
+				res.end([{ type: "response.output_item.done", output_index: 0, item }, { type: "response.completed", response: { id: "response_fixture", status: "completed", output: [item], usage: { input_tokens: 400, output_tokens: 100, total_tokens: 500, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } } }].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")); return;
+			}
 			if (req.url?.endsWith("/compact")) {
 				res.writeHead(200, { "content-type": "application/json" });
 				res.end(JSON.stringify({ id: "cmp_fixture", object: "response.compaction", created_at: 1,
@@ -74,8 +80,10 @@ async function fixture(native = false, fileHistory = false) {
 		}
 		if (summarizing && wireText(wireMessages[0]?.content).includes("handoff document")) content = HANDOFF_HEADINGS.map((heading) => `${heading}\nContinue compact-sentinel while preserving scope.`).join("\n");
 		if (summarizing && summaryOutput !== undefined) content = summaryOutput;
+		const finishReason = !summarizing && lengthResponses > 0 ? "length" : "stop";
+		if (finishReason === "length") lengthResponses -= 1;
 		res.writeHead(200, { "content-type": "text/event-stream" });
-		res.end(`data: ${JSON.stringify({ id: "compact-test", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: "stop" }], usage: { prompt_tokens: promptUsage, completion_tokens: 1, total_tokens: promptUsage + 1 } })}\n\ndata: [DONE]\n\n`);
+		res.end(`data: ${JSON.stringify({ id: "compact-test", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: finishReason }], usage: { prompt_tokens: promptUsage, completion_tokens: 1, total_tokens: promptUsage + 1 } })}\n\ndata: [DONE]\n\n`);
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address(); if (address === null || typeof address === "string") throw new Error("listener missing");
@@ -87,7 +95,7 @@ async function fixture(native = false, fileHistory = false) {
 	const store = new SessionStore(db); const ownerStore = new OwnerStore(db);
 	const sessionId = createRuntimeId("session", "compact-production");
 	store.createSession({ sessionId, workspaceId: createRuntimeId("workspace", "compact"), repositoryId: createRuntimeId("repository", "compact"), settingsDigest: "d".repeat(64), harnessProfile: standardHarnessProfileRef() });
-	const settings = { compaction: { retainRecentTokens: 1 }, autoTitle: false, provider: model.provider, model: "fixture", recording: { mode: "off" as const } };
+	const settings = { compaction: { retainRecentTokens: 1, nativeMode }, autoTitle: false, provider: model.provider, model: "fixture", recording: { mode: "off" as const } };
 	await saveProjectSettings({ layout }, settings);
 	let embedded: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
 	let client: SessionInteractiveController | undefined;
@@ -101,7 +109,7 @@ async function fixture(native = false, fileHistory = false) {
 		await claimDriver(embedded, client); await client.resumeEvents();
 		return client;
 	};
-	return { root, workspace, model, layout, store, usage: (value: number) => { promptUsage = value; }, summaryOutput: (value: string) => { summaryOutput = value; }, rejectReceipt: () => db.execSync("CREATE TEMP TRIGGER reject_compact_receipt BEFORE INSERT ON command_attempt_receipts WHEN NEW.outcome = 'committed' AND NEW.command_id LIKE 'command_compact-%' BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END"), hold: () => { summaryGate = new Promise<void>((resolve) => { releaseSummary = resolve; }); }, release: () => releaseSummary?.(), sessionId, requests, start, stop, overflow: (count: number) => { rejectNormal = count; }, configure: (threshold: number) => saveProjectSettings({ layout }, { ...settings, compaction: { retainRecentTokens: 1, auto: true, threshold } }), reject: () => { rejectSummary = true; },
+	return { root, workspace, model, layout, store, usage: (value: number) => { promptUsage = value; }, summaryOutput: (value: string) => { summaryOutput = value; }, rejectReceipt: () => db.execSync("CREATE TEMP TRIGGER reject_compact_receipt BEFORE INSERT ON command_attempt_receipts WHEN NEW.outcome = 'committed' AND NEW.command_id LIKE 'command_compact-%' BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END"), hold: () => { summaryGate = new Promise<void>((resolve) => { releaseSummary = resolve; }); }, release: () => releaseSummary?.(), sessionId, requests, start, stop, overflow: (count: number) => { rejectNormal = count; }, length: (count: number) => { lengthResponses = count; }, configure: (threshold: number) => saveProjectSettings({ layout }, { ...settings, compaction: { retainRecentTokens: 1, nativeMode, auto: true, threshold } }), reject: () => { rejectSummary = true; },
 		close: async () => { releaseSummary?.(); await stop(); db.close(); server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); rmSync(root, { recursive: true, force: true }); },
 	};
 }
@@ -248,6 +256,30 @@ describe("manual compact through the production Session Owner", () => {
 		} finally { await f.close(); }
 	}, 60_000);
 
+	it("recovers a length stop through the Owner after governed file work without repeating effects", async () => {
+		const f = await fixture(false, true);
+		try {
+			let client = await f.start();
+			for (const prompt of ["fileops-write-alpha", "fileops-read-alpha", `before-length ${"detail ".repeat(200)}`]) { await client.prompt(prompt); await client.waitForIdle(); }
+			const contents = readFileSync(join(f.workspace, "alpha.txt"), "utf8");
+			await f.configure(0.95); f.length(1);
+			const before = f.requests.length;
+			await client.prompt("recover-length"); await client.waitForIdle();
+			expect(f.requests.length - before).toBe(3);
+			const records = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed");
+			expect(records).toHaveLength(1); expect(decodeCompactionRecord(records[0]!).checkpoint.reason).toBe("incomplete");
+			expect(readFileSync(join(f.workspace, "alpha.txt"), "utf8")).toBe(contents);
+			expect(JSON.stringify(f.requests.at(-1))).toContain("compact-sentinel");
+			const results = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message").flatMap((event) => {
+				const entry = JSON.parse(event.payloadJson) as { payload?: { message?: { role?: string; content?: { toolName?: string }[] } } };
+				return entry.payload?.message?.role === "toolResult" ? entry.payload.message.content ?? [] : [];
+			});
+			expect(results.filter((result) => result.toolName === "write")).toHaveLength(1);
+			await f.stop(); client = await f.start(); await client.prompt("after-length-resume"); await client.waitForIdle();
+			expect(JSON.stringify(f.requests.at(-1))).toContain("compact-sentinel");
+		} finally { await f.close(); }
+	}, 60_000);
+
 	it("merges file operations and previous facts over two Owner compactions", async () => {
 		const f = await fixture(false, true);
 		try {
@@ -333,8 +365,8 @@ describe("manual compact through the production Session Owner", () => {
 		} finally { await f.close(); }
 	}, 60_000);
 
-	it("commits the full native Responses window, restores it and rejects incompatible model switches", async () => {
-		const f = await fixture(true);
+	it.each(["standalone", "streaming"] as const)("commits the full native Responses window, restores it and rejects incompatible model switches (%s)", async (nativeMode) => {
+		const f = await fixture(true, false, nativeMode);
 		try {
 			let client = await f.start();
 			for (let index = 0; index < 3; index += 1) { await client.prompt(`native-user-${index}`); await client.waitForIdle(); }

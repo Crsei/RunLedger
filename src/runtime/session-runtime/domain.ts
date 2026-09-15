@@ -330,6 +330,7 @@ export async function assembleSessionDomain(
 		modelContextAssembler: async (input) => compaction.assemble(withContextSources(input)),
 		modelSelectionPreflight: (model) => compaction.preflightModel(model),
 		modelContextOverflowRecovery: async (input) => compaction.recoverOverflow(withContextSources(input)),
+		modelIncompleteOutputRecovery: async (input) => compaction.recoverIncomplete(withContextSources(input)),
 
 	});
 	compaction = new SessionCompactionDomain({
