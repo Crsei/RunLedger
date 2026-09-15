@@ -14,6 +14,7 @@ import { defaultConvertToLlm } from "../agent-loop/context-conversion.ts";
 import { isCurrentLedgerEntry } from "../ledger/types.ts";
 import { assembleAgentModelContext } from "../context/model-request-adapter.ts";
 import { compactionContextTokens, observeCompactionBudget, resolveThresholdTokens } from "../context/compaction/budget.ts";
+import { planProjectionPrune } from "../context/compaction/projection-prune.ts";
 import { conservativeTokenEstimate } from "../context/token-estimator.ts";
 import { historyDigest, planHistoryCut, hasSummarySecret, redactSummaryInput } from "../context/compaction/history.ts";
 import { parseCompactionSettings, type CompactionSettings } from "../context/compaction/settings.ts";
@@ -55,6 +56,7 @@ export interface SessionCompactionOptions {
 	readonly getInput: (model?: Model<Api>) => ModelContextAssemblyInput;
 	readonly getHistory: () => readonly Message[];
 	readonly protectedState: () => unknown;
+	readonly getPruneHints?: () => { readonly uselessToolCallIds: readonly string[]; readonly protectedReferences: readonly string[] };
 	readonly hasPendingApproval: () => boolean;
 	readonly withExclusive: <T>(work: (signal: AbortSignal) => Promise<T>) => Promise<T>;
 	readonly attemptPort: () => AttemptPort | undefined;
@@ -122,7 +124,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 	public async assemble(input: ModelContextAssemblyInput): Promise<ModelContextAssemblyResult> {
 		let loaded = this.load();
 		const settings = await this.settings();
-		const projected = await this.project(input, loaded.active);
+		const projected = await this.project(input, loaded.active, settings);
 		const observation = observeCompactionBudget(projected.context.messages, input.model, Math.max(0, loaded.usageStartCount - (loaded.active?.count ?? 0) + (projected.requiredHistoryPrefixCount ?? 0)));
 		const localTokens = observation.estimator.estimate(JSON.stringify({ ...projected.context, compaction: undefined }))
 			+ (projected.context.compaction?.estimatedTokens ?? 0) + (projected.sources ?? []).reduce((total, source) => total + observation.estimator.estimate(source.content), 0);
@@ -139,7 +141,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 			} catch { this.suppressedModel = suppressionKey; }
 			loaded = this.load();
 		}
-		return assembleAgentModelContext(await this.project(input, loaded.active));
+		return assembleAgentModelContext(await this.project(input, loaded.active, settings));
 	}
 
 	public async recoverOverflow(input: ModelContextAssemblyInput): Promise<ModelContextAssemblyResult | undefined> {
@@ -149,17 +151,17 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		const operationId = runtimeDigest({ kind: "overflow", sessionId: input.sessionId, input: historyDigest(input.context.messages), revision: loaded.revision }).digest;
 		const result = await this.run(input, settings, "overflow", { correlationId: operationId, effectId: operationId, expectedRevision: loaded.revision }, {}, input.signal ?? new AbortController().signal);
 		if (!result.ok) return undefined;
-		return assembleAgentModelContext(await this.project(input, this.load().active));
+		return assembleAgentModelContext(await this.project(input, this.load().active, settings));
 	}
 
 	public async preflightModel(model: Model<Api>): Promise<void> {
 		const loaded = this.load();
 		if (loaded.active === undefined) return;
 		const input = this.options.getInput(model);
-		const projected = await this.project(input, loaded.active);
+		const settings = await this.settings();
+		const projected = await this.project(input, loaded.active, settings);
 		const assembled = assembleAgentModelContext(projected);
 		if (loaded.active === undefined || !assembled.receipt.omittedFragments.some((fragment) => fragment.fragmentId.startsWith("agent-history-"))) return;
-		const settings = await this.settings();
 		if (!settings.enabled || !settings.auto) throw new Error("model_context_requires_compaction");
 		const operationId = runtimeDigest({ kind: "model_switch", model: { provider: model.provider, id: model.id }, revision: loaded.revision, prefix: historyDigest(input.context.messages) }).digest;
 		const result = await this.run(input, settings, "model_switch", { correlationId: operationId, effectId: operationId, expectedRevision: loaded.revision }, {}, new AbortController().signal);
@@ -185,7 +187,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		const requestedStrategy = typeof payload.strategy === "string" ? payload.strategy : settings.strategy;
 		const native = requestedStrategy === "openai-responses-native";
 		const previousCount = loaded.active?.count ?? 0;
-		const cutProjection = await this.project(input, loaded.active);
+		const cutProjection = await this.project(input, loaded.active, settings);
 		const observation = observeCompactionBudget(cutProjection.context.messages, input.model, Math.max(0, loaded.usageStartCount - (loaded.active?.count ?? 0) + (cutProjection.requiredHistoryPrefixCount ?? 0)));
 		const cut = planHistoryCut(input.context.messages, settings.retainRecentTokens, previousCount, observation.promptTokens);
 		if (!cut.ok) return failure(operation, cut.code);
@@ -206,7 +208,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		const inputDigest = runtimeDigest({ units: cut.units, previousId: loaded.active?.checkpoint.compactionId ?? null, focus: focus ?? null, model: { provider: model.provider, id: model.id }, key, settings });
 		const protectedStateDigest = runtimeDigest(JSON.parse(JSON.stringify(this.options.protectedState())));
 		const range = this.sourceRange(cut.count, previousCount, input.context.messages);
-		const previousProjection = await this.project(input, loaded.active);
+		const previousProjection = await this.project(input, loaded.active, settings, cut.count);
 		const beforeTokens = contextTokens(previousProjection);
 		const commandId = createRuntimeId("command", `compact-${requestId}`);
 		const attemptId = createRuntimeId("attempt", `compact-${requestId}`);
@@ -260,7 +262,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 				if (!validSummary(text, limits)) return this.fail(started, "invalid_output", usage());
 				candidate = { ...candidate, text };
 			}
-			const projected = this.replaceCandidate(input, cut.count, candidate);
+			const projected = this.replaceCandidate(this.prune(input, settings, cut.count), cut.count, candidate);
 			const assembled = assembleAgentModelContext(projected);
 			const afterTokens = contextTokens(projected);
 			if (afterTokens >= beforeTokens || assembled.receipt.omittedFragments.some((fragment) => fragment.fragmentId.startsWith("agent-history-"))) return this.fail(started, "summary_budget_invalid", usage());
@@ -364,9 +366,16 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		if (record.artifact === undefined) throw new Error("compaction_artifact_missing");
 		return new TextDecoder("utf-8", { fatal: true }).decode(await this.artifacts.read(record.artifact));
 	}
-	private async project(input: ModelContextAssemblyInput, active: CompactionRecord | undefined): Promise<ModelContextAssemblyInput> {
-		if (active === undefined) return input;
+	private prune(input: ModelContextAssemblyInput, settings: CompactionSettings, protectedPrefixCount: number): ModelContextAssemblyInput {
+		if (!settings.enabled) return input;
+		const projected = planProjectionPrune(input.context.messages, { pruneSuperseded: settings.pruneSuperseded, dropUseless: settings.dropUseless,
+			protectedPrefixCount, ...this.options.getPruneHints?.() });
+		return projected.messages === input.context.messages ? input : { ...input, context: { ...input.context, messages: [...projected.messages] } };
+	}
+	private async project(input: ModelContextAssemblyInput, active: CompactionRecord | undefined, settings: CompactionSettings, preserveThroughCount = 0): Promise<ModelContextAssemblyInput> {
+		if (active === undefined) return this.prune(input, settings, preserveThroughCount);
 		if (active.count > input.context.messages.length || historyDigest(input.context.messages.slice(0, active.count)).digest !== active.prefixDigest.digest) throw new Error("compaction_history_mismatch");
+		input = this.prune(input, settings, Math.max(active.count, preserveThroughCount));
 		const text = await this.readSummary(active);
 		if (active.replacementKind === "portable-summary") return this.replace(input, active.count, text);
 		const state: unknown = JSON.parse(text);

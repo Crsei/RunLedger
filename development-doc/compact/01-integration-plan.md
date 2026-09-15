@@ -1,6 +1,6 @@
 # RunLedger × oh-my-pi 压缩服务接入实施计划
 
-> 状态：**in_progress**。O0 合同冻结完成，O1–O2 完成，O3–O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
+> 状态：**in_progress**。O0 合同冻结完成，O1–O3 完成，O4–O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
 > 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`；事实清单见 [00-oh-my-pi-compaction-services.md](00-oh-my-pi-compaction-services.md)。
 > 检索入口见 [README.md](README.md)。
@@ -189,8 +189,10 @@
 
 ### O3：投影剪枝（supersede / useless）
 
+状态：`done` / `implemented`（本地生产组合）。只替换派生请求中的工具文本，默认开启 supersede、关闭 useless；使用同一路径及 offset/limit/lineNumbers 作为精确读取键。无时钟与 cache suffix 决策，重复投影幂等；最小净收益为 50 估算 token。`details.useless === true` 经 composition 私有 hint 传入，不向公共消息或 ledger 增加字段，避免改变历史 digest。 protected prefix 在剪枝前校验 raw digest，新候选生成时也保护整个新切点前缀；所有配对与 ID 均保留。focused 2 文件 / 32 用例、完整 `npm run check`、build 与 `npm test` 通过（545 文件 / 3617 用例），完整日志 `/tmp/runledger-omp-o3-{focused-final,check-final,build,test}.log`。真实 CLI 用 governed read 验证旧读取消隐、新读取保留、原始 ledger 不变和重启，结果 `/tmp/runledger-compact-cli-xppeihtc/result.json`，退出正常且无遗留测试进程。本阶段不提供模型侧历史恢复通路。
+
 前置：O1。
-文件边界：`projection-prune.ts`（新）、`compaction-domain.ts` 的 `project()`/`run()`、`settings.ts`、测试。
+文件边界：`projection-prune.ts`（新）、`compaction-domain.ts` 的 `project()`/`run()`、`domain.ts`（私有 hints 接线）、`settings.ts`、测试。
 交付物：确定性、无时钟的投影瘦身；只作用于保留尾部；`pruneSuperseded` / `dropUseless` 开关（默认按来源语义开启 supersede、保守处理 useless）。
 必须验证：同一历史重复投影逐字节一致（S2）；`[0, count)` 前缀与 `prefixDigest` 不受影响；配对完整性不被破坏；被消隐内容仍可从 raw ledger 恢复（人工/运维路径，不需要模型侧通路）；小结果不消隐（无净收益）。
 不得声称：可恢复的模型侧读取通路（O7 才涉及）。

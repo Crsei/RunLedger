@@ -60,6 +60,7 @@ import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition, type SessionExtensionComposition } from "./extension-composition.ts";
 import { createSessionPlanInspection, type SessionPlanInspection } from "./plan-composition.ts";
 import type { ModelContextAssemblyInput } from "../types.ts";
+import { collectUselessToolCallIds } from "../context/compaction/projection-prune.ts";
 import { SessionCompactionDomain } from "./compaction-domain.ts";
 import { createLspTool, type LspToolOptions } from "../../lsp/tool.ts";
 import { shutdownAll } from "../../lsp/client.ts";
@@ -335,6 +336,10 @@ export async function assembleSessionDomain(
 		store, fence, layout: options.layout, models: options.models,
 		getInput: (model) => withContextSources(controller.compactionInput(model)),
 		getHistory: () => defaultConvertToLlm([...controller.messages]),
+		getPruneHints: () => {
+			const content = planDomain?.inspect().content;
+			return { uselessToolCallIds: collectUselessToolCallIds(controller.messages), protectedReferences: typeof content === "string" ? [content] : [] };
+		},
 		withExclusive: (work) => controller.withContextMutation(work),
 		attemptPort: () => attemptPort.get(),
 		hasPendingApproval: () => planDomain?.inspect().state.status === "awaiting_approval",

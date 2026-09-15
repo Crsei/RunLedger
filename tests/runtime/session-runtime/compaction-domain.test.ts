@@ -190,6 +190,27 @@ describe("manual compact through the production Session Owner", () => {
 		} finally { await f.close(); }
 	}, 60_000);
 
+	it("prunes superseded reads on real requests and restores identical tool projections without rewriting ledger", async () => {
+		const f = await fixture(false, true);
+		try {
+			let client = await f.start();
+			for (const prompt of ["fileops-write-alpha", "fileops-read-alpha", "fileops-read-alpha", "inspect-pruned"] ) { await client.prompt(prompt); await client.waitForIdle(); }
+			const toolProjection = (request: Record<string, unknown>) => (request.messages as { role?: string; content?: unknown }[]).filter((message) => message.role === "tool");
+			const before = toolProjection(f.requests.at(-1)!);
+			expect(before.filter((message) => wireText(message.content).includes("[Superseded by a newer read"))).toHaveLength(1);
+			expect(before.filter((message) => wireText(message.content).includes("READ_TAIL_SENTINEL"))).toHaveLength(1);
+			const originals = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message");
+			expect(JSON.stringify(originals)).not.toContain("[Superseded by a newer read");
+			await f.stop(); client = await f.start(); await client.prompt("inspect-after-resume"); await client.waitForIdle();
+			expect(JSON.stringify(toolProjection(f.requests.at(-1)!))).toBe(JSON.stringify(before));
+			const beforeCompact = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message");
+			expect(await client.commandSessionDomain("compact.run", {}, { correlationId: "pruned", effectId: "pruned", expectedRevision: 0 })).toMatchObject({ ok: true });
+			expect(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message")).toEqual(beforeCompact);
+			await f.stop(); client = await f.start(); await client.prompt("after-pruned-compact"); await client.waitForIdle();
+			expect(JSON.stringify(f.requests.at(-1)!)).toContain("compact-sentinel");
+		} finally { await f.close(); }
+	}, 60_000);
+
 	it("merges file operations and previous facts over two Owner compactions", async () => {
 		const f = await fixture(false, true);
 		try {

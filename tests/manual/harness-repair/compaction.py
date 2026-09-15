@@ -27,11 +27,11 @@ class CompactProvider(Provider):
         summarizing = bool(messages and "Summarize the supplied historical conversation" in str(messages[0].get("content")))
         last_content = next((item.get("content", "") for item in reversed(messages) if item.get("role") == "user"), "")
         last_user = wire_text(last_content)
-        if last_user == "COMPACT_READ_APPROVED" and messages[-1].get("role") == "user":
+        if last_user.startswith("COMPACT_READ_") and messages[-1].get("role") == "user":
             self.server.wire_requests.append(body)
             chunk = {"id": "read-approved", "object": "chat.completion.chunk", "model": body["model"], "choices": [{"index": 0,
-                     "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_read_approved", "type": "function",
-                     "function": {"name": "read", "arguments": json.dumps({"path": "approved.txt"})}}]}, "finish_reason": "tool_calls"}]}
+                     "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": f"call_read_{len(self.server.wire_requests)}", "type": "function",
+                     "function": {"name": "read", "arguments": json.dumps({"path": "prune.txt" if last_user.startswith("COMPACT_READ_PRUNE") else "approved.txt", "lineNumbers": False})}}]}, "finish_reason": "tool_calls"}]}
             payload = ("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -95,6 +95,16 @@ def main():
         time.sleep(0.5)
         before = probe.submit("COMPACT_READ_APPROVED")
         probe.end(before, "stop")
+        (root / "workspace/prune.txt").write_text("PRUNE_BODY_SENTINEL " * 250)
+        for marker in ["COMPACT_READ_PRUNE_1", "COMPACT_READ_PRUNE_2", "INSPECT_PRUNED"]:
+            time.sleep(0.5)
+            before = probe.submit(marker)
+            probe.end(before, "stop")
+        tool_texts = [wire_text(item.get("content", "")) for item in server.wire_requests[-1].get("messages", []) if item.get("role") == "tool"]
+        assert sum("[Superseded by a newer read" in text for text in tool_texts) == 1
+        assert sum("PRUNE_BODY_SENTINEL" in text for text in tool_texts) == 1
+        assert "[Superseded by a newer read" not in json.dumps(records(probe, "ledger.message"))
+        report["projection_prunes_superseded_only"] = True
         for index in range(4):
             time.sleep(0.5)
             before = probe.submit(f"COMPACT_HISTORY_{index}")
