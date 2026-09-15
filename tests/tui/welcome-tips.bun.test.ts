@@ -19,6 +19,12 @@ describe("welcome tips", () => {
 		}
 	});
 
+	test("TIPS does not advertise the hidden recovery/process/terminal commands", () => {
+		for (const name of ["/recovery", "/processes", "/terminal"]) {
+			expect(TIPS.some((tip) => tip.includes(name))).toBe(false);
+		}
+	});
+
 	test("pickTip stays in bounds and is deterministic per sample", () => {
 		const tips = ["a", "b", "c"];
 		expect(pickTip(tips, 0)).toBe("a");

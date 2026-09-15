@@ -57,17 +57,13 @@ Session 选择器中 Ctrl+S 在 Updated 与 Created 排序之间切换；Enter �
 /thinking 打开 thinking level 选择器；当前值会显示在 Session 状态与后续请求配置中。
 /theme 打开语法主题选择器；方向键预览，Enter 保存，Esc 恢复原主题。
 /scrollbar 切换 transcript scrollbar；若偏好存储不可用，当前运行仍生效但不会持久化。
-/recovery 可查看恢复状态；使用 /recovery assess、/recovery verify <attempt-id> 或 /recovery resume <reason> 处理 recovery_required。
-/processes 打开 managed process 列表；列表中 Enter 或 d 查看详情，t 直接进入终端，Esc 关闭。
-/terminal <execution-id> 打开指定 managed process 的终端；详情中 t/Enter 进入终端，o 刷新输出。
-managed terminal 中输入会发送 stdin，Enter 发送换行；Ctrl+S 请求停止进程，Ctrl+R 请求按当前窗口调整 PTY 大小。
 /mcp 查看当前 MCP server；Enter 查看工具与诊断，r 重启选中 server，Esc 返回。
 /plugins、/skills（/skill）、/hooks 打开扩展管理；t 处理信任，Space/Enter 切换所属插件启用状态，插件与 Skill 可用 r 重新发现。
 /plan 查看当前 Plan Mode 状态与审批信息；Plan 的写入、激活、批准与取消也可通过 headless control command 执行。
 /compact 查看 compaction checkpoints；实际 compact run 需要受治理的 source range 与 transcript 输入。
 /memory 查看当前 memory store；/remember <text> 提交一条 workspace memory proposal，是否生效由批准流程决定。
 /prompt 打开 prompt template 选择器；模板来源依赖当前配置，未配置模板时不会凭空生成模板。
-配置、认证、Session 切换、recovery 与 memory mutation 命令只在当前 turn 空闲或 Host/domain 状态允许时执行。
+配置、认证、Session 切换与 memory mutation 命令只在当前 turn 空闲或 Host/domain 状态允许时执行。
 出现 permission 或 approval 反向请求时，选择器中的允许/拒绝结果会回到同一 Session 审计链；拒绝与 Ctrl+C 使用同一中断路径。
 runledger security inspect 只读查看当前生效的安全配置、权限与 capability 证据。
 runledger worktree list|inspect|create|resume|release confirm 管理受治理 worktree；release 必须显式提供 confirm。

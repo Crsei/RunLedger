@@ -444,7 +444,7 @@ queued -> starting -> running -> backgrounded
 - wait：`process:wait`，只接受 positive timeout 并受 compatibility 常量上限约束；
 - mutation：`process:create`、`process:write`、`process:eof`、`process:resize`、`process:detach`、`process:stop`；
 - model tools：`bash`、`process_output`、`process_wait`、`write_stdin`、`process_stop`；
-- TUI commands：`/processes`、`/terminal <executionId>`，不复用 `/tasks`。
+- TUI commands：`/processes`、`/terminal <executionId>`，不复用 `/tasks`。2026-09-16 起二者在注册表标记 `hidden: true`，暂不进入补全/`/commands`/welcome tips，但直接输入仍可派发到本节 process overlay；展示与恢复条件见 [`20-codex-slash-command-adaptation-plan.md` §0.1](../tui/20-codex-slash-command-adaptation-plan.md)。
 
 命名固定为 Control Plane `process:wait`、model-facing `process_wait`；二者共享 `ManagedProcessWaitRequest/Result` 语义，但 tool adapter 只能返回进一步收窄和清洗后的模型可见结果。
 

@@ -110,6 +110,21 @@ describe("slash command registry", () => {
     expect(visible.every((entry) => entry.debug !== true)).toBe(true);
   });
 
+  it("隐藏 recovery/processes/terminal:补全列表与 /commands 面板不可见,直接输入仍解析", () => {
+    const hiddenNames = ["recovery", "processes", "terminal"];
+    for (const includeDebug of [{}, { showDebugCommands: true }]) {
+      const visible = commandsForContext(includeDebug).map((entry) => entry.canonicalName);
+      for (const name of hiddenNames) expect(visible).not.toContain(name);
+    }
+    for (const name of hiddenNames) {
+      const entry = findCommand(name);
+      expect(entry?.hidden).toBe(true);
+      expect(entry === undefined ? false : isCommandVisibleForContext(entry, { showDebugCommands: true })).toBe(false);
+    }
+    expect(findCommand("processes")?.actionType).toBe("process.list");
+    expect(findCommand("terminal")?.actionType).toBe("process.terminal");
+  });
+
   it("commandsForContext 预留 debug 门控", () => {
     const clear = builtinCommandDescriptors().find((entry) => entry.canonicalName === "clear")!;
     const flagged = { ...clear, debug: true as const };

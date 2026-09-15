@@ -243,19 +243,24 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
 		availableDuringTask: false,
 		unavailableDuringTaskMessage: "/permissions is available when the current turn is idle.",
 	}),
+    // 2026-09-16:这三条命令在当前 TUI 的行为待修复,先从补全弹窗、/commands 面板与
+    // welcome tips 隐藏。hidden 只作用于展示:注册表解析不受影响,直接输入仍可派发,
+    // 因此 recovery_required 的人工恢复入口不会被彻底切断。修复后移除 hidden。
     command("recovery", "Inspect or resolve crash recovery", 14, {
       actionType: "recovery.open",
       category: "recovery",
       policy: READONLY_POLICY,
+      hidden: true,
       supportsInlineArgs: true,
       usage: "[status|assess|verify <attemptId>|resume <reason>]",
       argumentSchema: [schema("action", "status|assess|verify <attemptId>|resume <reason>", false)],
     }),
-    command("processes", "List managed processes", 14, { actionType: "process.list", category: "process", policy: READONLY_POLICY }),
+    command("processes", "List managed processes", 14, { actionType: "process.list", category: "process", policy: READONLY_POLICY, hidden: true }),
     command("terminal", "Open managed terminal", 15, {
       actionType: "process.terminal",
       category: "process",
       policy: READONLY_POLICY,
+      hidden: true,
       supportsInlineArgs: true,
       usage: "<executionId>",
       argumentSchema: [schema("executionId", "Managed process execution id", true)],

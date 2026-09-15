@@ -32,6 +32,16 @@ RunLedger 现状：`handleSubmit`（`src/tui/interactive-mode.ts:1156`）里有�
 适配顺序：**先建注册表（P0），再补 Editor 输入能力（P1），再迁输入期弹窗（P2–P3），
 然后统一提交/派发（P4），最后统一二级展示与门控（P5–P6）。**
 
+### 0.1 当前展示面例外（2026-09-16）
+
+`/recovery`、`/processes`、`/terminal` 在注册表带 `hidden: true`，因此不出现在输入期补全、
+`/commands` 面板与 welcome tips；`commandsForContext({ showDebugCommands: true })` 也不会展示它们。
+`hidden` 只作用于展示层，`findCommand` 与派发路径不受影响，直接输入这三个命令仍可执行——
+`recovery_required` 时的人工恢复入口（`/recovery assess|verify|resume`）因此不会被切断，
+`/terminal <executionId>` 的内联参数提示也仍然可达。隐藏原因是这三条命令当前行为有待修复；
+修复后移除 `hidden` 并同步恢复 `tips.txt` 中的说明行。回归入口：
+`tests/tui/commands/registry.test.ts`、`tests/tui/welcome-tips.bun.test.ts`。
+
 ## 1. codex 实现剖析（参考定位）
 
 ### 1.1 命令注册表 —— `tui/src/slash_command.rs` + `tui/src/bottom_pane/slash_commands.rs`

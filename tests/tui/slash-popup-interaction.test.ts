@@ -242,15 +242,46 @@ describe("slash popup 输入期状态机(对照 codex slash_popup_model_first_fo
     const { terminal, internals, mode } = setupMode();
     const running = mode.run();
     try {
-      internals.refs.editor.setText("/rec view the diff");
-      internals.refs.editor.setCursor(4);
+      internals.refs.editor.setText("/mode view the diff");
+      internals.refs.editor.setCursor(5);
       expect(internals.slashPopup).toBeDefined();
-      expect(internals.slashPopup?.selectedItem()?.canonicalName).toBe("recovery");
+      expect(internals.slashPopup?.selectedItem()?.canonicalName).toBe("mode");
       terminal.send("\r");
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      // /mode 的非法参数路径全同步:notice 在 submit 返回前已入 timeline。
       expect(internals.refs.editor.getText()).toBe("");
-      // agent-only 模式:recovery 不可用 → notice 说明
-      expect(timelineText(mode)).toContain("Session recovery is unavailable");
+      // 非法 mode 由参数决定 → 证明草稿尾随命令一起派发
+      expect(timelineText(mode)).toContain("Usage: /mode [default|minimal|plan]");
+    } finally {
+      await quit(mode, internals, terminal, running);
+    }
+  });
+
+  it("隐藏的 recovery/processes/terminal 不进入补全弹窗,也不进入 /commands 面板", async () => {
+    const { terminal, internals, mode } = setupMode();
+    const running = mode.run();
+    try {
+      for (const [prefix, hidden] of [["rec", "recovery"], ["proc", "processes"], ["term", "terminal"]] as const) {
+        internals.refs.editor.setText(`/${prefix}`);
+        const rows = internals.slashPopup?.getVisibleRows() ?? [];
+        expect(rows.some((row) => row.command.canonicalName === hidden)).toBe(false);
+      }
+      internals.refs.editor.setText("/commands");
+      const rows = internals.slashPopup?.getVisibleRows() ?? [];
+      expect(rows.some((row) => row.command.canonicalName === "help")).toBe(false);
+
+      // 直接输入 /commands:面板内容与注册表可见集合一致
+      internals.refs.editor.setText("");
+      terminal.send("/");
+      terminal.send("help");
+      terminal.send("\r");
+      const ui = (mode as unknown as { ui: TUI }).ui;
+      const panel = ui.getOverlay()?.present?.(terminal.columns)[0];
+      expect(panel?.kind).toBe("select");
+      if (panel?.kind === "select") {
+        const labels = panel.options.map((option) => option.label.split(" ")[0]);
+        for (const hidden of ["/recovery", "/processes", "/terminal"]) expect(labels).not.toContain(hidden);
+        expect(labels).toContain("/resume");
+      }
     } finally {
       await quit(mode, internals, terminal, running);
     }
