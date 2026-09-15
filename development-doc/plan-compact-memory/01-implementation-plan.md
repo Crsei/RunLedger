@@ -127,6 +127,12 @@ src/cli/main.ts
 
 把 oh-my-pi 的压缩机制（token 预算切点与比率校正、摘要格式 seam 与迭代 update、文件操作清单、投影级剪枝、handoff、provider 原生流式压缩、`stopReason === "length"` 有界恢复）接入上述适配器的**增量**方案，见 [compact/README.md](../compact/README.md)、[compact/00-oh-my-pi-compaction-services.md](../compact/00-oh-my-pi-compaction-services.md)、[compact/01-integration-plan.md](../compact/01-integration-plan.md)。该目录只承载 omp 侧取证与接入阶段 O0–O7，不重复记账：本文件仍是 Model/Plan/Context/Compaction/Memory 的唯一执行账本，C0–C5 阶段状态、公共契约与 authority 以本文件与 `runtime/04` 为准；两者冲突时先改本文件再改该目录。O0 已基于 `9ab7977` 冻结接入合同（含 §4.4 契约变更顺序），未改变本节任何实现状态。O1 的 token 切点、provider usage 地板及本地生产验收已完成，O2 的迭代摘要、格式 registry 和文件清单，以及 O3 的确定性投影剪枝、O4 的 handoff 策略、O5 的原生流式压缩与有界 length 恢复本地验收也已完成（真实 OpenAI provider 仍待验收）；增量证据仅记在 `compact/01` 对应小节。
 
+### 0.7 2026-09-16 Plan Mode 完整度对齐入口
+
+Plan Mode 的用户可见行为交付（会话内进入/退出、mode instruction 与计划正文注入、模型侧进入与请求审批、审批决策集与 review 界面、实施交接、产物导出与 reentry、端到端门禁）转入 [02-plan-mode-parity-implementation-plan.md](02-plan-mode-parity-implementation-plan.md)。该文件以 oh-my-pi `3b3a6dc9bb` 的完成度为目标口径，按 P0–P7 记录阶段、文件边界、验证矩阵与验收证据。
+
+归属边界不变：本文件仍是 Plan Mode 的 reducer/artifact/公共契约设计账本，§3.2 的行为合同、§6.2/§6.3 的 policy ceiling 与 §6.7 的事件建议继续有效；公共类型、schema 与 event catalog 的落地仍归 `runtime/04` 的 contract work package。**Phase 3–5 的复选框状态自本节起以 02 为唯一来源**，本文件对应章节只保留设计叙述与门槛，不再作为完成状态的判断依据；02 与本节冲突时先改本节设计前提再改 02。
+
 ## 1. 目标、成功标准与非目标
 
 ### 1.1 目标
@@ -1216,6 +1222,8 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 ### Phase 3:Plan Mode reducer、store 与 durable lifecycle
 
+> 状态入口:未完成项由 [02](02-plan-mode-parity-implementation-plan.md) P0–P1、P6 承接(§0.7);下方复选框保留为设计叙述。
+
 前置:Phase 2;Runtime Artifact/Evidence 契约域已冻结,且独立行为证据证明 Artifact Store 可用。
 
 目标:模式和计划 revision 可持久恢复,尚不开放实施审批 UI。
@@ -1246,6 +1254,8 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 建议 commit:`plan: persist mode lifecycle and immutable revisions`
 
 ### Phase 4:Plan Mode Capability Gateway 与专用工具
+
+> 状态入口:未完成项由 [02](02-plan-mode-parity-implementation-plan.md) P1、P3 承接(§0.7);下方复选框保留为设计叙述。
 
 前置:Runtime Workspace/Security 契约域、Runtime Resource 契约域与对应专项行为门禁;Phase 3。
 
@@ -1280,6 +1290,8 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 建议 commit:`plan: enforce read-only mode at the capability gateway`
 
 ### Phase 5:Plan approval、TUI 与实施交接
+
+> 状态入口:未完成项由 [02](02-plan-mode-parity-implementation-plan.md) P2、P4、P5 承接(§0.7);下方复选框保留为设计叙述。其中"fresh-context approval 创建 fork + ApprovedPlanRef"与 02 的 D7 冲突:fork 固化继承源 profile,plan@1 的 fork 仍是只读,故 fresh-context 实施改为新建 standard 会话加显式 handoff。
 
 前置:Phase 3–4;统一 Approval Service。
 
