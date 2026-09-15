@@ -4,6 +4,7 @@
 
 | 计划 | 范围与状态入口 |
 |---|---|
+| [Plan 15：项目运行数据 Web 展示](15-project-runtime-web-observability-plan.md) | planned；参考 collab-web，规划本地只读项目/Session 看板、历史与实时桥接、轨迹及用量。 |
 | [Plan 14：Agent Harness 既有执行闭环加固](14-agent-harness-reliability-hardening-plan.md) | H1–H5 已实现，完整 check/test/build 与确定性 HTTP/Owner、Built CLI/TTY 已通过；六例功能结果及人工/平台缺口单列，不新增产品功能。 |
 | [Plan 03：Session 执行可靠性](03-session-execution-reliability-repair-plan.md) | 已有审批、中断、进程、预算及终态修复；状态和证据查该文 §1.2。 |
 | [Plan 13：包边界 workspace 重构](13-package-boundary-workspace-refactor-plan.md) | 独立结构专项，不作为 Plan 14 的顺带重构内容。 |
