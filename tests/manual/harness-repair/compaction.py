@@ -46,6 +46,9 @@ class CompactProvider(Provider):
                        "Files and tool outcomes: approved.txt was written by governed bash. "
                        "Unresolved tasks: continue verification. Verification evidence: approved tool result. "
                        "Source references: historical source messages.")
+            if summarizing and "handoff document" in wire_text(messages[0].get("content", "")):
+                summary = "\n".join(heading + "\nContinue handoff-cli-sentinel with the original constraints." for heading in [
+                    "## Goal", "## Constraints & Preferences", "## Progress", "### Done", "### In Progress", "### Pending", "## Key Decisions", "## Critical Context", "## Next Steps"])
             if not summarizing:
                 summary = last_user + " Preserve the original audit history." * 180
             chunks = [{"id": "summary", "object": "chat.completion.chunk", "model": body["model"],
@@ -152,6 +155,25 @@ def main():
         assert records(probe, "ledger.message") == control_raw
         report["standalone_compact_list_and_run"] = True
         report["raw_history_preserved"] = True
+        probe.start(resume=True)
+        before = probe.submit("COMPACT_HISTORY_HANDOFF")
+        probe.end(before, "stop")
+        time.sleep(0.5)
+        before = probe.submit("HANDOFF_TAIL")
+        probe.end(before, "stop")
+        handoff_raw = records(probe, "ledger.message")
+        probe.submit("/compact --strategy=handoff")
+        probe.wait(lambda: len(records(probe, "compaction.completed")) == 3, "handoff compact")
+        assert records(probe, "ledger.message") == handoff_raw
+        assert records(probe, "compaction.completed")[-1]["strategy"] == {"id": "handoff", "version": 1}
+        report["handoff_exit"] = probe.close()
+        probe.start(resume=True)
+        before = probe.submit("AFTER_HANDOFF_RESUME")
+        probe.end(before, "stop")
+        handoff_wire = json.dumps(server.wire_requests[-1])
+        assert "handoff-cli-sentinel" in handoff_wire and "## Goal" in handoff_wire
+        report["handoff_resume_exit"] = probe.close()
+        report["handoff_tui_and_restart"] = True
         report["passed"] = True
     finally:
         server.shutdown()

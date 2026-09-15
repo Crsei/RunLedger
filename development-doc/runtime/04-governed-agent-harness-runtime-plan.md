@@ -343,6 +343,8 @@ manifest、frontmatter、配置文件、发现优先级、trust store、installe
 
 O2 摘要格式接入：`SummaryFormatId` 与独立 `previousSummary` 只属于内部 `SummaryModelPort` / strategy registry；格式分别为 `headings@1`、`headings-update@1`、`handoff-document@1`。当前 portable 恢复统一消费不可信文本，格式不改变恢复语义，因此不新增 record 字段、不迁移历史 record，inventory 的公共 checkpoint 模块与 owner 指针保持不变。文件操作清单属于同一摘要工件正文，只记录显式 read/write/edit 请求过的路径，不证明操作成功，也不改变权限、批准或完成 authority。
 
+O4 策略扩展：登记 `handoff@1`，使用 `handoff-document@1` 校验后仍生成 `portable-summary`，正文按现有工件提交与不可信 user 历史投影恢复。CLI/TUI/user settings 仅选择新操作的策略；已有 record、fork 继承、rewind 切点与权限 authority 不变。
+
 router、manifest loader、Plan reducer/service、ContextEngine、token estimator、compaction planner/summarizer/store、Memory store/index/search/tools 和 UI/CLI 归 [Plan/Context/Compaction/Memory 专项](../plan-compact-memory/01-implementation-plan.md)。
 
 <a id="contract-control-telemetry"></a>

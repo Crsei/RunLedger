@@ -27,7 +27,17 @@ export const singlePassStrategy: CompactionStrategy = {
 	},
 };
 
-/** 顺序分组归并；前次摘要只进入第一组的独立通道，后续层从生成的摘要归并。 */
+/** 来源 oh-my-pi 3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec compaction.ts handoff；MIT 许可见 budget.ts。 */
+export const handoffStrategy: CompactionStrategy = {
+	key: Object.freeze({ id: "handoff", version: 1 }), outputKind: "portable-summary", formatId: "handoff-document@1",
+	async generate(input, { model, signal }) {
+		const value = request(input, input.units.join("\n\n"), input.previousSummary, "handoff-document@1");
+		const result = await generate(input, model, signal, value);
+		return result.ok ? candidate(input, result.text, value.format) : result;
+	},
+};
+
+/** 顺序分组归并，不切开完整源单元。 */
 export const hierarchicalStrategy: CompactionStrategy = {
 	key: Object.freeze({ id: "hierarchical", version: 1 }), outputKind: "portable-summary", formatId: "headings@1",
 	async generate(input, { model, signal }) {

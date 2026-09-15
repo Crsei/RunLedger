@@ -98,6 +98,8 @@ describe("Host control command parsing", () => {
 
 	it("lets the Owner capture history and accepts only known strategy flags", () => {
 		expect(parseControlCommand(["compact", "run"])).toMatchObject({ ok: true });
+		expect(parseControlCommand(["compact", "run", "--strategy=handoff"])).toMatchObject({ ok: true });
+		expect(controlCommandRequest({ group: "compact", action: "run", args: ["--strategy=handoff"], mutation: true })).toMatchObject({ operation: "compact.run", body: { strategy: "handoff" } });
 		expect(controlCommandRequest({ group: "compact", action: "list", args: [], mutation: false })).toEqual({ operation: "compaction.list", body: {}, mutation: false });
 		expect(parseControlCommand(["compact", "run", "--strategy=unknown"])).toMatchObject({ ok: false });
 		expect(controlCommandRequest({ group: "compact", action: "run", args: ["--strategy=hierarchical", "pending", "work"], mutation: true })).toEqual({ operation: "compact.run", body: { strategy: "hierarchical", focus: "pending work" }, mutation: true });

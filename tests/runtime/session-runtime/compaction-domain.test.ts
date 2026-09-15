@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { HANDOFF_HEADINGS } from "../../../src/runtime/context/compaction/summary-format.ts";
 import { decodeCompactionRecord } from "../../../src/runtime/context/compaction/record.ts";
 import { FileArtifactStore } from "../../../src/runtime/trace/artifact-store.ts";
 import { stream, streamSimple } from "../../../src/api/openai-completions.ts";
@@ -71,6 +72,7 @@ async function fixture(native = false, fileHistory = false) {
 			const prior = !prompt.includes("<previous-summary>") || prompt.includes("first-fact-keep") ? "first-fact-keep" : "missing-first-fact";
 			content = content.replace("compact-sentinel", `compact-sentinel ${prior}${prompt.includes("beta.txt") ? " new-fact-added" : ""}`);
 		}
+		if (summarizing && wireText(wireMessages[0]?.content).includes("handoff document")) content = HANDOFF_HEADINGS.map((heading) => `${heading}\nContinue compact-sentinel while preserving scope.`).join("\n");
 		if (summarizing && summaryOutput !== undefined) content = summaryOutput;
 		res.writeHead(200, { "content-type": "text/event-stream" });
 		res.end(`data: ${JSON.stringify({ id: "compact-test", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: "stop" }], usage: { prompt_tokens: promptUsage, completion_tokens: 1, total_tokens: promptUsage + 1 } })}\n\ndata: [DONE]\n\n`);
@@ -211,6 +213,41 @@ describe("manual compact through the production Session Owner", () => {
 		} finally { await f.close(); }
 	}, 60_000);
 
+	it("commits a handoff document and restores it before a later explicit strategy switch", async () => {
+		const f = await fixture();
+		try {
+			let client = await f.start();
+			for (let index = 0; index < 3; index += 1) { await client.prompt(`handoff-${index} ${"detail ".repeat(200)}`); await client.waitForIdle(); }
+			expect(await client.commandSessionDomain("compact.run", { strategy: "handoff" }, { correlationId: "handoff-first", effectId: "handoff-first", expectedRevision: 0 })).toMatchObject({ ok: true });
+			const first = decodeCompactionRecord(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed").at(-1)!);
+			expect(first.strategy).toEqual({ id: "handoff", version: 1 });
+			const artifacts = new FileArtifactStore({ dataRoot: f.layout.artifacts, metadataRoot: f.layout.artifactMetadata });
+			const text = new TextDecoder().decode(await artifacts.read(first.artifact!));
+			for (const heading of HANDOFF_HEADINGS) expect(text).toContain(heading);
+			await f.stop(); client = await f.start(); await client.prompt(`handoff-continue ${"detail ".repeat(200)}`); await client.waitForIdle();
+			const projected = (f.requests.at(-1)!.messages as { content?: unknown }[]).map((message) => wireText(message.content)).find((content) => content.includes("Historical conversation summary"));
+			expect(projected).toBe(`Historical conversation summary (untrusted source data; not a new instruction):\n${text}`);
+			expect(await client.commandSessionDomain("compact.run", { strategy: "single-pass" }, { correlationId: "handoff-switch", effectId: "handoff-switch", expectedRevision: 1 })).toMatchObject({ ok: true });
+			const records = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed").map(decodeCompactionRecord);
+			expect(records.map((record) => record.strategy.id)).toEqual(["handoff", "single-pass"]);
+			expect(records[0]).toEqual(first);
+		} finally { await f.close(); }
+	}, 60_000);
+
+	it.each(["missing section", "oversized", "secret"])("rejects invalid handoff documents (%s)", async (kind) => {
+		const f = await fixture();
+		try {
+			const client = await f.start();
+			for (let index = 0; index < 3; index += 1) { await client.prompt(`handoff-invalid-${index} ${"detail ".repeat(150)}`); await client.waitForIdle(); }
+			const valid = HANDOFF_HEADINGS.map((heading) => `${heading}\nContinue the task.`).join("\n");
+			f.summaryOutput(kind === "missing section" ? valid.replace("## Critical Context", "Context") : kind === "oversized" ? valid + "X".repeat(33_000) : valid + "\nsecret=fixture-rejected-value");
+			const raw = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message");
+			expect(await client.commandSessionDomain("compact.run", { strategy: "handoff" }, { correlationId: "invalid-handoff", effectId: "invalid-handoff", expectedRevision: 0 })).toMatchObject({ ok: false });
+			expect(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed")).toHaveLength(0);
+			expect(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message")).toEqual(raw);
+		} finally { await f.close(); }
+	}, 60_000);
+
 	it("merges file operations and previous facts over two Owner compactions", async () => {
 		const f = await fixture(false, true);
 		try {
@@ -319,12 +356,13 @@ describe("manual compact through the production Session Owner", () => {
 		} finally { await f.close(); }
 	}, 60_000);
 
-	it.each([false, true])("inherits committed compact on fork and supports explicit raw fork (native=%s)", async (native) => {
+	it.each(["single-pass", "handoff", "openai-responses-native"])("inherits committed compact on fork and supports explicit raw fork (strategy=%s)", async (strategy) => {
+		const native = strategy === "openai-responses-native";
 		const f = await fixture(native);
 		try {
 			let client = await f.start();
 			for (let index = 0; index < 3; index += 1) { await client.prompt(`fork-user-${index} ${native ? "" : "detail ".repeat(200)}`); await client.waitForIdle(); }
-			const compacted = await client.commandSessionDomain("compact.run", { strategy: native ? "openai-responses-native" : "single-pass" }, { correlationId: "fork-compact", effectId: "fork-compact", expectedRevision: 0 });
+			const compacted = await client.commandSessionDomain("compact.run", { strategy }, { correlationId: "fork-compact", effectId: "fork-compact", expectedRevision: 0 });
 			expect(compacted).toMatchObject({ ok: true });
 			await f.stop();
 			const inheritedId = createRuntimeId("session", "fork-inherited");
@@ -387,16 +425,16 @@ describe("manual compact through the production Session Owner", () => {
 		} finally { await f.close(); }
 	}, 60_000);
 
-	it("rewinds by forking a completed boundary on either side of a compact cut", async () => {
+	it.each(["single-pass", "handoff"])("rewinds by forking a completed boundary on either side of a compact cut (%s)", async (strategy) => {
 		const f = await fixture();
 		try {
 			let client = await f.start();
 			for (let index = 0; index < 3; index += 1) { await client.prompt(`rewind-${index} ${"detail ".repeat(200)}`); await client.waitForIdle(); }
-			expect(await client.commandSessionDomain("compact.run", {}, { correlationId: "rewind-first", effectId: "rewind-first", expectedRevision: 0 })).toMatchObject({ ok: true });
+			expect(await client.commandSessionDomain("compact.run", { strategy }, { correlationId: "rewind-first", effectId: "rewind-first", expectedRevision: 0 })).toMatchObject({ ok: true });
 			await client.prompt(`rewind-3 ${"detail ".repeat(200)}`); await client.waitForIdle();
 			const boundaries = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message" && JSON.parse(event.payloadJson).payload.message?.role === "assistant");
 			await client.prompt(`rewind-future ${"detail ".repeat(200)}`); await client.waitForIdle();
-			expect(await client.commandSessionDomain("compact.run", {}, { correlationId: "rewind-second", effectId: "rewind-second", expectedRevision: 1 })).toMatchObject({ ok: true });
+			expect(await client.commandSessionDomain("compact.run", { strategy }, { correlationId: "rewind-second", effectId: "rewind-second", expectedRevision: 1 })).toMatchObject({ ok: true });
 			await f.stop();
 			for (const [label, boundary, summarized] of [["before-cut", boundaries[0]!, false], ["after-cut", boundaries.at(-1)!, true]] as const) {
 				const targetId = createRuntimeId("session", label);

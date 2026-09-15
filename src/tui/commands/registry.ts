@@ -278,7 +278,7 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       policy: IDLE_ONLY_POLICY,
       requiredOperation: "compact.run",
       supportsInlineArgs: true,
-      usage: "[--strategy=single-pass|hierarchical] [focus]",
+      usage: "[--strategy=single-pass|hierarchical|handoff|openai-responses-native] [focus]",
       argumentSchema: [schema("focus", "Optional strategy and summary focus", false)],
       unavailableHint: "Start a new session with /new, then include a short summary.",
       availableDuringTask: false,

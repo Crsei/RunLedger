@@ -1,6 +1,6 @@
 # RunLedger × oh-my-pi 压缩服务接入实施计划
 
-> 状态：**in_progress**。O0 合同冻结完成，O1–O3 完成，O4–O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
+> 状态：**in_progress**。O0 合同冻结完成，O1–O4 完成，O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
 > 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`；事实清单见 [00-oh-my-pi-compaction-services.md](00-oh-my-pi-compaction-services.md)。
 > 检索入口见 [README.md](README.md)。
@@ -198,6 +198,8 @@
 不得声称：可恢复的模型侧读取通路（O7 才涉及）。
 
 ### O4：handoff 策略
+
+状态：`done` / `implemented`（本地生产组合）。Runtime 04 已先登记 `handoff@1` / `handoff-document@1`，沿用 portable 摘要工件与恢复协议。 CLI/TUI/settings 白名单与 usage 同步；handoff 仅影响新操作。focused 5 文件 / 77 用例、完整 `npm run check`、build 与 `npm test` 通过（545 文件 / 3623 用例），完整输出 `/tmp/runledger-omp-o4-{focused,check,build,test}.log`。Owner HTTP 验证精确正文恢复、后续切回 single-pass、fork 与切点两侧 rewind；缺段、超限、secret 均拒绝提交。真实 CLI/TUI 三次压缩（含 handoff）与重启通过，结果 `/tmp/runledger-compact-cli-87piryoh/result.json`，四次退出正常且无遗留进程。
 
 前置：O2。
 文件边界：`summary-strategies.ts`、`summary-format.ts`、`settings.ts`、`compaction-domain.ts`（策略白名单）、TUI/CLI 白名单、测试。

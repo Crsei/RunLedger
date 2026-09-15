@@ -20,8 +20,8 @@ export class PlanWorkflow {
 	public async runCompaction(arg: string): Promise<void> {
 		const parts = arg.trim().split(/\s+/u).filter(Boolean);
 		const flags = parts.filter((part) => part.startsWith("--"));
-		if (flags.length > 1 || flags.some((flag) => flag !== "--strategy=single-pass" && flag !== "--strategy=hierarchical" && flag !== "--strategy=openai-responses-native")) {
-			this.port.showNotice("Usage: /compact [--strategy=single-pass|hierarchical|openai-responses-native] [focus]", "error"); return;
+		if (flags.length > 1 || flags.some((flag) => flag !== "--strategy=single-pass" && flag !== "--strategy=hierarchical" && flag !== "--strategy=handoff" && flag !== "--strategy=openai-responses-native")) {
+			this.port.showNotice("Usage: /compact [--strategy=single-pass|hierarchical|handoff|openai-responses-native] [focus]", "error"); return;
 		}
 		const inspection = await querySessionController(this.port.controller, "compaction.list", {}, {
 			correlationId: `corr-${this.port.nextCorrelationId()}`, effectId: `effect-${this.port.nextEffectId()}`,

@@ -135,7 +135,7 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	if (group === "memory" && (rawAction === "reject" || rawAction === "revoke") && args.length < 1) return { ok: false, error: `${rawAction} requires an id` };
 	if (group === "worktree" && rawAction === "release" && args[0] !== "confirm") return { ok: false, error: "release requires the explicit confirm token" };
 	if (group === "compact" && rawAction === "run") {
-		if (args.some((arg) => arg.startsWith("--") && arg !== "--strategy=single-pass" && arg !== "--strategy=hierarchical" && arg !== "--strategy=openai-responses-native")) return { ok: false, error: "compact run accepts --strategy=single-pass|hierarchical|openai-responses-native and optional focus text" };
+		if (args.some((arg) => arg.startsWith("--") && arg !== "--strategy=single-pass" && arg !== "--strategy=hierarchical" && arg !== "--strategy=handoff" && arg !== "--strategy=openai-responses-native")) return { ok: false, error: "compact run accepts --strategy=single-pass|hierarchical|handoff|openai-responses-native and optional focus text" };
 		if (args.filter((arg) => arg.startsWith("--strategy=")).length > 1) return { ok: false, error: "compact strategy must be specified once" };
 	}
 	if (group === "context" && rawAction === "assemble") {
@@ -308,7 +308,7 @@ export function controlCommandHelp(): string {
 		"  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",
 		"    plugin inspect / mcp inspect are unavailable in standard Sessions; use plugin list / mcp list|doctor.",
 		"  runledger plan inspect|enter|activate|write|request_approval|approve|reject <approval-id>|cancel|settle_exit",
-		"  runledger compact list|run [--strategy=single-pass|hierarchical|openai-responses-native] [focus]",
+		"  runledger compact list|run [--strategy=single-pass|hierarchical|handoff|openai-responses-native] [focus]",
 		"  runledger dump [request|system|assembled|base]   (raw content to stdout; metadata to stderr)",
 		"  runledger memory search|get|approve|reject|revoke   runledger remember <text>",
 		"    worktree, context and memory/remember mutations are unavailable in standard Sessions.",

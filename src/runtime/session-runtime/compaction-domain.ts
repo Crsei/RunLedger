@@ -19,7 +19,7 @@ import { conservativeTokenEstimate } from "../context/token-estimator.ts";
 import { historyDigest, planHistoryCut, hasSummarySecret, redactSummaryInput } from "../context/compaction/history.ts";
 import { parseCompactionSettings, type CompactionSettings } from "../context/compaction/settings.ts";
 import { CompactionStrategyRegistry, validSummary, type CompactionCandidate, type CompactionLimits, type CompactionStrategyKey } from "../context/compaction/strategy.ts";
-import { singlePassStrategy, hierarchicalStrategy, openAIResponsesNativeStrategy } from "../context/compaction/summary-strategies.ts";
+import { singlePassStrategy, hierarchicalStrategy, handoffStrategy, openAIResponsesNativeStrategy } from "../context/compaction/summary-strategies.ts";
 import { createFileOps, extractFileOpsFromMessage, computeFileLists, upsertFileOperations } from "../context/compaction/summary-context.ts";
 import { createBudgetedSummaryModel } from "../context/compaction/budgeted-model.ts";
 import type { CompactionCheckpoint, CompactionReason } from "../context/compaction/types.ts";
@@ -65,7 +65,7 @@ export interface SessionCompactionOptions {
 export class SessionCompactionDomain implements SessionResourceDomainPort {
 	public readonly operationManifest = MANIFEST;
 	private readonly options: SessionCompactionOptions;
-	private readonly strategies = new CompactionStrategyRegistry([singlePassStrategy, hierarchicalStrategy, openAIResponsesNativeStrategy]);
+	private readonly strategies = new CompactionStrategyRegistry([singlePassStrategy, hierarchicalStrategy, handoffStrategy, openAIResponsesNativeStrategy]);
 	private readonly artifacts: FileArtifactStore;
 	private running: AbortController | undefined;
 	private readonly listeners = new Set<(event: SessionControllerEvent) => void>();
@@ -108,7 +108,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		if (operation !== "compact.run") return failure(operation, "operation_unavailable", "unavailable");
 		if (Object.keys(payload).some((key) => !["focus", "strategy", "expectedRevision", "expectedDomainRevision"].includes(key))
 			|| (payload.focus !== undefined && (typeof payload.focus !== "string" || payload.focus.length > 2048))
-			|| (payload.strategy !== undefined && payload.strategy !== "single-pass" && payload.strategy !== "hierarchical" && payload.strategy !== "openai-responses-native")
+			|| (payload.strategy !== undefined && payload.strategy !== "single-pass" && payload.strategy !== "hierarchical" && payload.strategy !== "handoff" && payload.strategy !== "openai-responses-native")
 			|| (payload.expectedRevision !== undefined && payload.expectedRevision !== context.expectedRevision)
 			|| (payload.expectedDomainRevision !== undefined && payload.expectedDomainRevision !== context.expectedRevision)) return failure(operation, "compaction_request_invalid");
 		try {

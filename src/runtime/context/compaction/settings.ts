@@ -3,7 +3,7 @@ export interface CompactionSettings {
 	readonly enabled: boolean;
 	readonly pruneSuperseded: boolean;
 	readonly dropUseless: boolean;
-	readonly strategy: "single-pass" | "hierarchical" | "openai-responses-native";
+	readonly strategy: "single-pass" | "hierarchical" | "handoff" | "openai-responses-native";
 	readonly retainRecentTokens: number;
 	readonly maxSummaryTokens: number;
 	readonly maxSummaryBytes: number;
@@ -36,7 +36,7 @@ export function parseCompactionSettings(value: unknown): CompactionSettings {
 		if (record[key] !== undefined && (typeof record[key] !== "number" || !Number.isSafeInteger(record[key]) || record[key] < 1 || record[key] > 4_000_000)) throw new Error(`invalid compaction ${key}`);
 	}
 	const merged = { ...DEFAULT_COMPACTION_SETTINGS, ...record };
-	if (typeof merged.pruneSuperseded !== "boolean" || typeof merged.dropUseless !== "boolean" || typeof merged.enabled !== "boolean" || typeof merged.auto !== "boolean" || (merged.strategy !== "single-pass" && merged.strategy !== "hierarchical" && merged.strategy !== "openai-responses-native")
+	if (typeof merged.pruneSuperseded !== "boolean" || typeof merged.dropUseless !== "boolean" || typeof merged.enabled !== "boolean" || typeof merged.auto !== "boolean" || (merged.strategy !== "single-pass" && merged.strategy !== "hierarchical" && merged.strategy !== "handoff" && merged.strategy !== "openai-responses-native")
 		|| typeof merged.threshold !== "number" || !Number.isFinite(merged.threshold) || merged.threshold < 0.1 || merged.threshold > 0.95) throw new Error("invalid compaction policy");
 	const bounds = {
 		retainRecentTokens: [1, 1_000_000], maxSummaryTokens: [32, 32_768], maxSummaryBytes: [128, 131_072],
