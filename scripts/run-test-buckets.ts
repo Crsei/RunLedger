@@ -6,13 +6,14 @@
  * OpenTUI native heap 互相污染。
  */
 
-import { execFileSync, spawnSync, type SpawnOptions, type SpawnSyncOptions } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { inspectTestInventory, type ExecutionBucket, type TestInventoryEntry, type TestRunner } from "./test-inventory.ts";
+import { runTestChunk, type TestChunkResult } from "./test-chunk-process.ts";
 
 export type TestBucketMode = "local" | "all";
 
@@ -267,6 +268,12 @@ interface CleanupEvidence {
 	readonly status: CleanupVerification;
 }
 
+interface ChunkEvidence extends TestChunkResult {
+	readonly bucket: ExecutionBucket;
+	readonly chunkIndex: number;
+	readonly files: readonly string[];
+}
+
 interface TestExecutionEvidence {
 	readonly schemaId: "runledger.test-execution-evidence.v2";
 	readonly executionMode: ExecutionMode;
@@ -286,6 +293,7 @@ interface TestExecutionEvidence {
 	readonly platform: { readonly os: string; readonly arch: string; readonly libc: "unavailable" };
 	readonly artifacts: { readonly buildManifestDigest: null; readonly logDigest: null };
 	readonly cleanup: CleanupEvidence;
+	readonly chunks: readonly ChunkEvidence[];
 }
 
 function sha256(value: string): string {
@@ -423,6 +431,7 @@ async function run(): Promise<void> {
 	let cleanup = plannedCleanupEvidence();
 	let isolatedHome: string | undefined;
 	const processGroups: number[] = [];
+	const chunks: ChunkEvidence[] = [];
 	let childProcesses: CleanupVerification = "not_applicable";
 	const processGroupsSupported = process.platform !== "win32";
 	try {
@@ -434,29 +443,17 @@ async function run(): Promise<void> {
 			for (const bucket of plan) {
 				for (const chunk of bucket.chunks) {
 					console.log(`[${bucket.bucket}] ${chunk.command} ${chunk.args.join(" ")}`);
-					// Node 的同步实现保留 detached；@types/node 的 SpawnSyncOptions 未声明该字段。
-					const spawnOptions: SpawnSyncOptions & Pick<SpawnOptions, "detached"> = {
-						cwd: repoRoot,
-						env: sanitizedTestEnvironment(isolatedHome),
-						stdio: "inherit",
-						shell: false,
-						detached: processGroupsSupported,
-						timeout: bucket.watchdogMs,
-					};
-					const result = spawnSync(chunk.command, chunk.args, spawnOptions);
-					if (result.pid === undefined) {
-						childProcesses = "unknown";
-					} else if (processGroupsSupported) {
-						processGroups.push(result.pid);
-					}
+					const result = await runTestChunk(chunk.command, chunk.args, {
+						cwd: repoRoot, env: sanitizedTestEnvironment(isolatedHome), watchdogMs: bucket.watchdogMs,
+					});
+					chunks.push({ ...result, bucket: bucket.bucket, chunkIndex: chunks.length, files: chunk.files });
+					if (result.pid === null) childProcesses = "unknown";
+					else if (processGroupsSupported) processGroups.push(result.pid);
 					signal = result.signal;
-					if (result.error !== undefined) {
-						exitCode = 1;
-						if ((result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") timeoutKind = "watchdog";
-						throw result.error;
-					}
-					if (result.status !== 0) {
-						exitCode = result.status ?? 1;
+					timeoutKind = result.timeoutKind;
+					if (result.exitCode !== 0) {
+						console.error(`[${bucket.bucket}] chunk ${chunks.length - 1}: ${result.failureKind} (${result.errorCode ?? result.signal ?? result.exitCode})`);
+						exitCode = result.exitCode;
 						process.exitCode = exitCode;
 						return;
 					}
@@ -498,6 +495,7 @@ async function run(): Promise<void> {
 				platform: { os: process.platform, arch: process.arch, libc: "unavailable" },
 				artifacts: { buildManifestDigest: null, logDigest: null },
 				cleanup,
+				chunks,
 			};
 			await writeExecutionEvidence(arguments_.evidenceFile, evidence);
 		}

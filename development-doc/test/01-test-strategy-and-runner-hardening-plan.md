@@ -8,7 +8,7 @@
 >
 > 参考输入：当前 RunLedger 测试清点、oh-my-pi `main@b4e8e856ad40294167679a3f88417c07429fe59b` 的测试分桶与 CI 拓扑。参考项目只提供方法，不是复制目标。
 
-> 实施进度（2026-09-01）：P0、P1、P2 已完成；P3、P4 的仓库内实现已完成，远端 GitHub job 尚未在本轮触发；P5 为 `partial`（evidence manifest、隔离 home、watchdog 与无 retry 已落地，duration 观测入口与首个分桶基线已落地，timeout/RSS 峰值/crash 类型采集与 quarantine 治理仍未实现）；P6、P7 保持 `planned/pending`，不得由本地 Linux 自动化代替真实 macOS/Windows、人工视觉/IME 或 live external 证据。
+> 实施进度（更新至 2026-09-16）：P0、P1、P2 已完成；P3、P4 的仓库内实现已完成，远端 GitHub job 尚未在本轮触发；P5 为 `partial`（evidence manifest、隔离 home、watchdog 与无 retry 已落地，duration 观测入口与首个分桶基线已落地，chunk duration、watchdog timeout 与退出信号分类已落地；逐文件 duration、RSS 峰值、OOM 归因与 quarantine 治理仍未实现）；P6、P7 保持 `planned/pending`，不得由本地 Linux 自动化代替真实 macOS/Windows、人工视觉/IME 或 live external 证据。
 >
 > 2026-09-16 追加 duration 证据：`npm run time:gates` 在 `rollback/before-composer-shape@d91367a`（dirty 工作树，load average 13.08）记录 `npm run check` 74.4s、`npm test` 775.6s，均 `exit 0`；分桶分解与四条实测原因见 §4 P5.1。该样本为单机单次观测，不构成阈值。
 >
@@ -307,7 +307,7 @@ DoD：候选 executable provenance 可复核；无 orphan process/socket；同�
 
 #### P5.1 duration 观测入口与首个分桶基线（2026-09-16）
 
-P5 第 1 项的 duration 部分已有可重复入口：`npm run time:gates`（`scripts/record-gate-timings.ts`）按 gate 分别运行门禁、记录墙钟耗时，逐行追加 `tmp/gate-timings.jsonl`（本地证据，不进版本库），并汇总 last/median/min/max；每条记录带 commit、分支、dirty 与 node/npm/bun 版本、CPU 数与 load average。timeout、RSS 峰值与 crash 类型采集仍未实现。
+P5 第 1 项的 duration 部分已有可重复入口：`npm run time:gates`（`scripts/record-gate-timings.ts`）按 gate 分别运行门禁、记录墙钟耗时，逐行追加 `tmp/gate-timings.jsonl`（本地证据，不进版本库），并汇总 last/median/min/max；每条记录带 commit、分支、dirty 与 node/npm/bun 版本、CPU 数与 load average。本次观测时 timeout、RSS 峰值与 crash 类型采集尚未实现；后续 chunk 级实现见 §4 P5.2。
 
 首个样本：`rollback/before-composer-shape@d91367a`，工作树 dirty，记录时 load average 13.08，`npm run check` 74.4s、`npm test` 775.6s，均 `exit 0`。该机器 64 逻辑核但同时在跑仓库外高负载任务，同一命令冷热差 2.3s → 7.9s，因此下列数字是单机单次分解，只用于定位相对占比，不构成阈值或跨机器期望。
 
@@ -345,6 +345,26 @@ P5 第 1 项的 duration 部分已有可重复入口：`npm run time:gates`（`s
 - 不以测试数量增长率、单次最快耗时或“任务成功”作为核心质量指标。
 
 建议按领域拆小提交，不使用一个全仓“修 flake”提交吸收无关变化。
+
+#### P5.2 chunk 执行证据与强制 watchdog（2026-09-16）
+
+本批实现 P5 第 1 项的 chunk 级切片，P5 整体继续保持 `partial`：
+
+- canonical runner 使用 `scripts/test-chunk-process.ts` 异步启动 chunk，仍按原顺序串行执行，保持所有 bucket 并发、chunk 大小和 watchdog 预算不变。
+- `--evidence-file` 的现有 execution manifest 新增 `chunks`：记录已执行 chunk 的 bucket、全局零起点 chunkIndex、文件列表、PID、开始/结束时间、单调时钟 durationMs、exitCode、signal、timeoutKind、failureKind 与 errorCode。未执行的 chunk 不填入结果；dry-run 的 `chunks` 为空，计划 argv 仍保留在 `commandArgv`。
+- `test_failure` 表示普通非零退出，不能据此断言一定是 assertion failure；`spawn_error` 记录启动错误码；`signal` 保留终止信号。SIGKILL 不自动标成 OOM，native crash 的具体原因仍需原始日志佐证。
+- watchdog 到期直接发送 SIGKILL；POSIX 对 runner 的独立进程组执行，Windows 只终止直接 child，descendants 仍按既有规则报告 unknown，不能宣称 Windows cleanup 已验证。此处是测试进程生命周期治理。
+- 每个 chunk 的输出仍直通原始 stdout/stderr；首个失败立即停止，无 retry、无新增 skip。runner 的最终 cleanup 验证继续影响 gate 状态。
+
+证据范围：真实 CLI 调用 runner 的 RED 已复现 manifest 缺少 `chunks`；聚焦 GREEN 覆盖成功、普通失败、ENOENT、外部 SIGKILL、忽略 SIGTERM 的进程超时，以及成功清理和 socket 泄漏门禁。
+
+隔离工作树基于 `82be1df`，`npm run check` 已通过；fast bucket 连续两次 GREEN（每次 239 files / 1,701 tests），第二次 execution manifest 的 cleanup 全部为 verified。`npm run build` 通过。
+
+初次 `npm test` 在 integration chunk 38 因新工作树缺少 `dist` 失败（独立复现为 `cp: cannot stat .../dist`）；补齐构建后 integration 和 tui-native 分别通过。将初次运行的成功 chunks 与这两次运行合并核对，其文件集合恰好等于全部 549 个 default eligible files，无遗漏/额外文件，三份 manifest 的 cleanup 均 verified。初次默认命令的 exit 1 保留，不写成单次全量 exit 0。
+
+本地日志与 execution manifest 保留在 `/tmp/runledger-p5-isolated-{check,build,full,integration,tui,fast-2}.*`，RED 记录为 `/tmp/runledger-p5-manifest-red.log`。共享工作树先前的 Plan Mode 类型错误和 CLI 控制命令失败未吸收到本批；上述 GREEN 来自隔离代码快照。新工作树默认 integration 依赖预先 build 的入口约束仍需在后续 runner/CI 前置条件专项中收敛。
+
+剩余项：逐文件 duration/收集结果、RSS 峰值及其平台采集方式、crash/OOM 根因、确定性与 singleton 审计、quarantine 规则。P3/P4 的远端 CI 回执及 P6/P7 的真实平台/人工/live 证据仍未闭合，不用本批结果替代。
 
 ### P6：真实跨平台 runner
 
@@ -455,7 +475,7 @@ manifest 不保存 home 绝对路径、用户名、token、header、prompt 正�
 5. `test(smoke): verify the built production entrypoint`
 6. 后续按 determinism、platform、human/live evidence 分领域提交。
 
-文档导航修改可单独提交，不与任何 runner 实现混在一起。用户未明确要求前不提交、不推送。
+文档导航修改可单独提交，不与任何 runner 实现混在一起。提交与推送遵守仓库 `AGENTS.md`：完成必要验证后仅提交本任务路径，只有用户明确要求时才推送。
 
 ## 10. 计划完成定义
 

@@ -190,6 +190,7 @@ describe("test bucket runner", () => {
 		expect(evidence).toMatchObject({
 			schemaId: TEST_EXECUTION_EVIDENCE_SCHEMA_ID,
 			executionMode: "executed",
+			chunks: [expect.objectContaining({ bucket: "fast", files: ["tests/scripts/test-inventory.test.ts"], failureKind: null, durationMs: expect.any(Number) })],
 			cleanup: { childProcesses: "verified", descendants: "verified", sockets: "verified", tempRoots: "verified", status: "verified" },
 		});
 	});
