@@ -1,7 +1,7 @@
 # Compact 专项入口：接入 oh-my-pi 压缩服务
 
-> 状态：**planned（仅方案）**，未修改运行时代码。基线日期 2026-09-15。
-> 目标基线：RunLedger `9057668f1ec6fff5603b89513da94a20ce3d07b0`（分支 `rollback/before-composer-shape`）。
+> 状态：**in_progress**：O0 合同冻结完成，O1–O5 待实施；O6 `deferred`、O7 `blocked`。基线日期 2026-09-15。
+> 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`。
 
 ## 本目录管什么

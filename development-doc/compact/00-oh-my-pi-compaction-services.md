@@ -2,7 +2,7 @@
 
 > 状态：设计取证，不代表 RunLedger 已实现接入，也不代表这些 omp 能力在目标仓可用。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`（`@oh-my-pi/pi-agent-core` 18.1.17、`@oh-my-pi/snapcompact` 18.1.17，来源工作树干净、0 dirty 文件）。
-> 目标基线：RunLedger `9057668f1ec6fff5603b89513da94a20ce3d07b0`（分支 `rollback/before-composer-shape`）；压缩适配器在飞未提交文件清单见 [01-integration-plan.md](01-integration-plan.md) §2。
+> 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）；已提交压缩适配器文件清单见 [01-integration-plan.md](01-integration-plan.md) §2。
 > 下所有行号以来源快照为准；本文件只记录可在源码中验证的事实，不复述上游文档宣传语。文档与代码冲突处标注「以代码为准」。
 
 ## 0. 取证边界
@@ -238,7 +238,7 @@ handoff 结果不另立类型：作为普通 `CompactionEntry.summary` 提交，
 
 ## 5. 与 RunLedger 现有适配器的能力对照
 
-RunLedger 侧事实全部来自当前工作树（含在飞未提交文件，见 [01](01-integration-plan.md) §2）。
+RunLedger 侧事实全部来自上述目标基线（见 [01](01-integration-plan.md) §2）。
 
 | 能力 | RunLedger 现状 | omp 对应 | 判定 |
 |---|---|---|---|

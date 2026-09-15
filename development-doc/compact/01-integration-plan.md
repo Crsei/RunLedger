@@ -1,7 +1,7 @@
 # RunLedger × oh-my-pi 压缩服务接入实施计划
 
-> 状态：**planned（仅方案）**。本文件不关闭任何能力门禁，未修改运行时代码。
-> 目标基线：RunLedger `9057668f1ec6fff5603b89513da94a20ce3d07b0`（分支 `rollback/before-composer-shape`）。
+> 状态：**in_progress**。O0 合同冻结完成，O1–O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
+> 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`；事实清单见 [00-oh-my-pi-compaction-services.md](00-oh-my-pi-compaction-services.md)。
 > 检索入口见 [README.md](README.md)。
 
@@ -52,9 +52,9 @@
 - 契约目录清单：`src/runtime/contracts/inventory.ts`（`compaction` 条目 owner 指向上述账本），断言在 `tests/runtime-contracts/inventory.test.ts`。
 - 现有测试：`tests/runtime/context/compaction-strategies.test.ts`、`compaction-cut-planner.test.ts`、`compaction-checkpoint-store.test.ts`、`tests/runtime/session-runtime/compaction-domain.test.ts`。
 
-### 2.2 接入点（当前工作树，含在飞未提交文件）
+### 2.2 接入点（已提交目标基线）
 
-适配器核心（未提交，O 阶段全部在其上增量）：
+适配器核心（已提交，O 阶段全部在其上增量）：
 
 | 文件 | 职责 |
 |---|---|
@@ -70,7 +70,7 @@
 | `src/runtime/session-runtime/compaction-native-model.ts` | V1 原生 port（单飞、预算、脱敏、`onUsage`） |
 | `src/api/openai-responses.ts`、`src/api/openai-compaction-state.ts` | `compactOpenAIResponses`（`/responses/compact`）与 `OpenAICompactionState` 精确校验 |
 
-投影与预算（已提交或半提交）：
+投影与预算（已提交）：
 
 | 文件 | 事实 |
 |---|---|
@@ -116,7 +116,7 @@
    - 新增比率校正：以最近一次 provider usage 的 prompt tokens 与本地估算之比校正保留量；比率缺失或不合理（≤1、非有限）时不校正。
    - 新增预算表达式：`resolveThresholdTokens(window, settings)`、`effectiveReserveTokens(window, settings)`、`compactionContextTokens(providerTokens, localEstimate)`，数值语义与来源一致（`DEFAULT_RESERVE_TOKENS = 16384`、`max(15%, reserve)`、未显式设置 reserve 时的小窗口回落）。
    - `planCompactionCut`/`CompactionTurn`/`CompactionCutPlanningError`：O1 决定保留（改造成唯一实现）或删除（若 `planHistoryCut` 已覆盖其全部行为），测试同步更新。
-2. **`summary-format.ts`（新，O2）**：`SummaryFormatId`（至少 `headings-v1`、`headings-update-v1`、`handoff-document-v1`）、每格式的结构校验函数、`formatRegistry`。校验仍是**纯函数 + 有界**；redaction 与 authority 校验留在 domain。
+2. **`summary-format.ts`（新，O2）**：`SummaryFormatId`（至少 `headings@1`、`headings-update@1`、`handoff-document@1`）、每格式的结构校验函数、`formatRegistry`。校验仍是**纯函数 + 有界**；redaction 与 authority 校验留在 domain。
 3. **`summary-context.ts`（新，O2）**：移植 `utils.ts` 的文件操作追踪（`extractFileOpsFromMessage` 的 RunLedger 版：从 `toolCall` 的 `read`/`write`/`edit` 与 `path` 参数提取）、`computeFileLists`、`formatFileOperations`、`upsertFileOperations`、read selector 处理、URL scheme 排除、`truncateToolResultForSummary`、`escapeSummaryBoundaryTags`。全部纯函数，文件头标注来源（`来源 oh-my-pi <commit> packages/agent/src/compaction/utils.ts`，对齐既有标注习惯）。
 4. **`projection-prune.ts`（新，O3）**：`planProjectionPrune(messages, config)` 返回替换清单 + 收益估算，纯函数、**不使用时钟**；`supersede`（同路径更新读存在时消隐旧 read 结果）与 `useless`（结果自报 useless）两类；保护名单（skill 读取、活跃 plan 引用、已提交摘要前缀）沿用 RunLedger 既有保护语义。
 5. **`strategy.ts` 扩展（O2/O4）**
@@ -140,11 +140,22 @@
 
 `src/tui/interactive/plan-workflow.ts`、`src/cli/control-commands.ts`、`src/tui/commands/registry.ts` 的 `--strategy=` 白名单与 usage 文本同步新增策略；`/compact` 仍只做 manual mutation，不新增旁路入口。
 
+### 4.4 契约变更顺序（O0 冻结）
+
+- O1 修改纯切点与用户设置，不改 Owner 命令/record schema；删除未接线的第二切点实现，保留配对原语。旧 `retainRecentTurns` 明确拒绝，不隐式换算。
+- O2 的格式与 `previousSummary` 属内部 model port；格式 ID 使用现有 `@1` 命名。仅当恢复需要新增持久字段时，先更新 Runtime 04、精确 decoder 与 inventory，再实现写入；否则保持既有 record 格式。
+- O3 只生成派生请求消息，不修改 ledger、已提交前缀、工件或持久事件形状。
+- O4 先在 Runtime 04 登记策略扩展，再改 registry 与 CLI/TUI 枚举；沿用 portable 工件格式。
+- O5 的 loop recovery hook 为内部端口；原生状态继续沿用现有精确格式。若实际协议要求新增持久字段，先登记 Runtime 04 再修改 decoder，禁止静默迁移。
+- O6/O7 的公共载荷、图像与模型恢复 authority 尚无前置证据，本轮不启动。
+
 ## 5. 阶段
 
 阶段与 `plan-compact-memory/01` 的 C 阶段是**增量**关系（O1 建立在 C1–C2 之上，O5 扩展 C5），不重排、不重记 C 阶段状态。
 
 ### O0：冻结接入合同（文档）
+
+状态：`done`（2026-09-15）。核对已提交基线、上游固定快照、相对链接与账本权责；`git diff --check` 通过。这里只交付接入合同，不作为运行时代码或 provider 验收证据。
 
 前置：无。
 文件边界：本目录三份文档；`plan-compact-memory/01` 仅加指针；`00-index.md` 登记。
@@ -167,7 +178,7 @@
 
 前置：O1。
 文件边界：`summary-format.ts`、`summary-context.ts`（新）、`strategy.ts`、`summary-strategies.ts`、`session-runtime/compaction-model.ts`、`compaction-domain.ts`（校验替换）、`record.ts`（若格式入 schema）、相关测试与 `tests/runtime-contracts/inventory.test.ts`。
-交付物：按格式校验的 registry；`single-pass@1` 支持独立 `previousSummary` 通道与 update 契约；`<files>` 清单生成与 upsert；工具结果截断与边界转义；RunLedger 6 标题格式保留为 `headings-v1`。
+交付物：按格式校验的 registry；`single-pass@1` 支持独立 `previousSummary` 通道与 update 契约；`<files>` 清单生成与 upsert；工具结果截断与边界转义；RunLedger 6 标题格式保留为 `headings@1`。
 必须验证：第二次 compact 保留前次关键事实并刷新进度段；`<files>` 不重复堆叠且上限生效；非法/超限/含 secret 输出被拒；格式与策略不匹配时明确失败（不静默换策略）。
 
 ### O3：投影剪枝（supersede / useless）
