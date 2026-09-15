@@ -103,6 +103,10 @@ src/cli/main.ts
 
 此切片不装配 summarizer、自动 compact、durable context receipt sink、Memory 或模型 Artifact 全量检索；这些能力的生产状态仍由本专题各阶段判定。
 
+### 0.5 2026-09-15 多策略 Compact 设计入口
+
+接口、职责、策略扩展、Owner 原子提交与恢复、配置和 C0–C5 实施方案见 [§6.5.1](#compact-strategy-adapter)。本次仅设计；标准 Session 仍使用 §0.4 的预算选择，未接摘要压缩。本节细化 Phase 6–7，不改变当前实现状态。
+
 ## 1. 目标、成功标准与非目标
 
 ### 1.1 目标
@@ -637,6 +641,198 @@ validator 至少检查:
 - post-compaction context 在目标 model budget 内。
 - checkpoint previous link 与 event sequence 连续。
 
+<a id="compact-strategy-adapter"></a>
+
+### 6.5.1 多策略 Compact 适配器设计（2026-09-15，仅方案）
+
+本节是 Phase 6–7 的接口与实施细化，当前未实现，不改变上述复选框。用户本轮明确要求只设计接口和实施方案，不修改运行时代码。首阶段实现 manual single-pass，随后增加分段归并策略；provider 原生压缩只预留扩展位置，不预设任何 provider 已支持。这里的“本地摘要策略”指 RunLedger 编排算法，生成摘要仍可能调用远程模型，并不意味着离线运行。
+
+#### A. 当前接线与设计范围
+
+当前标准 Session 在 `session-runtime/domain.ts` 注入 `assembleAgentModelContext`，由 `agent-loop/loop-runner.ts` 在每次模型请求前执行。`context/model-request-adapter.ts` 按预算选择完整依赖组，保留 required 和近期历史，未生成压缩摘要。旧 `cli/runtime-host-summarizer.ts` 和 `runtime-host-model-context.ts` 有摘要调用与 checkpoint 切片，但不是标准 Session 的 compact 实现；不得恢复旧 Host 作为 fallback。
+
+可复用 `cut-planner.ts` 的稳定 turn 切分与配对检查，以及 checkpoint 的 exact schema/lifecycle 校验。`context/invariants.ts` 当前计算的是 checkpoint 字段 digest，不能证明权限、计划、pending approval 或目标状态在压缩前后保持一致；新编排必须另外捕获并比较受保护状态。
+
+本轮只新增本节设计和索引，不新增配置、公共 DTO、存储 schema、命令或策略实现。下文 TypeScript 是拟议的 runtime-private 接口草案，不是 Runtime 04 的新公共合同；实施 C0 时再冻结实际类型、schema、事件和存储方式。§6.5 原有伪代码也不替代当前 `compaction/types.ts` exact contract。
+
+#### B. 分层与职责
+
+```text
+/compact 或自动触发策略
+  → Session Owner 的 CompactionService
+      → 捕获源范围、稳定边界、当前 projection 和受保护状态
+      → CutPlanner / InputBuilder
+      → CompactionStrategyRegistry.resolve(id, version)
+          → single-pass@1
+          → hierarchical@1（后续）
+          → provider-native 策略（独立验收后）
+      → 统一验证 + replacement 类型专用验证
+      → 持久化工件 + owner-fenced 原子提交
+      → 请求 projection 读取 committed replacement + retained tail
+          → ContextEngine
+          → provider 请求适配器
+```
+
+| 层 | 职责 | 约束 |
+|---|---|---|
+| TriggerPolicy | 判断 manual/auto/overflow/model_switch 是否应发起压缩 | 不生成摘要、不提交状态；原因类型不等于策略类型 |
+| CompactionService | 准入、捕获源版本、选择策略、取消/预算、校验、提交与恢复 | 唯一领域编排；由 Session Owner 持有 |
+| CutPlanner / InputBuilder | 完整 turn/tool batch 边界、源 provenance、前一摘要和新增历史 | 不按任意字符长度切断原始 transcript |
+| CompactionStrategy | 基于冻结输入生成候选 replacement | 不读取 SessionStore、不自行改历史、无工具/审批/任意文件访问 |
+| SummaryModelPort | 执行受控模型调用，按模型身份选择认证与请求适配器 | 工具关闭；独立预算、超时、取消、路由与 trace；不直接继承 builder 的工具与私有凭据 |
+| Validator / Committer | 检查预算、覆盖范围、配对、受保护状态、工件与原子提交 | 策略的成功返回不构成 commit 或验证通过 |
+| Projection reader | 从 committed 工件和原始事件重建请求历史 | 与 registry 分离；恢复已有摘要不需要再次调用模型 |
+
+现有预算裁剪继续属于 ContextEngine 的选择行为，不能作为成功摘要压缩报告。默认无策略间静默 fallback：选定策略不可用或失败，返回明确原因并保留当前 projection。将来若支持 fallback chain，必须显式配置顺序和累计预算，并记录每次尝试；第一版不提供。
+
+#### C. 策略接口草案
+
+拟放置于 `src/runtime/context/compaction/strategy.ts`。源内容只在进程内传递；正文不放入公开 query 或 bounded event。摘要文本作为低信任历史数据，不拼入 system/policy。
+
+```ts
+import type { RuntimeEventRangeRef } from "../../protocol/events.ts";
+import type { RuntimeContentRef, RuntimeDigest } from "../../protocol/foundation.ts";
+import type { CompactionReason } from "./types.ts";
+
+export interface CompactionStrategyKey {
+  readonly id: string;
+  readonly version: number;
+}
+
+export interface CompactionSourceUnit {
+  readonly sourceRange: RuntimeEventRangeRef;
+  readonly content: string;
+  readonly estimatedTokens: number;
+  // 一个 unit 包含完整稳定 turn 或跨 turn 的工具依赖闭包。
+}
+
+export interface CompactionStrategyInput {
+  readonly reason: CompactionReason;
+  readonly sourceRange: RuntimeEventRangeRef;
+  readonly inputDigest: RuntimeDigest;
+  readonly units: readonly CompactionSourceUnit[];
+  readonly previousSummary?: {
+    readonly artifactRef: RuntimeContentRef;
+    readonly content: string;
+  };
+  readonly focus?: string;
+  readonly limits: {
+    readonly maxInputTokensPerCall: number;
+    readonly maxSummaryTokens: number;
+    readonly maxSummaryBytes: number;
+    readonly maxModelCalls: number;
+    readonly maxTotalInputTokens: number;
+    readonly maxTotalOutputTokens: number;
+    readonly deadlineMs: number;
+  };
+}
+
+export interface CompactionSummaryCandidate {
+  readonly kind: "portable-summary";
+  readonly formatVersion: 1;
+  readonly inputDigest: RuntimeDigest;
+  readonly text: string;
+}
+
+export type CompactionStrategyResult =
+  | { readonly ok: true; readonly candidate: CompactionSummaryCandidate }
+  | {
+      readonly ok: false;
+      readonly code: "unsupported_input" | "input_too_large"
+        | "budget_exhausted" | "cancelled" | "model_failed"
+        | "invalid_output";
+    };
+
+export interface SummaryModelPort {
+  // 受控 port 固定模型和输出合同；usage/调用次数由 port 记录。
+  generate(input: {
+    readonly content: string;
+    readonly focus?: string;
+    readonly maxOutputTokens: number;
+    readonly signal: AbortSignal;
+  }): Promise<
+    | { readonly ok: true; readonly text: string }
+    | { readonly ok: false; readonly code: "budget_exhausted"
+        | "cancelled" | "model_failed" | "invalid_output" }
+  >;
+}
+
+export interface CompactionStrategy {
+  readonly key: CompactionStrategyKey;
+  readonly outputKind: "portable-summary";
+  generate(
+    input: CompactionStrategyInput,
+    context: { readonly model: SummaryModelPort; readonly signal: AbortSignal },
+  ): Promise<CompactionStrategyResult>;
+}
+```
+
+接口边界约定：
+
+- registry 由 composition 显式注册内置实例，拒绝重复 `id + version`，不动态加载任意路径/module。`resolve` 返回 selected 或 `strategy_unavailable`。generation 接口抛出的异常在 service 边界转换为失败，错误记录不复制模型原文或凭据。
+- 策略版本和配置 digest 在操作准入时冻结；修改默认策略只影响新操作。冻结不要求把运行时配置塞入 Harness Profile，也不改变其权限 authority。
+- `inputDigest` 由 service 计算，涵盖规范化 units、previous summary 引用、focus、目标模型与策略配置。候选中的 digest 只能校验绑定关系，不能证明摘要语义完整；覆盖范围以 service 的 cut/input builder 为准。
+- `deadlineMs` 为绝对截止时间。受控 model port 统一执行单次、累计 token 和调用数上限，重试也计费计数；缺失 usage 时累计保守估算，不以零计。策略传入的上限不能扩大 service 预算。
+- `AbortSignal` 传递到请求 transport，超时/取消后拒收迟到结果；不把 `Promise.race` 超时当成底层请求已取消。若 provider 不可取消，保持有界等待/记录结果未知，并禁止迟到提交或无界重试。
+- candidate 格式第一版要求 §6.5 的摘要结构，运行时 exact 校验采用 C0 冻结的格式；不要求模型自行声明可信权限、任务完成或用户批准。
+
+#### D. 多种策略如何接入
+
+| 策略 | 处理流程 | 失败与适用边界 | 交付顺序 |
+|---|---|---|---|
+| `single-pass@1` | 前一份摘要 + 新的完整源 units → 一次摘要请求 | 输入放不下返回 `input_too_large`；输出超预算返回失败，不直接 `slice` | 首个 production 策略 |
+| `hierarchical@1` | 完整 units 按预算分组 → 顺序生成分组摘要 → 有界逐层归并 | 单个 unit 放不下明确失败；每层必须减少估算量；限制层数、调用数、总 token 与 deadline | manual 闭环后第二策略 |
+| provider 原生策略 | 将兼容的 provider 输入交给原生压缩接口，返回 provider 绑定 replacement | 需要专用输出合同、投影与恢复；未知能力显式 unavailable | 后续独立能力验证 |
+
+`hierarchical@1` 每层保留原始来源映射，前一份摘要作为有 provenance 的输入，仅纳入一次；相邻依赖组不得拆开。分组摘要与归并使用同一个受控 model port，总预算覆盖所有阶段。若摘要无法继续缩小，在最大层数之前就以 `budget_exhausted` 终止，不无限归并。第一版顺序调用，不涉及产品内 child Agent 委派。
+
+重复 compact 使用“前一个 committed summary + 上次 cut 之后新增的稳定历史”，记录 previous replacement 引用和新增 source range，保留完整 chain。恢复 reader 按确定的格式版本读取结果；策略被停用只阻止新的生成，不妨碍恢复已有 portable summary。
+
+provider-native 的扩展契约单独演进：将候选结果改为 discriminated union，增加 `provider-state`，明确 provider/API、格式版本、模型兼容约束和 opaque payload 工件；并为该类型注册 validator 和 projection adapter。opaque 内容不能伪装成普通文本、不能跨不兼容 provider 重放，也不能通过 `Record<string, unknown>` 偷渡。只有目标 provider 的调用、持久化、恢复、模型切换和计费边界被实际验证后才允许注册策略。当前不新增空实现或假称支持具体 API。
+
+#### E. Owner 编排、提交与失败语义
+
+1. **准入**：`compact.run` 经标准 Session command/Attempt 路径进入；检查 driver、owner fence、recovery barrier、当前任务状态和策略可用性。首版仅允许 idle 且无未完成工具或 pending approval；不因压缩取消任何审批。manual 首版启用，auto/overflow 后续启用。
+2. **捕获**：Owner 固定待压缩源范围、当前逻辑 projection revision、前一 checkpoint、策略/模型/config digest，以及独立的 protected-state digest。这里保护 mode、权限 revision、已批准计划引用、workspace identity、pending queue/approval 和已存在的结构化目标/验证状态，不凭摘要补造不存在的 authority。
+3. **生成**：建立 operation identity，记录 started intent，在事务外执行策略。Owner 串行调度控制与 prompt 准入，后续输入可排队但不能悄悄并入本次 cut；其他请求不能与当前 projection mutation 并行提交。client detach 不取消 Owner 已接受的任务。
+4. **验证**：检查候选 exact 格式、源绑定、非空、有界输出、redaction、完整 source/tail 划分、previous chain、类型兼容、受保护状态未变；通过 ContextEngine 试组装“摘要 + retained tail + 当前必需状态”，确保适配目标模型后的总预算可容纳且实际减少上下文。失败保留旧 projection，返回有界 reason。
+5. **提交**：先将已验证正文写入可恢复的持久工件，核对 digest，再在 owner-fenced SQLite 事务中校验 projection revision/源 head/受保护状态，提交 checkpoint 引用、projection 指针、completion event 和 attempt receipt。不能在 LLM 请求期间持有数据库事务；审计事件使全局 head 自然推进，故源 head 指历史快照绑定，提交 CAS 使用明确的领域 revision，不误把自己的 started/trace 事件视为历史冲突。
+6. **发布**：仅在事务成功后激活新 projection 并通知 CLI/TUI。任何异常都不能把内存中的候选摘要作为已提交结果交给下一模型请求；未知提交结果先按 operation identity 查询 authority。
+
+摘要正文作为不可信 history replacement，由 ContextEngine 正常计入预算与 provenance；不提升为 required policy。已提交的 active summary 在请求选择中应作为必需历史内容保留，避免新裁剪再次静默丢失所有已压缩工作；若它与当前必需状态放不下，明确失败或进入已授权的下一次 compact，而不是丢弃摘要。原始消息/event 保留完整，不修改 TUI 原始 transcript。
+
+取消、策略失败、输出校验失败或 CAS 冲突均不得切换 projection。相同 command identity 与相同 request digest 返回已有结果；相同 identity 不同 digest 拒绝。已有 started intent 在崩溃恢复时不得无条件重新发起付费模型请求，应先判断工件/commit/attempt 的实际状态，按现有 recovery barrier 协议处理未决结果。
+
+工件已写但未提交时只能视为未引用工件，不能自动成为活跃摘要；提交成功但内存更新前崩溃，从 authority 恢复。被引用工件缺失或损坏要报明确完整性错误；除非有可验证的冗余副本，不静默从 raw history 重新生成一份不同摘要。Session checkpoint cache 不是唯一摘要存储，cache 删除不能丢失 committed replacement。现有 Artifact 能力若不足，由 C0 明确所需的最小存储补充后实施，不临时创建第二 authority。
+
+#### F. 恢复、模型切换与配置
+
+- **resume**：验证 committed replacement 工件、格式、源范围和 chain，再加 retained tail；不调用策略。只重建请求 projection，保持 raw ledger/TUI 历史。
+- **fork**：绑定合法 source head，继承该边界以前的 replacement 引用与来源证明，分配新的 session identity；不让旧 session 的 fence/命令身份进入新 session。
+- **rewind**：若目标位于一个 cut 内部，该摘要不能用于目标位置；选择更早可用 checkpoint 加 raw events 重建，不能携带未来信息。位于 cut 之后则使用对应 checkpoint + 截止目标的 tail。
+- **model switch**：portable summary 按目标模型重新估算并转换；provider-state 必须经过专用兼容判断。不兼容时明确拒绝或由已授权 fork 流程处理，不能静默抛弃私有状态。
+- **配置草案**：`compaction.enabled`、`strategy`（id/version）、`summaryModel`、`retainRecentTurns`、`maxSummaryTokens/Bytes`、`maxModelCalls`、累计 token 与 timeout；hierarchical 的层数/分组参数放在该策略配置中。auto threshold 单独放 TriggerPolicy，不混入 generate 参数。第一版默认关闭 auto，manual 使用显式已装配策略。
+- 配置名尚未实现。实施时沿用当前 canonical home、settings loader/校验/覆盖规则和模型目录，不读取历史其他工作树中的假定配置；数字范围、用户/工作区作用域与上限收紧规则在 C0 冻结。无效或不兼容策略配置不得静默改选另一策略。
+
+#### G. 实施顺序与验收
+
+所有条目目前为 planned。每阶段只有对应生产证据齐全才标完成；本次文档提交不关闭任何能力门禁。
+
+| 阶段 | 文件边界与交付物 | 必须验证 |
+|---|---|---|
+| C0：冻结接口与持久化合同 | 本节、Runtime 04；核对 `compaction/{types,schema}.ts`、SessionStore event/receipt 与 Artifact port。确定 operation metadata、strategy/config/input digest、previous link、受保护状态及 reader 版本放入哪个受控工件；公共字段不足时同步 exact schema/fixture/version | 不重复发明 authority；记录 mutation 原子边界和 fault matrix；现有 checkpoint digest 与 protected state digest 分开 |
+| C1：可插拔生成核心 | `context/compaction/strategy.ts`、registry、input builder、single-pass、validator；注入 SummaryModelPort | 注册冲突、未知策略、输入完整性、取消/迟到、累计预算、模型错误、输出空/超限、候选不能污染原输入；可注入两种测试策略验证选择隔离 |
+| C2：manual 生产闭环 | `session-runtime` 的领域 service/command/Owner 装配、受控 model port、存储提交与恢复 reader；`model-request-adapter.ts` 消费 committed replacement；CLI/TUI 将 `/compact` 改为 mutation，另留 list/query | 真实 Owner + 本地确定性 HTTP：摘要调用无工具，下一请求确实包含摘要和 tail；原历史不变，重启请求内容一致，断连/重复命令/取消/CAS/fence/工件和事务失败均正确 |
+| C3：第二种实际策略 | hierarchical 策略与配置解析；复用 C2 service/commit/reader | 同一生产入口选择两种策略；多层归并、单 unit 超限、归并不收敛、总预算耗尽、第二轮 compact chain；不增加单独的提交链 |
+| C4：自动触发与连续性 | TriggerPolicy、Agent 请求边界、overflow guard、model switch/fork/rewind | 阈值边界和 suppression；overflow 每请求最多一次且不重放工具副作用；跨 cut rewind、fork 和模型缩窗；steering 顺序不丢 |
+| C5：原生 provider 策略 | 经验证的 provider-specific port、candidate union、validator/projection/恢复 adapter | 对具体 provider 实际调用；opaque 工件恢复和兼容/不兼容切换；移除策略仍有 reader，未知格式失败 |
+
+C2 提交前必须有崩溃注入覆盖：intent 后、模型返回后、工件持久化后、事务提交前后、内存 projection 发布前后。统一断言“旧 projection 或完整新 projection”，不得出现半提交，也不得通过恢复再次执行工具或暗中重新付费摘要。
+
+实现阶段遵守根 AGENTS.md：代码改动执行完整 `npm run check` 和受影响测试；提交代码前执行 `npm test`；进入 dist 的改动执行 build，并用真实 PATH `runledger`、隔离 RUNLEDGER_DIR 和 TTY/tmux 验证策略选择、手动压缩、恢复与干净退出。本地 HTTP 证明协议与运行时接线；真实 provider、人工视觉/键盘/中文 IME、macOS/Windows 分列验收，不互相替代。
+
+建议交付切片为 C0、C1、C2、C3、C4、C5 各自独立提交；C1 只能称“适配器核心可测试”，C2 才能称“manual compact 可用”，C3 才能称“多策略已生产接线”。C4–C5 不作为首个 manual single-pass 闭环的隐性前置。
+
 ### 6.6 Memory record 与 proposal
 
 ```ts
@@ -1097,6 +1293,8 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 建议 commit:`plan: add resumable approval and audited implementation handoff`
 
 ### Phase 6:Manual single-pass Compaction
+
+接口与实施切片细化见 [§6.5.1 多策略 Compact 适配器设计](#compact-strategy-adapter) 的 C0–C2；第二策略在 C3 增加，auto/overflow 在 C4 增加，provider 原生扩展在 C5 独立验证。
 
 前置:Phase 1–2;Runtime Artifact/Evidence 契约域已冻结,且 Artifact 行为门禁可用。
 
