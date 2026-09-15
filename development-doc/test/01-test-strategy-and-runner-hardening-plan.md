@@ -8,7 +8,9 @@
 >
 > 参考输入：当前 RunLedger 测试清点、oh-my-pi `main@b4e8e856ad40294167679a3f88417c07429fe59b` 的测试分桶与 CI 拓扑。参考项目只提供方法，不是复制目标。
 
-> 实施进度（2026-09-01）：P0、P1、P2 已完成；P3、P4 的仓库内实现已完成，远端 GitHub job 尚未在本轮触发；P5 为 `partial`（evidence manifest、隔离 home、watchdog 与无 retry 已落地，duration/RSS 统计与 quarantine 治理仍未实现）；P6、P7 保持 `planned/pending`，不得由本地 Linux 自动化代替真实 macOS/Windows、人工视觉/IME 或 live external 证据。
+> 实施进度（2026-09-01）：P0、P1、P2 已完成；P3、P4 的仓库内实现已完成，远端 GitHub job 尚未在本轮触发；P5 为 `partial`（evidence manifest、隔离 home、watchdog 与无 retry 已落地，duration 观测入口与首个分桶基线已落地，timeout/RSS 峰值/crash 类型采集与 quarantine 治理仍未实现）；P6、P7 保持 `planned/pending`，不得由本地 Linux 自动化代替真实 macOS/Windows、人工视觉/IME 或 live external 证据。
+>
+> 2026-09-16 追加 duration 证据：`npm run time:gates` 在 `rollback/before-composer-shape@d91367a`（dirty 工作树，load average 13.08）记录 `npm run check` 74.4s、`npm test` 775.6s，均 `exit 0`；分桶分解与四条实测原因见 §4 P5.1。该样本为单机单次观测，不构成阈值。
 >
 > 本轮 fresh automated evidence：focused Vitest 4 files / 17 tests 通过；`npm run test:inventory` 报告 476 owned files / 0 diagnostics；`npm run check`、`npm run build`、`npm run test:smoke` 与 `git diff --check` 通过。`test:smoke` 在隔离 `RUNLEDGER_DIR` 中验证候选 `bin/runledger.js → dist/cli/cli.js` 的 `--version`、`--help`，并以独立 tmux server 观察 TUI 启动帧和 Ctrl+D/Esc 后干净退出；它不是人工视觉验收。最终状态的默认 `npm test` 连续两次以外层 `exit 0` 完成（日志：`/tmp/runledger-final-stable-green-1.log`、`/tmp/runledger-final-stable-green-2.log`）。远端 CI、真实 macOS/Windows、人工和 live provider 均未在本轮执行。
 
@@ -302,6 +304,36 @@ DoD：候选 executable provenance 可复核；无 orphan process/socket；同�
 4. 所有 env/module singleton 测试迁入 singleton bucket并显式 cleanup；
 5. 对偶发失败先独立复现三次，定位共享资源或时序，不直接 retry；
 6. quarantine 只允许带 issue、owner、原因、进入日期、到期日期和替代覆盖；到期未修使 gate 失败。
+
+#### P5.1 duration 观测入口与首个分桶基线（2026-09-16）
+
+P5 第 1 项的 duration 部分已有可重复入口：`npm run time:gates`（`scripts/record-gate-timings.ts`）按 gate 分别运行门禁、记录墙钟耗时，逐行追加 `tmp/gate-timings.jsonl`（本地证据，不进版本库），并汇总 last/median/min/max；每条记录带 commit、分支、dirty 与 node/npm/bun 版本、CPU 数与 load average。timeout、RSS 峰值与 crash 类型采集仍未实现。
+
+首个样本：`rollback/before-composer-shape@d91367a`，工作树 dirty，记录时 load average 13.08，`npm run check` 74.4s、`npm test` 775.6s，均 `exit 0`。该机器 64 逻辑核但同时在跑仓库外高负载任务，同一命令冷热差 2.3s → 7.9s，因此下列数字是单机单次分解，只用于定位相对占比，不构成阈值或跨机器期望。
+
+`npm test` 的墙钟分解（`scripts/run-test-buckets.ts --dry-run` 的计划与运行日志逐 chunk 汇总）：
+
+| bucket | 并发 | chunks | files | chunk wall 合计 | collect（worker 和） | tests（worker 和） | 非测试占比 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fast | 4 | 3 | 238 | 131.1s | 92.8s | 286.3s | 45% |
+| singleton | 1 | 9 | 9 | 23.0s | 12.5s | 4.9s | 79% |
+| runtime | 2 | 13 | 147 | 294.0s | 141.9s | 267.6s | 54% |
+| security-storage | 1 | 13 | 103 | 140.9s | 55.0s | 26.5s | 81% |
+| integration | 1 | 7 | 27 | 118.0s | 46.1s | 55.9s | 53% |
+| tui-native（bun） | 1 | 4 | 24 | 8.9s | 无该口径 | 8.9s | ~0% |
+
+合计：chunk wall 715.9s，门禁 wall 775.6s，chunk 之外 59.7s（npm 启动、inventory 与 49 次 node/vitest 冷启）；vitest 自报口径的 worker 和为 transform 103.5s、collect 348.3s、tests 641.1s、prepare 46.0s，并行度使其和大于 wall。
+
+四条已实测原因：
+
+1. **chunk 固定税**：`run-test-buckets.ts` 用单个 `spawnSync` 循环串行跑全部 49 个 chunk，bucket 之间与 chunk 之间都不并行。1 文件 chunk 实测 wall 2.05–2.59s，同次 vitest 自报 Duration 0.90–1.02s，差额约 1.2–1.6s/chunk，×49 ≈ 60–78s（同文件同参数实测，折算为估算）。security-storage 的 13 个 chunk 为 26.5s 测试付 55.0s collect；singleton 的 9 个 chunk 为 4.9s 测试付 12.5s collect。
+2. **并发预算低于机器容量**：fast/runtime 并发固定为 4/2。fast 首个 chunk 80 文件、成员耗时和 254.0s，并发 4 的理论下限 63.5s，实测 86.7s；runtime 以 2 worker 承担 267.6s 的 worker 量。这是配置预算问题，不是核数不足。
+3. **长尾 chunk**：runtime chunk #19 wall 128.3s，其中 `tests/runtime/session-runtime/compaction-domain.test.ts` 占 111.1s / 33 用例（20 次 `fixture()`、无 `beforeEach`，每用例重建本地 HTTP server、SQLite 与 Session Owner）；fast chunk #0 wall 86.7s、成员和 254.0s，集中了 session-owner-production 53.4s、control-command-execution 46.7s、session-owner-cli 43.4s、main.test 31.8s、acceptance-runners 30.9s，按字母分片把 CLI E2E 集群排进同一队列；integration chunk #38 wall 46.1s，其中 acceptance-runners 单个用例 18.8s。
+4. **CLI E2E 每用例冷启进程**：29 个测试文件通过 `spawnSync(process.execPath, ["--import", "tsx", "src/cli/cli.ts", ...])` 启动 CLI。实测 `node -e ""` 0.36s、该 tsx 路径 2.30s（冷启动 4.99–7.88s）、`./bin/runledger.js --version`（bun + dist）1.50s；`tests/cli/main.test.ts` 22 个用例均值约 2.4s，内容多为 `--help` 字符串断言。
+
+证据口径也需区分：本地 `npm test` 把 `.github/workflows/test.yml` 中各自 `runs-on: ubuntu-24.04` 的 7 个 job 串到一台机器上执行，本地墙钟不能与 CI 单个 job 耗时直接比较。
+
+压缩耗时必须走第 5 节的 TDD 协议并单点验证（例如只调整 fast/runtime 并发或 chunk 划分后 `npm run time:gates` 复测），不得引入 retry、扩大 timeout、跳过文件或新增 skip；P2 DoD 要求的失败定位粒度（bucket/chunk/file）优先于减少 chunk 数量。
 
 质量指标：
 
