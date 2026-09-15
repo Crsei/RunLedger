@@ -1,5 +1,5 @@
 /** 所有策略共享同一次操作的调用预算；迟到结果不得用于提交。 */
-import { conservativeTokenEstimate } from "../token-estimator.ts";
+import { summaryInputTokens } from "./summary-format.ts";
 import type { CompactionLimits, SummaryModelPort, SummaryResult } from "./strategy.ts";
 
 export interface SummaryUsage { readonly input: number; readonly output: number; readonly calls: number }
@@ -18,7 +18,7 @@ export function createBudgetedSummaryModel(
 		async generate(request): Promise<SummaryResult> {
 			if (operationSignal.aborted || request.signal.aborted || Date.now() >= limits.deadlineMs) return { ok: false, code: "cancelled" };
 			// 调用预算包括输出预留；失败请求保留预留，不能通过失败规避累计限额。
-			const estimate = conservativeTokenEstimate(request.content);
+			const estimate = summaryInputTokens(request);
 			if (active || !Number.isSafeInteger(request.maxOutputTokens) || request.maxOutputTokens < 1
 				|| request.maxOutputTokens > limits.maxSummaryTokens || calls >= limits.maxModelCalls
 				|| estimate > limits.maxInputTokensPerCall || inputTokens + estimate + inputOverheadTokens > limits.maxTotalInputTokens

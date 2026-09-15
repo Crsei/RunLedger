@@ -2,6 +2,7 @@
 import type { Message } from "../../../types.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../protocol/foundation.ts";
 import { adjustedRetainTokens, estimateHistoryTokens } from "./budget.ts";
+import { truncateToolResultForSummary } from "./summary-context.ts";
 import { isCompleteToolBatch } from "./cut-planner.ts";
 
 export function historyDigest(messages: readonly Message[]): RuntimeDigest {
@@ -66,7 +67,12 @@ function summaryMessage(message: Message): unknown {
 		if (part.type === "text") return [{ type: "text", text: redactSummaryInput(part.text) }];
 		return [JSON.parse(redactSummaryInput(JSON.stringify(part))) as unknown];
 	});
-	return { role: body.role, content, ...(message.role === "toolResult" ? { toolCallId: message.toolCallId, toolName: message.toolName, isError: message.isError } : {}) };
+	if (message.role === "toolResult") {
+		const text = message.content.map((part) => part.type === "text" ? part.text : "[Image omitted; consult the original history for image contents.]").join("\n");
+		return { role: message.role, toolCallId: message.toolCallId, toolName: message.toolName, isError: message.isError,
+			content: [{ type: "text", text: truncateToolResultForSummary(redactSummaryInput(text)) }] };
+	}
+	return { role: body.role, content };
 }
 
 const SECRET_PATTERN = /(?:-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+\/-]{8,}|\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}))/gu;

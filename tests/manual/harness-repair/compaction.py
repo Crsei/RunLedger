@@ -15,6 +15,10 @@ import time
 from run import Probe, Provider, cleanup
 
 
+def wire_text(value):
+    return value if isinstance(value, str) else "\n".join(part.get("text", "") for part in value if isinstance(part, dict))
+
+
 class CompactProvider(Provider):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -22,7 +26,19 @@ class CompactProvider(Provider):
         messages = body.get("messages", [])
         summarizing = bool(messages and "Summarize the supplied historical conversation" in str(messages[0].get("content")))
         last_content = next((item.get("content", "") for item in reversed(messages) if item.get("role") == "user"), "")
-        last_user = last_content if isinstance(last_content, str) else "\n".join(part.get("text", "") for part in last_content if isinstance(part, dict))
+        last_user = wire_text(last_content)
+        if last_user == "COMPACT_READ_APPROVED" and messages[-1].get("role") == "user":
+            self.server.wire_requests.append(body)
+            chunk = {"id": "read-approved", "object": "chat.completion.chunk", "model": body["model"], "choices": [{"index": 0,
+                     "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_read_approved", "type": "function",
+                     "function": {"name": "read", "arguments": json.dumps({"path": "approved.txt"})}}]}, "finish_reason": "tool_calls"}]}
+            payload = ("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if summarizing or last_user.startswith("COMPACT_HISTORY_"):
             self.server.wire_requests.append(body)
             summary = ("Goal and constraints: preserve compact verification. "
@@ -76,6 +92,9 @@ def main():
         probe.tm("send-keys", "-t", "probe:0.0", "y")
         probe.end(before, "stop")
         assert (root / "workspace/approved.txt").read_text() == "approved"
+        time.sleep(0.5)
+        before = probe.submit("COMPACT_READ_APPROVED")
+        probe.end(before, "stop")
         for index in range(4):
             time.sleep(0.5)
             before = probe.submit(f"COMPACT_HISTORY_{index}")
@@ -96,6 +115,8 @@ def main():
         wire = json.dumps(server.wire_requests[-1])
         assert "compact-cli-sentinel" in wire and "COMPACT_HISTORY_0" not in wire
         assert "COMPACT_HISTORY_3" in wire
+        projected_text = "\n".join(wire_text(item.get("content", "")) for item in server.wire_requests[-1].get("messages", []))
+        assert '<files>' in projected_text and '(Read) "approved.txt"' in projected_text
         report["first_exit"] = probe.close()
         probe.start(resume=True)
         before = probe.submit("AFTER_RESUME")
@@ -114,6 +135,10 @@ def main():
             assert control.returncode == 0, (control.stdout, control.stderr)
             assert json.loads(control.stdout)["ok"] is True
         assert len(records(probe, "compaction.completed")) == 2
+        summary_requests = [body for body in server.wire_requests if "Summarize the supplied historical conversation" in str(body.get("messages", [{}])[0].get("content"))]
+        assert "Update the previous summary" in wire_text(summary_requests[-1]["messages"][0]["content"])
+        assert "<previous-summary>" in wire_text(summary_requests[-1]["messages"][-1]["content"])
+        report["iterative_summary_and_file_list"] = True
         assert records(probe, "ledger.message") == control_raw
         report["standalone_compact_list_and_run"] = True
         report["raw_history_preserved"] = True

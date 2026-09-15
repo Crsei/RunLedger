@@ -17,8 +17,9 @@ import { compactionContextTokens, observeCompactionBudget, resolveThresholdToken
 import { conservativeTokenEstimate } from "../context/token-estimator.ts";
 import { historyDigest, planHistoryCut, hasSummarySecret, redactSummaryInput } from "../context/compaction/history.ts";
 import { parseCompactionSettings, type CompactionSettings } from "../context/compaction/settings.ts";
-import { CompactionStrategyRegistry, type CompactionCandidate, type CompactionLimits, type CompactionStrategyKey } from "../context/compaction/strategy.ts";
+import { CompactionStrategyRegistry, validSummary, type CompactionCandidate, type CompactionLimits, type CompactionStrategyKey } from "../context/compaction/strategy.ts";
 import { singlePassStrategy, hierarchicalStrategy, openAIResponsesNativeStrategy } from "../context/compaction/summary-strategies.ts";
+import { createFileOps, extractFileOpsFromMessage, computeFileLists, upsertFileOperations } from "../context/compaction/summary-context.ts";
 import { createBudgetedSummaryModel } from "../context/compaction/budgeted-model.ts";
 import type { CompactionCheckpoint, CompactionReason } from "../context/compaction/types.ts";
 import { calculateCompactionInvariantDigest } from "../context/invariants.ts";
@@ -32,7 +33,7 @@ import type { AttemptPort } from "./attempt-gateway.ts";
 import type { SessionResourceDomainPort } from "./session-runtime.ts";
 import type { SessionDomainMutationContext, SessionDomainResult } from "./domain-router.ts";
 import { COMPACTION_RECORD_SCHEMA, decodeCompactionRecord, decodeInheritedCompaction, type CompactionRecord } from "../context/compaction/record.ts";
-import { COMPACTION_SYSTEM_PROMPT, SUMMARY_ENVELOPE_RESERVE, createSessionSummaryModel } from "./compaction-model.ts";
+import { MAX_SUMMARY_SYSTEM_PROMPT_TOKENS, SUMMARY_ENVELOPE_RESERVE, createSessionSummaryModel } from "./compaction-model.ts";
 
 const MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object.freeze([
 	{ operation: "compaction.list", capability: "session.compaction", access: "read" },
@@ -196,7 +197,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 		const focus = typeof payload.focus === "string" ? redactSummaryInput(payload.focus) : undefined;
 		const maxSummaryTokens = Math.min(settings.maxSummaryTokens, model.maxTokens);
 		const deadlineMs = Date.now() + settings.timeoutMs;
-		const overhead = conservativeTokenEstimate(JSON.stringify({ systemPrompt: COMPACTION_SYSTEM_PROMPT, focus: focus ?? "" })) + SUMMARY_ENVELOPE_RESERVE + 256;
+		const overhead = MAX_SUMMARY_SYSTEM_PROMPT_TOKENS + conservativeTokenEstimate(JSON.stringify({ focus: focus ?? "" })) + SUMMARY_ENVELOPE_RESERVE + 256;
 		const limits: CompactionLimits = { maxSummaryTokens, maxInputTokensPerCall: model.contextWindow - maxSummaryTokens - overhead, deadlineMs,
 			maxSummaryBytes: settings.maxSummaryBytes, maxModelCalls: settings.maxModelCalls, maxTotalInputTokens: settings.maxTotalInputTokens,
 			maxTotalOutputTokens: settings.maxTotalOutputTokens, maxLevels: settings.maxLevels };
@@ -248,15 +249,23 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 			const generated = await this.strategies.generate(key, { inputDigest, units: cut.units, limits,
 				...(previousSummary === undefined ? {} : { previousSummary }), ...(focus === undefined ? {} : { focus }) }, budgeted, controller.signal, nativePort);
 			if (!generated.ok) return this.fail(started, generated.code, usage());
-			const candidate = generated.candidate;
-			if (candidate.kind === "portable-summary" && !["Goal and constraints", "Decisions and completed work", "Files and tool outcomes", "Unresolved tasks", "Verification evidence", "Source references"].every((heading) => candidate.text.includes(heading))) return this.fail(started, "summary_structure_invalid", usage());
-			if (hasSummarySecret(generated.candidate.kind === "portable-summary" ? generated.candidate.text : JSON.stringify(generated.candidate.state))) return this.fail(started, "summary_redaction_failed", usage());
-			const projected = this.replaceCandidate(input, cut.count, generated.candidate);
+			let candidate = generated.candidate;
+			if (hasSummarySecret(candidate.kind === "portable-summary" ? candidate.text : JSON.stringify(candidate.state))) return this.fail(started, "summary_redaction_failed", usage());
+			if (candidate.kind === "portable-summary") {
+				// 从原始前缀重建累计清单，不依赖模型复述或解释上一份摘要的文件标签。
+				const files = createFileOps();
+				for (const message of input.context.messages.slice(0, cut.count)) extractFileOpsFromMessage(message, files);
+				const lists = computeFileLists(files);
+				const text = upsertFileOperations(candidate.text, lists.readFiles.map(redactSummaryInput), lists.modifiedFiles.map(redactSummaryInput), new Set([...files.read].map(redactSummaryInput)));
+				if (!validSummary(text, limits)) return this.fail(started, "invalid_output", usage());
+				candidate = { ...candidate, text };
+			}
+			const projected = this.replaceCandidate(input, cut.count, candidate);
 			const assembled = assembleAgentModelContext(projected);
 			const afterTokens = contextTokens(projected);
 			if (afterTokens >= beforeTokens || assembled.receipt.omittedFragments.some((fragment) => fragment.fragmentId.startsWith("agent-history-"))) return this.fail(started, "summary_budget_invalid", usage());
-			const mediaType = generated.candidate.kind === "portable-summary" ? "text/plain" : "application/vnd.runledger.openai-compaction+json";
-			const artifact = await this.artifacts.putDurable({ bytes: new TextEncoder().encode(generated.candidate.kind === "portable-summary" ? generated.candidate.text : JSON.stringify(generated.candidate.state)), mediaType, redactionPolicyDigest: "compaction-secrets", sourceDigest: inputDigest.digest });
+			const mediaType = candidate.kind === "portable-summary" ? "text/plain" : "application/vnd.runledger.openai-compaction+json";
+			const artifact = await this.artifacts.putDurable({ bytes: new TextEncoder().encode(candidate.kind === "portable-summary" ? candidate.text : JSON.stringify(candidate.state)), mediaType, redactionPolicyDigest: "compaction-secrets", sourceDigest: inputDigest.digest });
 			if (controller.signal.aborted || Date.now() >= deadlineMs) return this.fail(started, "cancelled", usage());
 			if (this.load().revision !== loaded.revision || runtimeDigest(JSON.parse(JSON.stringify(this.options.protectedState()))).digest !== protectedStateDigest.digest
 				|| historyDigest(this.options.getInput().context.messages.slice(0, reason === "manual" ? undefined : cut.count)).digest !== historyDigest(input.context.messages.slice(0, reason === "manual" ? undefined : cut.count)).digest) return this.fail(started, "compaction_source_changed", usage());

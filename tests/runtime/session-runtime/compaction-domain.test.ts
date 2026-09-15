@@ -1,9 +1,10 @@
 import { stream as responsesStream, streamSimple as responsesStreamSimple } from "../../../src/api/openai-responses.ts";
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { decodeCompactionRecord } from "../../../src/runtime/context/compaction/record.ts";
 import { FileArtifactStore } from "../../../src/runtime/trace/artifact-store.ts";
 import { stream, streamSimple } from "../../../src/api/openai-completions.ts";
 import { createModels, createProvider } from "../../../src/models.ts";
@@ -21,12 +22,19 @@ import { SessionStore } from "../../../src/storage/session-store/session-store.t
 import { saveProjectSettings } from "../../../src/storage/settings-manager.ts";
 import type { Model } from "../../../src/types.ts";
 
-async function fixture(native = false) {
+function wireText(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (!Array.isArray(value)) return "";
+	return value.flatMap((part: unknown) => typeof part === "object" && part !== null && "text" in part && typeof part.text === "string" ? [part.text] : []).join("\n");
+}
+async function fixture(native = false, fileHistory = false) {
 	const root = mkdtempSync(join(tmpdir(), "runledger-compact-"));
 	const home = join(root, "home"); mkdirSync(home, { mode: 0o700 });
+	const workspace = join(root, "workspace"); mkdirSync(workspace);
 	const requests: Record<string, unknown>[] = [];
 	let rejectSummary = false;
 	let promptUsage = 0;
+	let summaryOutput: string | undefined;
 	let rejectNormal = 0;
 	let summaryGate: Promise<void> | undefined;
 	let releaseSummary: (() => void) | undefined;
@@ -45,10 +53,25 @@ async function fixture(native = false) {
 			res.writeHead(200, { "content-type": "text/event-stream" });
 			res.end([{ type: "response.output_item.done", output_index: 0, item }, { type: "response.completed", response: { id: "response_fixture", status: "completed", output: [item], usage: { input_tokens: 100, output_tokens: 100, total_tokens: 200 } } }].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("")); return;
 		}
+		const wireMessages = (request.messages ?? []) as { role?: string; content?: unknown }[];
+		const lastUser = [...wireMessages].reverse().find((message) => message.role === "user");
+		const fileCommand = /^fileops-(write-alpha|read-alpha|write-beta)\b/u.exec(wireText(lastUser?.content))?.[1];
+		if (fileHistory && !summarizing && fileCommand !== undefined && wireMessages.at(-1)?.role === "user") {
+			const name = fileCommand === "read-alpha" ? "read" : "write";
+			const args = name === "read" ? { path: "alpha.txt", lineNumbers: false } : { path: fileCommand === "write-alpha" ? "alpha.txt" : "beta.txt", content: "read evidence\n".repeat(400) + "READ_TAIL_SENTINEL" };
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.end(`data: ${JSON.stringify({ id: "fileops", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `fileops_${requests.length}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`); return;
+		}
 		if (summarizing && summaryGate !== undefined) await summaryGate;
 		if (summarizing && rejectSummary) { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "fixture rejects summary", type: "invalid_request_error" } })); return; }
 		if (!summarizing && rejectNormal > 0) { rejectNormal -= 1; res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "maximum context length is 100000 tokens", type: "invalid_request_error" } })); return; }
-		const content = summarizing ? "Goal and constraints: keep release scope. Decisions and completed work: compact-sentinel. Files and tool outcomes: none. Unresolved tasks: continue release. Verification evidence: none. Source references: original conversation." : "Turn finished.";
+		let content = summarizing ? "Goal and constraints: keep release scope. Decisions and completed work: compact-sentinel. Files and tool outcomes: none. Unresolved tasks: continue release. Verification evidence: none. Source references: original conversation." : "Turn finished.";
+		if (summarizing && fileHistory) {
+			const prompt = wireText(wireMessages.at(-1)?.content);
+			const prior = !prompt.includes("<previous-summary>") || prompt.includes("first-fact-keep") ? "first-fact-keep" : "missing-first-fact";
+			content = content.replace("compact-sentinel", `compact-sentinel ${prior}${prompt.includes("beta.txt") ? " new-fact-added" : ""}`);
+		}
+		if (summarizing && summaryOutput !== undefined) content = summaryOutput;
 		res.writeHead(200, { "content-type": "text/event-stream" });
 		res.end(`data: ${JSON.stringify({ id: "compact-test", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: "stop" }], usage: { prompt_tokens: promptUsage, completion_tokens: 1, total_tokens: promptUsage + 1 } })}\n\ndata: [DONE]\n\n`);
 	});
@@ -69,14 +92,14 @@ async function fixture(native = false) {
 	const stop = async () => { client?.dispose(); await embedded?.handle.close(); await embedded?.runtime?.shutdownAfterLastAttachment("paused"); client = undefined; embedded = undefined; };
 	const start = async (targetSessionId = sessionId) => {
 		embedded = await createEmbeddedSessionRuntime({ sessionId: targetSessionId, store, ownerStore, domain: {
-			cwd: root, layout, models, settings, modelRequestRouter: createCatalogModelRouter(models),
+			cwd: workspace, layout, models, settings, modelRequestRouter: createCatalogModelRouter(models),
 			securitySources: [{ source: "cli", read: async () => ({ status: "available", text: JSON.stringify({ profile: "danger-full-access", approvalPolicy: "never" }) }) }],
 		} });
 		client = new SessionInteractiveController(embedded.handle, await fetchDomainSnapshot(embedded));
 		await claimDriver(embedded, client); await client.resumeEvents();
 		return client;
 	};
-	return { root, model, layout, store, usage: (value: number) => { promptUsage = value; }, rejectReceipt: () => db.execSync("CREATE TEMP TRIGGER reject_compact_receipt BEFORE INSERT ON command_attempt_receipts WHEN NEW.outcome = 'committed' AND NEW.command_id LIKE 'command_compact-%' BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END"), hold: () => { summaryGate = new Promise<void>((resolve) => { releaseSummary = resolve; }); }, release: () => releaseSummary?.(), sessionId, requests, start, stop, overflow: (count: number) => { rejectNormal = count; }, configure: (threshold: number) => saveProjectSettings({ layout }, { ...settings, compaction: { retainRecentTokens: 1, auto: true, threshold } }), reject: () => { rejectSummary = true; },
+	return { root, workspace, model, layout, store, usage: (value: number) => { promptUsage = value; }, summaryOutput: (value: string) => { summaryOutput = value; }, rejectReceipt: () => db.execSync("CREATE TEMP TRIGGER reject_compact_receipt BEFORE INSERT ON command_attempt_receipts WHEN NEW.outcome = 'committed' AND NEW.command_id LIKE 'command_compact-%' BEGIN SELECT RAISE(ABORT, 'fixture receipt failure'); END"), hold: () => { summaryGate = new Promise<void>((resolve) => { releaseSummary = resolve; }); }, release: () => releaseSummary?.(), sessionId, requests, start, stop, overflow: (count: number) => { rejectNormal = count; }, configure: (threshold: number) => saveProjectSettings({ layout }, { ...settings, compaction: { retainRecentTokens: 1, auto: true, threshold } }), reject: () => { rejectSummary = true; },
 		close: async () => { releaseSummary?.(); await stop(); db.close(); server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); rmSync(root, { recursive: true, force: true }); },
 	};
 }
@@ -164,6 +187,46 @@ describe("manual compact through the production Session Owner", () => {
 			expect(records[1].count).toBeGreaterThan(records[0].count);
 			await client.prompt("continue-chain"); await client.waitForIdle();
 			expect(JSON.stringify(f.requests.at(-1)!.messages)).toContain("chain-new");
+		} finally { await f.close(); }
+	}, 60_000);
+
+	it("merges file operations and previous facts over two Owner compactions", async () => {
+		const f = await fixture(false, true);
+		try {
+			let client = await f.start();
+			for (const prompt of ["fileops-write-alpha", "fileops-read-alpha", `tail-first ${"detail ".repeat(200)}`]) { await client.prompt(prompt); await client.waitForIdle(); }
+			expect(readFileSync(join(f.workspace, "alpha.txt"), "utf8")).toContain("READ_TAIL_SENTINEL");
+			const before = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message");
+			expect(await client.commandSessionDomain("compact.run", {}, { correlationId: "files-first", effectId: "files-first", expectedRevision: 0 })).toMatchObject({ ok: true });
+			expect(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message")).toEqual(before);
+			expect(JSON.stringify(f.requests.at(-1))).toContain("more characters truncated");
+			const artifacts = new FileArtifactStore({ dataRoot: f.layout.artifacts, metadataRoot: f.layout.artifactMetadata });
+			const first = decodeCompactionRecord(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed").at(-1)!);
+			const firstText = new TextDecoder().decode(await artifacts.read(first.artifact!));
+			expect(firstText).toContain('(RW) "alpha.txt"'); expect(firstText).not.toContain("beta.txt");
+			for (const prompt of ["fileops-write-beta", `tail-second ${"detail ".repeat(200)}`]) { await client.prompt(prompt); await client.waitForIdle(); }
+			expect(await client.commandSessionDomain("compact.run", {}, { correlationId: "files-second", effectId: "files-second", expectedRevision: 1 })).toMatchObject({ ok: true });
+			const secondRequest = JSON.stringify(f.requests.at(-1));
+			expect(secondRequest).toContain("<previous-summary>"); expect(secondRequest).toContain("Update the previous summary");
+			const second = decodeCompactionRecord(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed").at(-1)!);
+			const secondText = new TextDecoder().decode(await artifacts.read(second.artifact!));
+			expect(secondText).toContain("first-fact-keep"); expect(secondText).toContain("new-fact-added");
+			expect(secondText.match(/<files>/gu)).toHaveLength(1); expect(secondText).toContain('(RW) "alpha.txt"'); expect(secondText).toContain('(Write) "beta.txt"');
+			await f.stop(); client = await f.start(); await client.prompt("continue-files"); await client.waitForIdle();
+			expect(JSON.stringify(f.requests.at(-1))).toContain("first-fact-keep"); expect(JSON.stringify(f.requests.at(-1))).toContain("beta.txt");
+		} finally { await f.close(); }
+	}, 60_000);
+
+	it.each(["", "missing headings", "Goal and constraints: secret=forbidden-value. Decisions and completed work: done. Files and tool outcomes: none. Unresolved tasks: none. Verification evidence: none. Source references: none.", "X".repeat(33_000)])("rejects malformed or unsafe summary output (%#)", async (output) => {
+		const f = await fixture();
+		try {
+			const client = await f.start();
+			for (let index = 0; index < 3; index += 1) { await client.prompt(`invalid-${index} ${"detail ".repeat(150)}`); await client.waitForIdle(); }
+			f.summaryOutput(output);
+			const raw = f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message");
+			expect(await client.commandSessionDomain("compact.run", {}, { correlationId: "invalid-output", effectId: "invalid-output", expectedRevision: 0 })).toMatchObject({ ok: false });
+			expect(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "compaction.completed")).toHaveLength(0);
+			expect(f.store.replaySessionEvents(f.sessionId).filter((event) => event.eventType === "ledger.message")).toEqual(raw);
 		} finally { await f.close(); }
 	}, 60_000);
 

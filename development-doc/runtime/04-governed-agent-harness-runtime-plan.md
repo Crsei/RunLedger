@@ -341,6 +341,8 @@ manifest、frontmatter、配置文件、发现优先级、trust store、installe
 
 `SessionStore.appendEventAndSettleAttempt` 在同一 immediate transaction 内校验活动 attempt/Owner fence，构造真实 receipt，再由同步 event builder 绑定 receipt digest，原子写事件和 receipt。source history 不变；artifact 正文、metadata 与目录项先同步，record reader 校验实际 receipt/result binding。`Context.compaction` 是 Responses adapter 的 typed provider-private 窗口，包含完整 opaque 输出、模型/endpoint identity 和预算；不进入公共 policy，也不跨不兼容 provider 透传。策略的生成能力与 immutable replacement reader 分离。相关行为与验收状态见专项 §0.5。
 
+O2 摘要格式接入：`SummaryFormatId` 与独立 `previousSummary` 只属于内部 `SummaryModelPort` / strategy registry；格式分别为 `headings@1`、`headings-update@1`、`handoff-document@1`。当前 portable 恢复统一消费不可信文本，格式不改变恢复语义，因此不新增 record 字段、不迁移历史 record，inventory 的公共 checkpoint 模块与 owner 指针保持不变。文件操作清单属于同一摘要工件正文，只记录显式 read/write/edit 请求过的路径，不证明操作成功，也不改变权限、批准或完成 authority。
+
 router、manifest loader、Plan reducer/service、ContextEngine、token estimator、compaction planner/summarizer/store、Memory store/index/search/tools 和 UI/CLI 归 [Plan/Context/Compaction/Memory 专项](../plan-compact-memory/01-implementation-plan.md)。
 
 <a id="contract-control-telemetry"></a>

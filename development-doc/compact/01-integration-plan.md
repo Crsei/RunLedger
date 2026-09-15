@@ -1,6 +1,6 @@
 # RunLedger × oh-my-pi 压缩服务接入实施计划
 
-> 状态：**in_progress**。O0 合同冻结完成，O1 完成，O2–O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
+> 状态：**in_progress**。O0 合同冻结完成，O1–O2 完成，O3–O5 待实施；O6 `deferred`，O7 `blocked`。本次文档更新不关闭运行时能力门禁。
 > 目标基线：RunLedger `9ab79772e512935da2d98fd2239693ec451b415f`（分支 `rollback/before-composer-shape`）。
 > 来源快照：oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`；事实清单见 [00-oh-my-pi-compaction-services.md](00-oh-my-pi-compaction-services.md)。
 > 检索入口见 [README.md](README.md)。
@@ -179,6 +179,8 @@
 不得声称：精确 token 计数（仍是上界估算）。
 
 ### O2：摘要格式 seam + 迭代更新 + 文件清单
+
+状态：`done` / `implemented`（本地生产组合）。三种格式已进入纯 registry，策略只能请求其登记格式（六段摘要允许 update 格式）；前次摘要、focus 和新历史分别转义并纳入调用预算。文件清单从原始前缀重建，最多 20 条 / 4096 字节；同一 tool result 的文本块合计截断到 2000 字符，再追加截断标记。RunLedger read 的范围参数是 `offset/limit`，因此清单保留原始路径字面量；上游 selector 解析作为独立纯函数，不能误改名为 `file:12` 的真实文件。恢复仍是 portable 文本，不新增持久字段；契约边界见 Runtime 04 §3.7。 focused 3 文件 / 39 用例通过，完整 `npm run check`、`npm run build`、`npm test` 均通过（544 文件 / 3609 用例）；完整输出保存于 `/tmp/runledger-omp-o2-{focused-final,check,build,test}.log`。真实 PATH CLI + 隔离 home + 本地 HTTP + tmux 验证迭代摘要通道、governed read 文件清单、两次压缩、raw ledger 不变、重启和正常退出，证据 `/tmp/runledger-compact-cli-wx9snlnt/result.json`，无遗留测试进程。真实外部 provider 与人工验收仍 pending。
 
 前置：O1。
 文件边界：`summary-format.ts`、`summary-context.ts`（新）、`strategy.ts`、`summary-strategies.ts`、`session-runtime/compaction-model.ts`、`compaction-domain.ts`（校验替换）、`record.ts`（若格式入 schema）、相关测试与 `tests/runtime-contracts/inventory.test.ts`。
