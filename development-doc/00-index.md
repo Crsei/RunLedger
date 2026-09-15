@@ -46,6 +46,7 @@
 | Runtime Trace / Opik | [`runtime/trace/README.md`](runtime/trace/README.md) | Event Store、Artifact Store、模型/工具/上下文/耗时/Token/费用记录、Opik 投影与父子树 | `runtime/trace/00-opik-agent-observability-plan.md`、当前代码/tests |
 | Session Audit Note | [`note/README.md`](note/README.md) | 历史 `/audit` 阅读计划；已由 Trajectory 专项接替 | [`note/00-session-audit-reading-mode-plan.md`](note/00-session-audit-reading-mode-plan.md)、Runtime Trace 当前代码/tests |
 | Test Strategy / Runner | [`test/README.md`](test/README.md)、[`test/01-test-strategy-and-runner-hardening-plan.md`](test/01-test-strategy-and-runner-hardening-plan.md) | 测试 inventory、唯一 runner 归属、资源分桶、PR CI、构建/CLI/PTY smoke、确定性、跨平台与人工/live 证据边界 | 当前 runner/config/tests；异步方法见 [`test/async-state-machine.md`](test/async-state-machine.md) |
+| 评测中台 / Bench | [`bench/README.md`](bench/README.md)、[`bench/01-bench-platform-implementation-plan.md`](bench/01-bench-platform-implementation-plan.md) | agent 任务级评测：任务包、驱动层（TTY/headless）、只读采集、宿主侧独立验收、bench ledger、hermetic/live 两条证据通道；不新增常驻服务、不做 sandbox/容器隔离 | 阶段状态与证据查 `bench/01`；数据与判定契约查 [`bench/02`](bench/02-task-pack-and-scoring-contract.md)；参考输入查 [`bench/00`](bench/00-oh-my-pi-metaharness-reference.md) |
 | Provider | [`providers/01-pi-ai-migration-plan.md`](providers/01-pi-ai-migration-plan.md)、[`providers/02-oh-my-pi-provider-port-execution-checklist.md`](providers/02-oh-my-pi-provider-port-execution-checklist.md) | 历史 pi-ai 全量移植；oh-my-pi 18.1.9 增量：4 个新 provider、55 份已有 catalog 更新；特殊协议、动态 catalog、认证和生产验收边界 | 早期移植设计查 `providers/01`；当前增量实现与验收状态查 `providers/02` |
 | Storage / CLI | [`专题入口与数据库结构图`](storage-cli/README.md)、[`storage-cli/02-user-home-migration-handoff.md`](storage-cli/02-user-home-migration-handoff.md)、[`storage-cli/01-project-layout-cli-plan.md`](storage-cli/01-project-layout-cli-plan.md) | 用户级单一 home 破坏性迁移 handoff（S0–S5 已完成）;旧项目级 `.runledger/`、settings、session 与 CLI 计划仅作为 superseded 迁移输入 | 迁移状态与最终证据查 `02`;旧布局历史见 [`project-cli-layout.md`](project-cli-layout.md) |
 | 界面框架术语 | [`frame/README.md`](frame/README.md) | TUI、工具展示、输入/参数区域、Composer 上方统一二级选择界面、审批与安全配置的名称和层级 | [`frame/00-tui-and-security-terminology.md`](frame/00-tui-and-security-terminology.md)、当前代码 |
@@ -174,6 +175,11 @@ development-doc/
 │   ├── README.md
 │   ├── 01-test-strategy-and-runner-hardening-plan.md
 │   └── async-state-machine.md
+├── bench/
+│   ├── README.md
+│   ├── 00-oh-my-pi-metaharness-reference.md
+│   ├── 01-bench-platform-implementation-plan.md
+│   └── 02-task-pack-and-scoring-contract.md
 └── tui/
     ├── 00-overview.md
     ├── 01-architecture.md
