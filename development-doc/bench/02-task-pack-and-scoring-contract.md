@@ -34,7 +34,7 @@ tests/bench/packs/<pack-id>/
 
 ```jsonc
 {
-  "schemaVersion": 1,
+  "format": "runledger-bench-pack",
   "id": "dev-core",                       // [a-z0-9-]+，pack 身份
   "title": "RunLedger 开发核心任务集",
   "packVersion": "1.0.0",
@@ -57,13 +57,13 @@ tests/bench/packs/<pack-id>/
 
 - `tasks` 的顺序**构成 sample 的一部分**；改顺序即改 sample digest。
 - `defaults.recordingMode=events_and_artifacts` 必须同时声明 `artifactBudgetBytes`，否则 pack 校验失败。
-- `packVersion` 与 `schemaVersion` 都参与 `pack_digest` 计算。
+- `packVersion` 与稳定的 `format` 标识都参与 `pack_digest` 计算。
 
 ### 2.3 `task.json`
 
 ```jsonc
 {
-  "schemaVersion": 1,
+  "format": "runledger-bench-task",
   "id": "01-jsonl",
   "title": "JSONL 日志统计 CLI",
   "prompt": "…完整任务提示（中文，含「不提交或推送」等约束）…",
@@ -118,7 +118,7 @@ python3 <task>/acceptance.py --workspace <abs trial workspace> --out <abs result
 
 ```jsonc
 {
-  "schemaVersion": 1,
+  "format": "runledger-bench-acceptance",
   "acceptanceVersion": "1.0.0",
   "taskId": "01-jsonl",
   "workspace": "/abs/path/to/workspace",
@@ -199,7 +199,7 @@ runner 采集时必须记录：
 
 `<bench-root>/_bench/bench.sqlite`。`<bench-root>` 默认 `<repo>/tmp/bench`（已被 `.gitignore` 的 `tmp/` 覆盖），可被 `--bench-root` 覆盖；**不得**位于任何 `RUNLEDGER_DIR` 内。trial 的原始产物在 `<bench-root>/runs/<runId>/trials/...`，是证据真源；ledger 是可重建投影。唯一入库的评测产物是提交到 `development-doc/bench/baselines/` 的基线 JSON。
 
-### 5.2 DDL（v1）
+### 5.2 当前 DDL
 
 ```sql
 CREATE TABLE schema_meta (
@@ -419,8 +419,8 @@ sha256( canonical_json( [{ task_id, attempts, order } …] ) )
 
 ## 9. 变更规则
 
-1. 本文任何字段的增删改都必须：先在本文更新、再改实现、最后在同一提交里更新受影响 pack 的 `schemaVersion`。
-2. `schemaVersion` 递增表示不向后兼容；ledger 迁移走显式入口（与产品存储的显式迁移原则一致），**不新增猜测格式、不做静默导入**。
+1. 本文任何字段的增删改都必须：先在本文更新、再改实现、最后在同一提交里更新受影响 pack 的声明与内容 digest；任务内容变化同步更新 `packVersion`。
+2. `format` 是稳定的当前格式标识，不编码内部代际。读取端严格校验当前合同；不兼容的旧数据明确拒绝，ledger 迁移走显式入口（与产品存储的显式迁移原则一致），**不新增猜测格式、不做静默导入**。
 3. 新增指标（非 §4.1 主指标）可单独发布，不影响既有行。
 4. 修改 `passPolicy`、`acceptance.checks` 集合或验收器判定逻辑，等同于改变被测标准：必须提升 `acceptanceVersion`，且新旧结果不得混入同一 arm 比较。
 5. 修改自动应答类别集合必须回归 §6 的闭集约束，并重新跑一次「越界请求必须 `blocked_by_policy`」的负向验收。

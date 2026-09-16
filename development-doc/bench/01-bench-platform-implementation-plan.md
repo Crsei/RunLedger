@@ -105,7 +105,7 @@ RunLedger 当前**不存在 agent 任务级评测能力**：没有 task registry
 |---|---|---|---|
 | **A（推荐起步）** | 加固现有 tmux + 真实 TTY 驱动（`driver.py` 模式）：隔离 root、隔离 workspace、独立 tmux server、`capture-pane` 取证、SQLite 读 `agent.event` | 零产品改动；走的是标准 CLI/production 链路，证据力最强；已有可用先例 | 慢（含 TUI 渲染开销）；审批应答只能靠 `send-keys`；tmux 依赖；并发上限低 |
 | **B（长期）** | 新增 headless 子命令：进程内 `SessionClient` + 自动 reverse-request handler + 事件流输出到 JSONL | 快、可扩并发、审批可编程、事件流精确 | **改变被测面**（TUI 与交互路径不再被执行）；属于产品面扩张，需 Runtime/TUI authority 批准；`--mode` 命名须避开已有 AgentMode |
-| **C** | 外部进程直接打 Session Owner 协议（127.0.0.1 + NDJSON v3 + 32-byte hex token） | 不改产品代码即可编程驱动 | token 只能从 `state.db` 的 `session_owners` 行读；需要把协议/传输代码对外可 import，否则复制产生 drift；`trajectory`/`subscription` 的完整语义要自行实现 |
+| **C** | 外部进程直接打 Session Owner 协议（127.0.0.1 + 当前 NDJSON 帧格式 + 32-byte hex token） | 不改产品代码即可编程驱动 | token 只能从 `state.db` 的 `session_owners` 行读；需要把协议/传输代码对外可 import，否则复制产生 drift；`trajectory`/`subscription` 的完整语义要自行实现 |
 
 **决策**：P1a 走 A（建立端到端骨架与首份可比数字），P1b 作为独立申请项评估 B。**A 与 B 的数字不可混入同一 arm 比较**——B 消除了 TUI 与交互开销，墙上时间、`active_duration_ms`、审批等待时间都不可比。切换驱动必须新建 arm 并标注驱动身份（见 02 §5 的 `driver` 字段）。
 
@@ -262,7 +262,7 @@ development-doc/bench/baselines/   ← 提交入版本库的基线 JSON（唯一
 - 物化隔离 trial 环境（`home`/`workspace`/`user`），注入 `RUNLEDGER_DIR`、`HOME`、`XDG_*`，剥离凭据类 env。
 - 独立 tmux server 启动 `bin/runledger.js`，就绪判定 + fatal 正则拦截，`capture-pane` 取证，退出核对 pane 状态码与 subprocess 探活。
 - 注入 prompt，等待 `agent_end`，超时按 pack 声明执行并记 `timeoutKind`。
-- 审批适配器 v1：白名单内 `send-keys` 应答 + 决策落盘；白名单外不动作，等待转为 `blocked_by_policy` 终态。
+- 首版审批适配器：白名单内 `send-keys` 应答 + 决策落盘；白名单外不动作，等待转为 `blocked_by_policy` 终态。
 
 **P1b（headless 评估，独立申请）**
 - 产出需求文档：headless 子命令的语义、事件出口格式、审批应答接口、与 `--mode`(AgentMode) 的命名冲突规避。
