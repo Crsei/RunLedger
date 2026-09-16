@@ -52,7 +52,7 @@ describe("production Agent run budget", () => {
 			return stream;
 		};
 		const events: AgentEvent[] = [];
-		await runAgentLoop([{ role: "user", content: [{ type: "text", text: "work" }] }], { messages: [], tools: [tool], systemPrompt: "" },
+		await runAgentLoop([{ role: "user", origin: "user", content: [{ type: "text", text: "work" }] }], { messages: [], tools: [tool], systemPrompt: "" },
 			{ model: MODEL, runBudget: DEFAULT_AGENT_RUN_BUDGET, runBudgetUsage: { activeDurationMs: () => activeDurationMs + calls } },
 			async (event) => { events.push(event); }, undefined, streamFn);
 		expect(calls).toBe(21);
@@ -90,7 +90,7 @@ describe("production Agent run budget", () => {
 		const context = { messages: [], tools: [tool] };
 
 		const messages = await runAgentLoop(
-			[{ role: "user", content: [{ type: "text", text: "loop" }] }],
+			[{ role: "user", origin: "user", content: [{ type: "text", text: "loop" }] }],
 			context,
 			{
 				model: MODEL,
@@ -151,7 +151,7 @@ describe("production Agent run budget", () => {
 		const events: AgentEvent[] = [];
 
 		await runAgentLoop(
-			[{ role: "user", content: [{ type: "text", text: "loop" }] }],
+			[{ role: "user", origin: "user", content: [{ type: "text", text: "loop" }] }],
 			{ messages: [], tools: [tool] },
 			{
 				model: MODEL,
@@ -209,7 +209,7 @@ describe("production Agent run budget", () => {
 		const events: AgentEvent[] = [];
 
 		await runAgentLoop(
-			[{ role: "user", content: [{ type: "text", text: "loop" }] }],
+			[{ role: "user", origin: "user", content: [{ type: "text", text: "loop" }] }],
 			{ messages: [], tools: [tool] },
 			{
 				model: MODEL,
@@ -275,7 +275,7 @@ describe("production Agent run budget", () => {
 		const events: AgentEvent[] = [];
 
 		await runAgentLoop(
-			[{ role: "user", content: [{ type: "text", text: "loop" }] }],
+			[{ role: "user", origin: "user", content: [{ type: "text", text: "loop" }] }],
 			{ messages: [], tools: [tool] },
 			{
 				model: MODEL,
@@ -331,7 +331,7 @@ describe("production Agent run budget", () => {
 		const events: AgentEvent[] = [];
 
 		await runAgentLoop(
-			[{ role: "user", content: [{ type: "text", text: "loop" }] }],
+			[{ role: "user", origin: "user", content: [{ type: "text", text: "loop" }] }],
 			{ messages: [], tools: [tool] },
 			{
 				model: MODEL,
@@ -365,7 +365,7 @@ describe("production Agent run budget", () => {
 		};
 
 		await expect(runAgentLoop(
-			[{ role: "user", content: [{ type: "text", text: "invalid" }] }],
+			[{ role: "user", origin: "user", content: [{ type: "text", text: "invalid" }] }],
 			{ messages: [], tools: [] },
 			{
 				model: MODEL,
@@ -425,7 +425,7 @@ describe("Plan 14 failure progress accounting", () => {
       return stream;
     };
     const events: AgentEvent[] = [];
-    await runAgentLoop([{ role: "user", content: [{ type: "text", text: "run" }] }], { messages: [], tools: [tool] },
+    await runAgentLoop([{ role: "user", origin: "user", content: [{ type: "text", text: "run" }] }], { messages: [], tools: [tool] },
       { model: MODEL, runBudget: { ...DEFAULT_AGENT_RUN_BUDGET, maxRepeatedFailureFingerprint: 3 } },
       async (event) => { events.push(event); }, undefined, streamFn);
     const changing = scenario === "distinct-requests" || scenario === "changing-error";

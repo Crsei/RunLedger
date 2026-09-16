@@ -54,6 +54,9 @@ export type SlashCommandActionType =
   | "extension.skills"
   | "extension.hooks"
   | "plan.inspect"
+  | "goal.inspect"
+  | "goal.mutate"
+  | "loop.control"
   | "agent.inspect"
   | "compaction.list"
   | "compact.run"
@@ -278,6 +281,30 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       requiredOperation: "plan.inspect",
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/plan is available when the current turn is idle.",
+    }),
+    command("goal", "Inspect or manage the session goal", 22.2, {
+      actionType: "goal.inspect",
+      category: "plan",
+      policy: READONLY_POLICY,
+      requiredOperation: "goal.inspect",
+      supportsInlineArgs: true,
+      usage: "[set <objective> | pause | resume | complete | reject | drop | set-budget <tokens>]",
+      argumentSchema: [schema("action", "Optional goal action and its argument", false)],
+      availableDuringTask: false,
+      unavailableDuringTaskMessage: "/goal is available when the current turn is idle.",
+      unavailableHint: "Goal mode is available in standard sessions.",
+    }),
+    command("loop", "Run the current prompt repeatedly until a condition or limit", 22.4, {
+      actionType: "loop.control",
+      category: "plan",
+      policy: IDLE_ONLY_POLICY,
+      requiredOperation: "loop.start",
+      supportsInlineArgs: true,
+      usage: "[count|duration] [--while|--until '<command>'] [prompt]  ·  /loop stop",
+      argumentSchema: [schema("args", "Optional limit, condition and prompt, or 'stop'", false)],
+      availableDuringTask: false,
+      unavailableDuringTaskMessage: "/loop is available when the current turn is idle.",
+      unavailableHint: "Loop mode is available in standard sessions.",
     }),
     command("agents", "Inspect bounded child agents", 22.5, {
       actionType: "agent.inspect",

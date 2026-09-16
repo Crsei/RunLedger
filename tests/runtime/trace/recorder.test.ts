@@ -340,7 +340,7 @@ describe("RuntimeTraceRecorder", () => {
 		const { eventStore, recorder } = await createRecorder();
 		const context: AgentContext = { messages: [], tools: [echoTool] };
 		await runAgentLoop(
-			[{ role: "user", content: [{ type: "text", text: "hello" }] }],
+			[{ role: "user", origin: "user", content: [{ type: "text", text: "hello" }] }],
 			context,
 			{
 				model: mockModel,

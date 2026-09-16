@@ -24,7 +24,7 @@ describe("S7 canonical Timeline information equivalence", () => {
 
 		const user = projector.project({
 			kind: "tui-event",
-			event: { type: "message_start", timestamp: 0, role: "user", message: { role: "user", content: [{ type: "text", text: userText }] } },
+			event: { type: "message_start", timestamp: 0, role: "user", message: { role: "user", origin: "user", content: [{ type: "text", text: userText }] } },
 		})[0];
 		const assistant = projector.project({
 			kind: "tui-event",

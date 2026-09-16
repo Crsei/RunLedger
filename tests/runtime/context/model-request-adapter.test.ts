@@ -9,7 +9,7 @@ import { skillCatalogPromptFragment } from "../../../src/extensions/skills/rende
 import type { AgentMessage, LlmContext } from "../../../src/runtime/types.ts";
 
 function user(text: string): AgentMessage {
-	return { role: "user", content: [{ type: "text", text }] };
+	return { role: "user", origin: "user", content: [{ type: "text", text }] };
 }
 
 function assistant(text: string): AgentMessage {

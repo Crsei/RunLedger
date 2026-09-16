@@ -208,6 +208,31 @@ function inferOperation(raw: Record<string, unknown>, hasExistingPhases: boolean
   return undefined;
 }
 
+/**
+ * 读回本 session 最近一次持久化的 todo 表；owner 侧 goal fragment 用它提供真实
+ * 进度，而不是复制一份内存状态。没有任何快照时返回空表。
+ */
+export async function readTodoPhases(ledger: LedgerSink | undefined): Promise<readonly TodoPhase[]> {
+  if (ledger === undefined) return [];
+  return replayPhases(await ledger.findByType("custom"));
+}
+
+/** 有界文本快照：计数 + 相位/任务状态，供 mode fragment 内联（不含 Markdown 往返）。 */
+export function renderTodoPhases(phases: readonly TodoPhase[]): string {
+  if (phases.length === 0) return "";
+  const tasks = phases.flatMap((phase) => phase.tasks);
+  const remaining = tasks.filter((task) => task.status === "pending" || task.status === "in_progress");
+  const closed = tasks.filter((task) => task.status === "completed" || task.status === "abandoned");
+  const lines = [`Overall: ${closed.length}/${tasks.length} done, ${remaining.length} open.`];
+  for (const phase of phases) {
+    lines.push(`- ${phase.name}`);
+    for (const task of phase.tasks) {
+      lines.push(`  - [${task.status}] ${task.content}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function replayPhases(entries: readonly LedgerEntry[]): readonly TodoPhase[] {
   let latest: readonly TodoPhase[] = [];
   for (const entry of entries) {
@@ -390,8 +415,9 @@ export function createTodoTool(options: TodoToolOptions = {}): AgentTool<typeof 
     parameters: todoSchema,
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
-    async execute(_toolCallId, params): Promise<AgentToolResult<TodoToolDetails>> {
-      const ledger = options.ledger;
+    async execute(_toolCallId, params, _signal, _onUpdate, context): Promise<AgentToolResult<TodoToolDetails>> {
+      // 当前调用的会话 ledger 优先，构造期选项仅供未注入上下文的调用回退。
+      const ledger = context?.ledger ?? options.ledger;
       const current = ledger === undefined ? [] : replayPhases(await ledger.findByType("custom"));
       const raw = params as Record<string, unknown>;
       const inferred = params.op === undefined ? inferOperation(raw, current.length > 0) : undefined;

@@ -81,7 +81,7 @@ describe("agent-loop tool result overflow boundary", () => {
 		const context: AgentContext = { messages: [], tools: [tool] };
 
 		await runAgentLoop(
-			[{ role: "user", content: [{ type: "text", text: "run" }] }],
+			[{ role: "user", origin: "user", content: [{ type: "text", text: "run" }] }],
 			context,
 			{
 				model: MODEL,
@@ -165,7 +165,7 @@ describe("Plan 14 complete output budgeting", () => {
       name: "hook", label: "hook", description: "fixture", parameters, maxResultSizeChars: 160,
       execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
     }] };
-    await runAgentLoop([{ role: "user", content: [{ type: "text", text: "run" }] }], context, {
+    await runAgentLoop([{ role: "user", origin: "user", content: [{ type: "text", text: "run" }] }], context, {
       model: MODEL,
       afterToolCall: async () => ({ content: [{ type: "text", text: "x".repeat(1000) + "HOOK_FAILURE" }], isError: true }),
     }, async () => undefined, undefined, oneToolThenStop(call));

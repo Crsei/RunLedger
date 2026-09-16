@@ -122,7 +122,7 @@ interface InteractiveModeSurface {
 describe("P1 regression fixes at InteractiveMode level", () => {
 	it("replays completed run summaries after their message boundary and skips recovery markers", () => {
 		const messages = [
-			{ role: "user" as const, content: [{ type: "text" as const, text: "hi" }] },
+			{ role: "user" as const, origin: "user" as const, content: [{ type: "text" as const, text: "hi" }] },
 			{ role: "assistant" as const, content: [{ type: "text" as const, text: "hello" }], stopReason: "stop" as const },
 		];
 		const mode = new InteractiveMode({
@@ -254,7 +254,7 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 	it("keeps the conversation visible while showing the permission view above the Composer", async () => {
 		const terminal = new FakeTerminal();
 		const controller = new ContractController({
-			messages: [{ role: "user", content: [{ type: "text", text: "historical conversation" }] }],
+			messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "historical conversation" }] }],
 		});
 		const mode = new InteractiveMode({ controller, terminal });
 		const running = mode.run();

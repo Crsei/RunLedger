@@ -161,6 +161,12 @@ export interface AgentToolResult<T = unknown> {
 
 export interface UserAgentMessage {
   role: "user";
+  /**
+   * 消息来源：`user` 是用户真实输入，`runtime` 是 owner 侧自主续跑（goal/loop）
+   * 注入的触发消息。runtime 消息同样进 history（模型必须看到自己在被续跑，重放
+   * 后才一致），但不得被当作真实用户输入：TUI 折叠显示，不计入用户输入历史。
+   */
+  origin: "user" | "runtime";
   content: TextContent[];
 }
 

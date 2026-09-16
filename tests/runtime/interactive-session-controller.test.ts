@@ -685,7 +685,7 @@ describe("InteractiveSessionController", () => {
 			settings: { provider: p1.provider, model: p1.id },
 			replay: {
 				...EMPTY_REPLAY,
-				messages: [{ role: "user", content: [{ type: "text", text: "ship the feature" }] }],
+				messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "ship the feature" }] }],
 			},
 			ledger: new MemoryLedger(),
 			tools: initialMessages,

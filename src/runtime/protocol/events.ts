@@ -31,6 +31,15 @@ export const RUNTIME_EVENT_TYPES = [
 	"input.source_recorded",
 	"input.declassification_decided",
 	"goal.transitioned",
+	"goal.budget_updated",
+	"goal.budget_exhausted",
+	"goal.usage_accounted",
+	"goal.continuation_requested",
+	"goal.continuation_suppressed",
+	"loop.started",
+	"loop.iteration_submitted",
+	"loop.iteration_settled",
+	"loop.stopped",
 	"task.created",
 	"task.definition_revised",
 	"task.transitioned",
@@ -223,6 +232,10 @@ export const EVENT_TRANSITION_ACTIONS = [
 	"approval_invalidated",
 	"handoff_created",
 	"exported",
+	// goal mode：预算变更、预算耗尽与续跑记账都推进 canonical revision（带 CAS）。
+	"budget_updated",
+	"budget_exhausted",
+	"continuation_requested",
 ] as const;
 
 export const EVENT_BINDING_REQUIRED_TYPES = [
@@ -308,6 +321,8 @@ export const EVENT_REF_REQUIRED_ACTIONS = [
 	"rewound",
 	"bound",
 	"spawned",
+	// loop 每次迭代提交必须带被提交内容的 ref，而不是把 prompt 原文写进事件。
+	"iteration_submitted",
 ] as const;
 
 export const EVENT_REF_REQUIRED_TYPES = [
@@ -348,6 +363,8 @@ export const EVENT_REASON_REQUIRED_ACTIONS = [
 	"expired",
 	"reconciliation_required",
 	"abort",
+	// 抑制自动续跑必须给出原因（空转、无工具调用、驱动缺失），不得静默跳过。
+	"continuation_suppressed",
 ] as const;
 
 export const EVENT_METADATA_REQUIRED_ACTIONS = [
@@ -371,6 +388,9 @@ export const EVENT_METADATA_REQUIRED_ACTIONS = [
 	"definition_revised",
 	"routed",
 	"assembled",
+	// 用量记账与 loop 迭代结算以 metadata digest 表达，不复制原始用量报告或输出正文。
+	"usage_accounted",
+	"iteration_settled",
 ] as const;
 
 export type RuntimeEventSubjectKind =

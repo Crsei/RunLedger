@@ -368,6 +368,8 @@ function expectedSubjectKind(type: RuntimeEventType): RuntimeEventSubjectKind {
 		case "session": return "session";
 		case "input": return "session";
 		case "goal": return "goal";
+		// loop 是 session 级的临时迭代驱动，不是独立 subject 家族。
+		case "loop": return "session";
 		case "task": return "task";
 		case "turn": return "turn";
 		case "model": return "turn";

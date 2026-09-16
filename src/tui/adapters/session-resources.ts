@@ -11,6 +11,7 @@ import type { TuiDomainPorts } from "../application/ports.ts";
 import type { ExtensionMutationReceiptOperation, ExtensionResourcePort, ExtensionResourceSnapshot, ExtensionResourceView, ExtensionKind, ExtensionTrust, ExtensionActivation, ExtensionReloadReceipt } from "../extensions/types.ts";
 import type { McpResourcePort, McpCatalogSnapshot, McpServerView, McpToolView, McpDiagnosticView } from "../mcp/types.ts";
 import type { PlanRenderQueryPort, PlanRenderView } from "../goal-plan/types.ts";
+import type { GoalView, TaskGoalQueryPort, TaskGoalSnapshot } from "../task-goal/types.ts";
 import type { AgentActivityCounts, AgentActivityQueryPort, AgentActivitySnapshot, AgentNodeRole, AgentNodeState, AgentNodeView } from "../agents/types.ts";
 import type { SecurityModeWorkflowPort, SecurityModeSnapshot } from "../security-mode/types.ts";
 import type { WorkspaceGitPort, WorkspaceGitSnapshot, WorkspaceGitHead } from "../workspace/types.ts";

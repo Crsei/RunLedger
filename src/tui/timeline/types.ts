@@ -38,7 +38,12 @@ export interface TimelineRowBase {
 }
 
 export type TimelineRow =
-	| (TimelineRowBase & { readonly kind: "user"; readonly text: SafeBoundedText })
+	| (TimelineRowBase & {
+			readonly kind: "user";
+			readonly text: SafeBoundedText;
+			/** owner 侧续跑/loop 注入的消息：同样在 transcript 里，但不作为用户输入呈现。 */
+			readonly origin?: "user" | "runtime";
+	  })
 	| (TimelineRowBase & {
 			readonly kind: "assistant";
 				readonly text: SafeBoundedText;

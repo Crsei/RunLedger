@@ -24,7 +24,7 @@ function streamSequence(responses: readonly AssistantMessage[]) {
 	};
 	return { stream, calls: () => calls };
 }
-const prompt = [{ role: "user" as const, content: [{ type: "text" as const, text: "continue work" }] }];
+const prompt = [{ role: "user" as const, origin: "user" as const, content: [{ type: "text" as const, text: "continue work" }] }];
 describe("bounded incomplete output recovery", () => {
 	it("runs after turn settlement and never replays executed or incomplete tool calls", async () => {
 		let executions = 0; let admissions = 0;

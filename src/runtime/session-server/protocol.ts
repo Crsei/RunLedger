@@ -20,6 +20,8 @@ export const SESSION_PROTOCOL_CAPABILITIES = [
 	"session.catalog",
 	"session.process",
 	"session.plan",
+	"session.goal",
+	"session.loop",
 	"session.compaction",
 	"session.trajectory",
 	"session.extensions",

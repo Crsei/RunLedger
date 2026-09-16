@@ -147,7 +147,7 @@ describe("Host model request dispatch", () => {
 			systemPrompt: "test",
 			models,
 			settings: { provider: "fixture", model: "model" },
-			replay: { messages: [{ role: "user", content: [{ type: "text", text: "work" }] }], config: {}, auditEntries: [], warnings: [] },
+			replay: { messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "work" }] }], config: {}, auditEntries: [], warnings: [] },
 			ledger: new MemoryLedger(),
 			tools: [],
 			modelRequestRouter: {
@@ -212,7 +212,7 @@ describe("Host model request dispatch", () => {
 			systemPrompt: "test",
 			models,
 			settings: { provider: "fixture", model: "model" },
-			replay: { messages: [{ role: "user", content: [{ type: "text", text: "work" }] }], config: {}, auditEntries: [], warnings: [] },
+			replay: { messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "work" }] }], config: {}, auditEntries: [], warnings: [] },
 			ledger: new MemoryLedger(),
 			tools: [],
 			modelRequestRouter: {

@@ -133,14 +133,14 @@ describe("harness hardening through HTTP and Session Owner", () => {
     if (address === null || typeof address === "string") throw new Error("missing listener");
     const model: Model<"openai-completions"> = { id: "context", name: "Context", provider: "fixture", api: "openai-completions", baseUrl: `http://127.0.0.1:${address.port}/v1`, reasoning: false, input: ["text"], contextWindow: 1600, maxTokens: 64, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
     const history: AgentMessage[] = Array.from({ length: 14 }, (_, index): AgentMessage[] => [
-      { role: "user", content: [{ type: "text", text: `task-${index}: ${"x".repeat(200)}` }] },
+      { role: "user", origin: "user", content: [{ type: "text", text: `task-${index}: ${"x".repeat(200)}` }] },
       { role: "assistant", stopReason: "stop", content: [{ type: "text", text: `done-${index}` }] },
     ]).flat();
     history.push(
-      { role: "user", content: [{ type: "text", text: "current task: inspect only" }] },
+      { role: "user", origin: "user", content: [{ type: "text", text: "current task: inspect only" }] },
       { role: "assistant", stopReason: "toolUse", content: ["a", "b"].map((id) => ({ type: "toolCall", id, name: "read", arguments: { path: id } })) },
       { role: "toolResult", content: ["a", "b"].map((id) => ({ type: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text: `result-${id}` }], isError: false })) },
-      { role: "user", content: [{ type: "text", text: "correction: never modify" }] },
+      { role: "user", origin: "user", content: [{ type: "text", text: "correction: never modify" }] },
     );
     const raw = await defaultConvertToLlm(history);
     const original = structuredClone(raw);

@@ -7,6 +7,10 @@ export function createDomainCommandRoutes(port: SessionCommandPort): Pick<Sessio
 		domain_query: async (request) => {
 			const multiAgent = port.domain?.multiAgent;
 			const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+			const loop = port.loop;
+			if (loop !== undefined && loop.operationManifest.some((entry) => entry.operation === operation && entry.access === "read")) {
+				return { ok: true, kind: "domain_query", result: await loop.query(operation, objectValue(request.body.payload) ?? {}, context(request.body)) };
+			}
 			if (multiAgent !== undefined && multiAgent.operationManifest.some((entry) => entry.operation === operation)) {
 				const validated = port.domainRouter.query(request.body);
 				if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") {
@@ -18,6 +22,13 @@ export function createDomainCommandRoutes(port: SessionCommandPort): Pick<Sessio
 		},
 		domain_command: async (request, meta) => {
 			const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+			const loop = port.loop;
+			if (loop !== undefined && loop.operationManifest.some((entry) => entry.operation === operation && entry.access === "mutate")) {
+				if (port.state() === "recovery_required") return recoveryBlocked(operation);
+				const validated = port.domainRouter.mutate(request.body, meta.isDriver);
+				if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") return success(validated);
+				return success(await loop.mutate(operation, objectValue(request.body.payload) ?? {}, mutationContext(request.body)));
+			}
 			const multiAgent = port.domain?.multiAgent;
 			if (multiAgent !== undefined && multiAgent.operationManifest.some((entry) => entry.operation === operation)) {
 				const validated = port.domainRouter.mutate(request.body, meta.isDriver);

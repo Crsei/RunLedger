@@ -18,6 +18,8 @@
 
 生产工具集由 [`productionSessionTools()`](../../src/runtime/session-runtime/domain.ts)与 Session extension composition 共同决定。新增工具文件但不在这里组合，不会让标准 CLI 自动获得该能力。
 
+`goal` 工具（[`goal-tools.ts`](../../src/runtime/session-runtime/goal-tools.ts)）由标准 Session domain 在 `goal.enabled` 打开时叠加到 base 工具表，声明 `workspace_write`/`session-goal-state` claim（与 plan 工件工具同款：capability 词汇表没有「会话状态写入」，而该 claim 正是 Plan Mode 只读 ceiling 判定 write 的依据）。它在 standard 会话**常驻**，非法状态调用由 goal reducer 以 typed error 拒绝，而不是「工具不存在」；`minimal`/`plan` 的冻结 allowlist 不含 `goal`。
+
 工具可见 schema 是**版本化**的：`tools.mode === "allowlist"` 的 Harness Profile（`minimal`、`plan`）把被投影工具的 name/description/parameters 摘要冻结在 [`frozen-manifests.ts`](../../src/runtime/harness-profiles/frozen-manifests.ts)，投影与 receipt 重放都按它 fail closed。因此任一被投影工具的描述或 schema 变化都必须**新增 profile version**，而不是改写既有版本的摘要；旧版本条目继续为已存在 Session 的重放服务。`standard` 是直通投影，工具表增长不需要新版本。
 
 ## ExecutionEnv

@@ -28,6 +28,8 @@ export * from "../model-routing/types.ts";
 export * from "../model-routing/schema.ts";
 export * from "../modes/plan/types.ts";
 export * from "../modes/plan/schema.ts";
+export * from "../modes/goal/types.ts";
+export * from "../modes/goal/schema.ts";
 export * from "../context/types.ts";
 export * from "../context/schema.ts";
 export * from "../context/compaction/types.ts";

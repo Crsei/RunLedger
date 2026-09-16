@@ -17,7 +17,7 @@ import type { TuiEvent } from "../../../src/tui/types.ts";
 const startedAt = "2026-08-06T00:00:00.000Z";
 
 function userMessage(text = "hi"): Parameters<TimelineEventProjector["project"]>[0] {
-	return { kind: "replay-message", index: 0, message: { role: "user", content: [{ type: "text", text }] } };
+	return { kind: "replay-message", index: 0, message: { role: "user", origin: "user", content: [{ type: "text", text }] } };
 }
 
 function assistantMessage(extra: object = {}): Parameters<TimelineEventProjector["project"]>[0] {

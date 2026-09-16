@@ -42,8 +42,8 @@ function messageEntry(header: LedgerHeader, message: AgentMessage): LedgerEntry 
 
 describe("session codec", () => {
 	it("applies a checkpoint projection and only the requested ledger tail", () => {
-		const first: AgentMessage = { role: "user", content: [{ type: "text", text: "before checkpoint" }] };
-		const second: AgentMessage = { role: "user", content: [{ type: "text", text: "tail" }] };
+		const first: AgentMessage = { role: "user", origin: "user", content: [{ type: "text", text: "before checkpoint" }] };
+		const second: AgentMessage = { role: "user", origin: "user", content: [{ type: "text", text: "tail" }] };
 		const seed = {
 			messages: [first],
 			config: { provider: "fixture" },
@@ -70,7 +70,7 @@ describe("session codec", () => {
     const manager = await SessionManager.create({ cwd, layout });
     const header = manager.ledger().header();
     const messages: AgentMessage[] = [
-      { role: "user", content: [{ type: "text", text: "inspect" }] },
+      { role: "user", origin: "user", content: [{ type: "text", text: "inspect" }] },
       {
         role: "assistant",
         content: [

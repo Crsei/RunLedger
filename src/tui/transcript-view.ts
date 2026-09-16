@@ -112,6 +112,8 @@ export function transcriptBlockLines(block: PresentationBlock, width = 80): read
 	if (block.kind === "status-line") return [block.segments.map((segment) => segment.text).join(" · ")];
 	if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)];
 	if (block.kind === "input") return [block.title, block.message, block.value];
+	// runtime-origin 的续跑/迭代轮以标记行呈现，不冒充用户输入。
+	if (block.kind === "text" && block.role === "runtime") return [`[runtime] ${block.content}`];
 	if (block.kind === "text" || block.kind === "markdown") return block.content.split("\n");
 	return [];
 }
@@ -281,7 +283,8 @@ export class TranscriptOverlayComponent implements Component {
     const lines = transcriptBlockLines(block, width).flatMap(line => wrapTranscriptLine(line, width));
     if (!this.theme) return lines;
     const color = block.kind === "markdown" ? (block.variant === "thinking" ? this.theme.thinkingText : this.theme.assistantMessage)
-      : block.kind === "text" && block.role === "user" ? this.theme.userMessage : this.theme.primary;
+      : block.kind === "text" && block.role === "user" ? this.theme.userMessage
+        : block.kind === "text" && block.role === "runtime" ? this.theme.thinkingText : this.theme.primary;
     return lines.map(wrapFgTruecolor(color));
   }
 

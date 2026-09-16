@@ -68,7 +68,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 
 	it("runs an ephemeral recap without mutating Agent state, ledger, events, or tools", async () => {
 		const ledger = new MemoryLedger();
-		const initialMessages = [{ role: "user" as const, content: [{ type: "text" as const, text: "ship the feature" }] }];
+		const initialMessages = [{ role: "user" as const, origin: "user" as const, content: [{ type: "text" as const, text: "ship the feature" }] }];
 		let capturedContext: Context | undefined;
 		let capturedOptions: SimpleStreamOptions | undefined;
 		const streamFn: StreamFn = (requestModel, context, options) => {
@@ -158,7 +158,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 				systemPrompt: "system at request start",
 				model: reasoningModel,
 				thinkingLevel: "low",
-				messages: [{ role: "user", content: [{ type: "text", text: "existing history" }] }],
+				messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "existing history" }] }],
 			},
 			streamFn,
 			convertToLlm: async (messages) => {
@@ -193,7 +193,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 			initialState: {
 				systemPrompt: "system",
 				model: mockModel,
-				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+				messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "history" }] }],
 			},
 			streamFn,
 		});
@@ -219,7 +219,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 			initialState: {
 				systemPrompt: "system",
 				model: mockModel,
-				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+				messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "history" }] }],
 			},
 			streamFn,
 		});
@@ -260,7 +260,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 			initialState: {
 				systemPrompt: "system",
 				model: mockModel,
-				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+				messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "history" }] }],
 			},
 			streamFn,
 		});
@@ -285,7 +285,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 			initialState: {
 				systemPrompt: "system",
 				model: mockModel,
-				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+				messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "history" }] }],
 			},
 			streamFn,
 		});
@@ -307,7 +307,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 			initialState: {
 				systemPrompt: "system",
 				model: mockModel,
-				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+				messages: [{ role: "user", origin: "user", content: [{ type: "text", text: "history" }] }],
 			},
 			streamFn,
 		});
@@ -533,7 +533,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
     const streamFn: StreamFn = (requestModel, context) => {
       calls.push(context.messages);
       if (calls.length === 1) {
-        agent.steer({ role: "user", content: [{ type: "text", text: "steer" }] });
+        agent.steer({ role: "user", origin: "user", content: [{ type: "text", text: "steer" }] });
       }
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {

@@ -3,6 +3,7 @@
 import type { RuntimeEventRangeRef } from "../protocol/events.ts";
 import type { RuntimeContentRef, RuntimeDigest, RuntimeStreamHead } from "../protocol/foundation.ts";
 import type { AgentId, GoalId, QueueItemId, SessionId, SnapshotId, TaskId, TurnId } from "../protocol/ids.ts";
+import type { GoalBudget, GoalStatus, GoalUsage } from "../modes/goal/types.ts";
 
 export type ProjectionCompleteness = "complete" | "partial";
 
@@ -26,7 +27,16 @@ export interface GoalProjection extends ProjectionMetadata {
 	readonly sessionId: SessionId;
 	readonly goalId: GoalId;
 	readonly revision: number;
-	readonly status: "proposed" | "active" | "blocked" | "completed" | "failed" | "cancelled";
+	/**
+	 * 与 Goal Mode canonical 状态共用同一状态集（`GoalStatus`），避免两套 goal 语义。
+	 * `inactive` 表示会话存在但未设置目标。
+	 */
+	readonly status: GoalStatus;
+	readonly objective?: string;
+	/** 直接复用 canonical 的预算与用量结构，避免投影与状态出现两套默认值与口径。 */
+	readonly budget?: GoalBudget;
+	readonly usage?: GoalUsage;
+	readonly continuations?: number;
 	readonly completionRef?: RuntimeContentRef;
 	readonly verificationRef?: RuntimeContentRef;
 }

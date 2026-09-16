@@ -13,6 +13,8 @@ import type { OwnerFence } from "../session-owner/types.ts";
 import type { SessionId } from "../protocol/ids.ts";
 import type { SessionEventPersistence } from "./event-persistence.ts";
 import type { SessionIdleRecapController } from "./idle-recap-controller.ts";
+import type { SessionGoalContinuationController } from "./goal-continuation-controller.ts";
+import type { SessionLoopController } from "./loop-controller.ts";
 import type { SessionDomainPort, SessionRuntimeOptions, SessionRuntimeState } from "./session-runtime.ts";
 
 export interface SessionLifecyclePort {
@@ -25,6 +27,8 @@ export interface SessionLifecyclePort {
 	readonly emit: (event: SessionControllerEvent) => void;
 	readonly persistence: SessionEventPersistence;
 	readonly idleRecap: SessionIdleRecapController;
+	readonly goalContinuation: SessionGoalContinuationController;
+	readonly loop: SessionLoopController;
 	readonly onDomainListenersDisposed: () => void;
 }
 
@@ -70,6 +74,8 @@ export class SessionLifecycleController {
 		if (this.state === "fenced" || this.state === "stopping") return;
 		this.state = "fenced";
 		this.port.idleRecap.invalidateIdleRecap();
+		this.port.goalContinuation.invalidate();
+		this.port.loop.dispose();
 		this.port.owner.selfStopFenced();
 		// P0-4:生产 onFenced 必须中断领域 Runtime(中断 in-flight turn),再关 server。
 		this.port.emit({ eventType: "runtime.fenced", payload: { sessionId: this.port.sessionId, generation: this.port.fence.generation } });
@@ -102,6 +108,8 @@ export class SessionLifecycleController {
 		try {
 			this.port.idleRecap.dispose();
 			this.port.idleRecap.clearIdleRecapStatus();
+			this.port.goalContinuation.dispose();
+			this.port.loop.dispose();
 			try {
 				this.port.domain?.controller.interrupt();
 			} catch {
@@ -129,6 +137,8 @@ export class SessionLifecycleController {
 		try {
 			this.port.idleRecap.dispose();
 			this.port.idleRecap.clearIdleRecapStatus();
+			this.port.goalContinuation.dispose();
+			this.port.loop.dispose();
 			try {
 				this.port.domain?.controller.interrupt();
 			} catch {

@@ -76,7 +76,7 @@ export type ToolDetailBlock = PresentationBlockMetadata & {
 };
 
 export type PresentationBlock = (
-  | { id?: string; kind: "text"; content: string; role?: "user" }
+  | { id?: string; kind: "text"; content: string; role?: "user" | "runtime" }
   | { id?: string; kind: "markdown"; content: string; streaming: boolean; variant?: "thinking" }
   | { id?: string; kind: "command"; command: string }
   | {

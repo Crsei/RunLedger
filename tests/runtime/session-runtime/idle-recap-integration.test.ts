@@ -22,7 +22,7 @@ function createFakeRecapDomain(): FakeRecapDomain {
 	const listeners = new Set<(event: AgentEvent) => void>();
 	const requests: EphemeralSessionTurnRequest[] = [];
 	const resolvers: Array<(reply: string | undefined) => void> = [];
-	const messages: readonly AgentMessage[] = [{ role: "user", content: [{ type: "text", text: "ship the feature" }] }];
+	const messages: readonly AgentMessage[] = [{ role: "user", origin: "user", content: [{ type: "text", text: "ship the feature" }] }];
 	let selection: RuntimeSelection = { provider: mockModel.provider, model: mockModel, thinkingLevel: "off" };
 	const controller = {
 		sessionId: "fake-session",

@@ -450,6 +450,7 @@ export class Agent {
       ...snapshotMessages,
       {
         role: "user",
+        origin: "runtime",
         content: [{
           type: "text",
           text: "This is an idle recap side request. Do not call tools or propose tool calls; reply with plain text only.",
@@ -457,6 +458,7 @@ export class Agent {
       },
       {
         role: "user",
+        origin: "runtime",
         content: [{ type: "text", text: input.promptText }],
       },
     ];
@@ -587,7 +589,7 @@ function classifyEphemeralProviderError(errorMessage: string | undefined): Ephem
 
 function normalizePrompts(input: string | UserAgentMessage | UserAgentMessage[]): UserAgentMessage[] {
   if (typeof input === "string") {
-    return [{ role: "user", content: [{ type: "text", text: input }] }];
+    return [{ role: "user", origin: "user", content: [{ type: "text", text: input }] }];
   }
   if (Array.isArray(input)) {
     return input;

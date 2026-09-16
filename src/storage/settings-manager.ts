@@ -48,6 +48,10 @@ export interface ProjectSettings {
 	autoTitle?: boolean;
 	/** 空闲 recap 的用户级开关与延迟；运行时会解析为完整有效快照。 */
 	recap?: RecapSettings;
+	/** Goal Mode 的开关、自动续跑与迭代上限；workspace 只能进一步收窄。 */
+	goal?: GoalSettings;
+	/** Loop 的开关与无显式 limit 时的迭代上限；workspace 只能进一步收窄。 */
+	loop?: LoopSettings;
 	/** 默认 provider ID,与 model 共同组成稳定模型身份。 */
 	provider?: string;
 	/** 默认模型 ID;CLI `--model` 优先级高于此字段 */
@@ -90,6 +94,57 @@ export const DEFAULT_RECAP_SETTINGS: EffectiveRecapSettings = Object.freeze({
 
 export const RECAP_MIN_IDLE_SECONDS = 1;
 export const RECAP_MAX_IDLE_SECONDS = 3600;
+
+/** Goal Mode settings：总闸、自动续跑与两个上限；workspace 层只能收窄。 */
+export interface GoalSettings {
+	readonly enabled?: boolean;
+	readonly autoContinuation?: boolean;
+	readonly continuationDelaySeconds?: number;
+	readonly maxContinuations?: number;
+}
+
+export interface EffectiveGoalSettings {
+	readonly enabled: boolean;
+	readonly autoContinuation: boolean;
+	readonly continuationDelaySeconds: number;
+	readonly maxContinuations: number;
+}
+
+export const DEFAULT_GOAL_SETTINGS: EffectiveGoalSettings = Object.freeze({
+	enabled: true,
+	autoContinuation: true,
+	// omp 在 TUI 里固定 800ms 即时续跑；owner 侧用可配置 idle 窗口，避免无脑连跑。
+	continuationDelaySeconds: 30,
+	maxContinuations: 20,
+});
+
+export const GOAL_MIN_CONTINUATION_DELAY_SECONDS = 1;
+export const GOAL_MAX_CONTINUATION_DELAY_SECONDS = 3600;
+export const GOAL_MIN_CONTINUATIONS = 0;
+export const GOAL_MAX_CONTINUATIONS = 1_000;
+
+/** Loop settings：总闸、条件谓词开关与无显式 limit 时的硬上限。 */
+export interface LoopSettings {
+	readonly enabled?: boolean;
+	readonly maxIterations?: number;
+	readonly conditionEnabled?: boolean;
+}
+
+export interface EffectiveLoopSettings {
+	readonly enabled: boolean;
+	readonly maxIterations: number;
+	readonly conditionEnabled: boolean;
+}
+
+export const DEFAULT_LOOP_SETTINGS: EffectiveLoopSettings = Object.freeze({
+	enabled: true,
+	// omp 无上限；RunLedger 必须给自主迭代一个硬边界。
+	maxIterations: 50,
+	conditionEnabled: false,
+});
+
+export const LOOP_MIN_ITERATIONS = 1;
+export const LOOP_MAX_ITERATIONS = 1_000;
 
 export type RecordingMode = "off" | "events" | "events_and_artifacts";
 
@@ -256,6 +311,33 @@ export function resolveRecapSettings(settings: { readonly recap?: unknown }): Ef
 	});
 }
 
+/** 将缺失、非法或越界的 goal 配置解析为安全的不可变运行时快照。 */
+export function resolveGoalSettings(settings: { readonly goal?: unknown }): EffectiveGoalSettings {
+	const goal = sanitizeGoalSettings(settings.goal);
+	const delay = goal?.continuationDelaySeconds ?? DEFAULT_GOAL_SETTINGS.continuationDelaySeconds;
+	const maxContinuations = goal?.maxContinuations ?? DEFAULT_GOAL_SETTINGS.maxContinuations;
+	return Object.freeze({
+		enabled: goal?.enabled ?? DEFAULT_GOAL_SETTINGS.enabled,
+		autoContinuation: goal?.autoContinuation ?? DEFAULT_GOAL_SETTINGS.autoContinuation,
+		continuationDelaySeconds: Math.min(
+			GOAL_MAX_CONTINUATION_DELAY_SECONDS,
+			Math.max(GOAL_MIN_CONTINUATION_DELAY_SECONDS, Math.trunc(delay)),
+		),
+		maxContinuations: Math.min(GOAL_MAX_CONTINUATIONS, Math.max(GOAL_MIN_CONTINUATIONS, Math.trunc(maxContinuations))),
+	});
+}
+
+/** 将缺失、非法或越界的 loop 配置解析为安全的不可变运行时快照。 */
+export function resolveLoopSettings(settings: { readonly loop?: unknown }): EffectiveLoopSettings {
+	const loop = sanitizeLoopSettings(settings.loop);
+	const maxIterations = loop?.maxIterations ?? DEFAULT_LOOP_SETTINGS.maxIterations;
+	return Object.freeze({
+		enabled: loop?.enabled ?? DEFAULT_LOOP_SETTINGS.enabled,
+		maxIterations: Math.min(LOOP_MAX_ITERATIONS, Math.max(LOOP_MIN_ITERATIONS, Math.trunc(maxIterations))),
+		conditionEnabled: loop?.conditionEnabled ?? DEFAULT_LOOP_SETTINGS.conditionEnabled,
+	});
+}
+
 function parseSettings(text: string, path: string, allowRecording: boolean): ProjectSettings {
 	let parsed: unknown;
 	try {
@@ -398,6 +480,10 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (typeof raw.autoTitle === "boolean") out.autoTitle = raw.autoTitle;
 	const recap = sanitizeRecapSettings(raw.recap);
 	if (recap !== undefined) out.recap = recap;
+	const goal = sanitizeGoalSettings(raw.goal);
+	if (goal !== undefined) out.goal = goal;
+	const loop = sanitizeLoopSettings(raw.loop);
+	if (loop !== undefined) out.loop = loop;
 	if (typeof raw.provider === "string" && raw.provider.length > 0) out.provider = raw.provider;
 	if (typeof raw.model === "string" && raw.model.length > 0) out.model = raw.model;
 	if (isThinkingLevel(raw.thinkingLevel)) out.thinkingLevel = raw.thinkingLevel;
@@ -443,6 +529,36 @@ function sanitizeRecapSettings(value: unknown): RecapSettings | undefined {
 	if (typeof raw.idleSeconds === "number" && Number.isFinite(raw.idleSeconds)) {
 		out.idleSeconds = raw.idleSeconds;
 	}
+	return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** 未知字段即整段丢弃：goal settings 不接受未声明键，避免拼错键静默生效。 */
+function sanitizeGoalSettings(value: unknown): GoalSettings | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const allowed = ["enabled", "autoContinuation", "continuationDelaySeconds", "maxContinuations"];
+	if (Object.keys(raw).some((key) => !allowed.includes(key))) return undefined;
+	const out: { enabled?: boolean; autoContinuation?: boolean; continuationDelaySeconds?: number; maxContinuations?: number } = {};
+	if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+	if (typeof raw.autoContinuation === "boolean") out.autoContinuation = raw.autoContinuation;
+	if (typeof raw.continuationDelaySeconds === "number" && Number.isFinite(raw.continuationDelaySeconds)) {
+		out.continuationDelaySeconds = raw.continuationDelaySeconds;
+	}
+	if (typeof raw.maxContinuations === "number" && Number.isFinite(raw.maxContinuations)) {
+		out.maxContinuations = raw.maxContinuations;
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeLoopSettings(value: unknown): LoopSettings | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const allowed = ["enabled", "maxIterations", "conditionEnabled"];
+	if (Object.keys(raw).some((key) => !allowed.includes(key))) return undefined;
+	const out: { enabled?: boolean; maxIterations?: number; conditionEnabled?: boolean } = {};
+	if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+	if (typeof raw.maxIterations === "number" && Number.isFinite(raw.maxIterations)) out.maxIterations = raw.maxIterations;
+	if (typeof raw.conditionEnabled === "boolean") out.conditionEnabled = raw.conditionEnabled;
 	return Object.keys(out).length > 0 ? out : undefined;
 }
 

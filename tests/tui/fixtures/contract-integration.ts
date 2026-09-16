@@ -259,7 +259,7 @@ export class ContractController implements InteractiveSessionControllerPort {
       type: "message_start",
       timestamp: now,
       role: "user",
-      message: { role: "user", content: [{ type: "text", text }] },
+      message: { role: "user", origin: "user", content: [{ type: "text", text }] },
     });
     this.emit({
       type: "message_start",

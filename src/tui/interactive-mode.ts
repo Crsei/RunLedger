@@ -103,6 +103,7 @@ import { ModelWorkflow } from "./interactive/model-workflow.ts";
 import { AuthWorkflow } from "./interactive/auth-workflow.ts";
 import { ExtensionWorkflow } from "./interactive/extension-workflow.ts";
 import { PlanWorkflow } from "./interactive/plan-workflow.ts";
+import { GoalLoopWorkflow } from "./interactive/goal-loop-workflow.ts";
 import { AgentWorkflow } from "./interactive/agent-workflow.ts";
 import { PromptDumpWorkflow } from "./interactive/prompt-dump-workflow.ts";
 import { ProcessWorkflow } from "./interactive/process-workflow.ts";
@@ -279,6 +280,15 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly authWorkflow: AuthWorkflow;
   private readonly extensionWorkflow: ExtensionWorkflow;
   private readonly planWorkflow: PlanWorkflow;
+  private readonly goalLoopWorkflow: GoalLoopWorkflow;
+  /**
+   * Goal 徽标的本地缓存。footer 是同步 pull，因此这里缓存最近一次
+   * `goal.inspect`；续跑发生在 owner 侧，缓存只在 agent 事件与 /goal 之后刷新。
+   */
+  private goalFooter: FooterSnapshot["goal"] | undefined;
+  private goalFooterRefresh: Promise<void> | undefined;
+  /** 最近一次已投递的 goal timeline 状态，避免同一状态重复渲染行。 */
+  private goalTimelineStatus: "pending" | "running" | "succeeded" | "failed" | "cancelled" | undefined;
   private readonly agentWorkflow: AgentWorkflow;
   private readonly promptDumpWorkflow: PromptDumpWorkflow;
   private readonly processWorkflow: ProcessWorkflow;
@@ -379,6 +389,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.authWorkflow = new AuthWorkflow(port);
     this.extensionWorkflow = new ExtensionWorkflow(port);
     this.planWorkflow = new PlanWorkflow(port);
+    this.goalLoopWorkflow = new GoalLoopWorkflow(port);
     this.agentWorkflow = new AgentWorkflow(port);
     this.promptDumpWorkflow = new PromptDumpWorkflow(port);
     this.processWorkflow = new ProcessWorkflow(port);
@@ -830,8 +841,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   async run(): Promise<InteractiveExitIntent> {
     if (this.quitting) return this.exitPromise;
     this.unsubscribe = this.controller
-      ? this.controller.subscribe((ev) => this.eventController.handleAgentEvent(ev))
-      : this.agent?.subscribe((ev) => this.eventController.handleAgentEvent(ev));
+      ? this.controller.subscribe((ev) => { this.eventController.handleAgentEvent(ev); if (ev.type === "agent_end") this.refreshGoalFooter(); })
+      : this.agent?.subscribe((ev) => { this.eventController.handleAgentEvent(ev); if (ev.type === "agent_end") this.refreshGoalFooter(); });
     this.unsubscribeSessionTitle = this.controller?.subscribeSessionTitleChanged?.((event) => this.eventController.handleSessionTitleChanged(event));
     this.unsubscribePermissionProfile = this.controller?.subscribePermissionProfile?.((profile) => { this.permissionProfile = profile; this.ui.requestRender(); });
     this.unsubscribeWarnings = this.controller?.subscribeWarnings?.((warning) => {
@@ -1242,6 +1253,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
       case "plan.inspect":
         void this.planWorkflow.openPlanWorkflow();
         return;
+      case "goal.inspect":
+        void this.goalLoopWorkflow.runGoal(arg);
+        return;
+      case "loop.control":
+        void this.goalLoopWorkflow.runLoop(arg);
+        return;
       case "agent.inspect":
         void this.agentWorkflow.openAgentsPanel();
         return;
@@ -1417,6 +1434,45 @@ export class InteractiveMode implements FooterSnapshotProvider {
   // ── FooterSnapshotProvider ──────────────────────────────────────────────
 
   /** FooterSnapshotProvider：一帧只组装一次不可变参数快照。 */
+  /**
+   * 刷新 goal 徽标缓存。owner 侧自动续跑不会触发客户端命令，因此这里在
+   * `agent_end` 之后拉一次 `goal.inspect`；查询失败只保持旧值，不影响渲染。
+   * 查询经 workflow 的 typed adapter，InteractiveMode 不直接调用 controller（B8）。
+   */
+  private refreshGoalFooter(): void {
+    if (this.goalFooterRefresh !== undefined) return;
+    this.goalFooterRefresh = (async () => {
+      try {
+        const observed = await this.goalLoopWorkflow.inspectGoalBadge();
+        if (observed === undefined) return;
+        this.goalFooter = observed.badge;
+        // canonical 状态变化才投递 timeline 行：状态来自 owner 的 goal.inspect，
+        // 客户端只做投影，不自己判定目标生命周期。
+        if (observed.lifecycle !== undefined && observed.lifecycle !== this.goalTimelineStatus && observed.goalId !== undefined) {
+          this.goalTimelineStatus = observed.lifecycle;
+          this.eventController.dispatchTimeline([{
+            type: "goal_lifecycle",
+            generation: this.store.getState().authorityGeneration,
+            correlationId: observed.goalId,
+            goalId: observed.goalId,
+            status: observed.lifecycle,
+          }]);
+        }
+        this.ui.requestRender();
+      } catch {
+        // 徽标是只读投影：查询失败不阻断 TUI，也不清空已知状态。
+      } finally {
+        this.goalFooterRefresh = undefined;
+      }
+    })();
+  }
+
+  /** `/goal` 与 `/loop` 工作流变更状态后由端口回调；下一次渲染即反映新状态。 */
+  noteGoalChanged(): void {
+    this.goalFooterRefresh = undefined;
+    this.refreshGoalFooter();
+  }
+
   getFooterSnapshot(): FooterSnapshot {
     const state = this.store.getState();
     const stopReason = this.getStopReason();
@@ -1439,6 +1495,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       ...(workspaceDisplayAbsolutePath === undefined ? {} : { workspaceDisplayAbsolutePath }),
       ...(gitBranchLabel === undefined ? {} : { gitBranchLabel }),
       ...(planProgress === undefined ? {} : { planProgress }),
+      ...(this.goalFooter === undefined ? {} : { goal: this.goalFooter }),
       ...(contextUsage === undefined ? {} : { contextUsage }),
       usage: this.getUsageSnapshot(),
       ...(threadLabel === undefined ? {} : { threadLabel }),

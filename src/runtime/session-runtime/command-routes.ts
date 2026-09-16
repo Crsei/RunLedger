@@ -6,6 +6,8 @@ import type { RecoveryBarrier, RecoveryDecision } from "./recovery-barrier.ts";
 import type { SessionDomainRouter } from "./domain-router.ts";
 import type { HumanWaitReason } from "./run-timing.ts";
 import type { SessionDomainPort, SessionRuntimeState } from "./session-runtime.ts";
+import type { SessionDomainResult } from "./domain-router.ts";
+import type { SessionProtocolOperationDescriptor } from "../session-server/protocol.ts";
 import { createConversationCommandRoutes } from "./command-routes/conversation.ts";
 import { createModelCommandRoutes } from "./command-routes/model.ts";
 import { createAccountCommandRoutes } from "./command-routes/account.ts";
@@ -49,6 +51,15 @@ export interface SessionCommandPort {
 	readonly recoveryAssess: () => { readonly ok: true; readonly barrierState: "closed" | "open"; readonly unresolvedRemaining: number };
 	readonly recoveryDecide: (decision: RecoveryDecision) => { readonly ok: boolean; readonly code?: string; readonly state: SessionRuntimeState };
 	readonly unresolvedAttemptsCount: () => number;
+	/** owner 侧 loop 驱动；缺省表示本 session 未启用 loop。 */
+	readonly loop?: SessionLoopOperationsPort;
+}
+
+/** loop 的协议面：与资源域同构，使既有 domain_query/domain_command 派发链可直接复用。 */
+export interface SessionLoopOperationsPort {
+	readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
+	query(operation: string, payload: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string }): Promise<SessionDomainResult>;
+	mutate(operation: string, payload: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number }): Promise<SessionDomainResult>;
 }
 
 export function isSessionCommandKind(kind: string): kind is SessionCommandKind {

@@ -178,7 +178,7 @@ export interface InteractiveSessionControllerPort {
   logout(providerId: string): Promise<void>;
   selectModel(model: Model<Api>): Promise<void>;
   setThinkingLevel(level: ModelThinkingLevel): Promise<ModelThinkingLevel>;
-  prompt(text: string, behavior?: "steer" | "followUp"): Promise<void>;
+  prompt(text: string, behavior?: "steer" | "followUp", origin?: "user" | "runtime"): Promise<void>;
 	/** Host/SessionRuntime-owned side-channel completion; never a normal turn. */
 	readonly runEphemeralTurn?: (request: EphemeralSessionTurnRequest) => Promise<string | undefined>;
 	/** Driver-only editor activity hint used to cancel/arm the owner-side timer. */
@@ -563,13 +563,13 @@ export class InteractiveSessionController {
     this.selectionChangePending = true;
   }
 
-  async prompt(text: string, behavior?: "steer" | "followUp"): Promise<void> {
+  async prompt(text: string, behavior?: "steer" | "followUp", origin: "user" | "runtime" = "user"): Promise<void> {
     const agent = this.agent;
     const model = this.selection.model;
     if (!agent || !model) throw new Error("No model selected. Use /provider or /model.");
     if (agent.inFlight) {
-      if (behavior === "followUp") agent.followUp(text);
-      else agent.steer(text);
+      if (behavior === "followUp") agent.followUp({ role: "user", origin, content: [{ type: "text", text }] });
+      else agent.steer({ role: "user", origin, content: [{ type: "text", text }] });
       return;
     }
     if (this.contextMutation !== undefined || this.selectionChangePending || this.promptPending) throw new Error("Wait for the pending request or model change to finish.");
@@ -582,9 +582,10 @@ export class InteractiveSessionController {
       admitted = true;
       const submitted = await this.runExtensionHook("UserPromptSubmit", { text });
       if (submitted?.blocked || submitted?.decision === "deny" || submitted?.decision === "aborted") throw new Error("UserPromptSubmit hook denied the prompt");
-	      const acceptedInput = promptText(submitted?.finalInput, text);
-	      this.onAcceptedUserPrompt?.(acceptedInput);
-	      await agent.prompt(acceptedInput);
+      const acceptedInput = promptText(submitted?.finalInput, text);
+      // runtime-origin 的续跑/迭代轮不是用户输入：不得触发自动标题或首个用户输入追踪。
+      if (origin === "user") this.onAcceptedUserPrompt?.(acceptedInput);
+      await agent.prompt(origin === "user" ? acceptedInput : { role: "user", origin, content: [{ type: "text", text: acceptedInput }] });
     } catch (error) {
       if (admitted) await this.extensionTurnAbort?.().catch(() => undefined);
       throw error;

@@ -39,15 +39,21 @@ import type { LateBoundHumanInputWaitPort } from "./approval-reverse-request.ts"
 import type { SessionProductionToolSource } from "../agents/capability-subset.ts";
 import type { ChildModelRuntimeFactoryPort } from "../agents/child-model-runtime.ts";
 import type { MultiAgentDomainPort } from "../agents/domain.ts";
-import { DEFAULT_RECAP_SETTINGS, type EffectiveRecapSettings } from "../../storage/settings-manager.ts";
+import { DEFAULT_RECAP_SETTINGS, DEFAULT_GOAL_SETTINGS, DEFAULT_LOOP_SETTINGS, type EffectiveGoalSettings, type EffectiveLoopSettings, type EffectiveRecapSettings } from "../../storage/settings-manager.ts";
 import { SessionEventPersistence } from "./event-persistence.ts";
 import { SessionIdleRecapController } from "./idle-recap-controller.ts";
+import { SessionGoalContinuationController, type SessionGoalRuntimePort } from "./goal-continuation-controller.ts";
+import { SessionLoopController, type LoopAuditPayload } from "./loop-controller.ts";
+import type { LoopConditionExecution } from "../loop/condition.ts";
 import { SessionAttemptController } from "./attempt-controller.ts";
 import { SessionLifecycleController } from "./lifecycle-controller.ts";
 import { SessionCommandHandler } from "./command-handler.ts";
 import { SessionQueryHandler } from "./query-handler.ts";
 
 export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "ready_with_uncertainty" | "stopping" | "fenced";
+
+/** 条件谓词的强制超时：坏条件不得挂住 owner。 */
+const LOOP_CONDITION_TIMEOUT_MS = 60_000;
 
 /**
  * R7:领域执行端口。由 composition 注入真实 InteractiveSessionController
@@ -66,6 +72,10 @@ export interface SessionDomainPort {
 	readonly protocolCapabilities?: readonly SessionProtocolCapability[];
 	readonly securityInspection?: () => Record<string, unknown>;
 	readonly planInspection?: () => SessionPlanInspection;
+	/** owner 侧 goal 记账/续跑 authority；缺省表示本 session 未启用 goal。 */
+	readonly goalRuntime?: SessionGoalRuntimePort;
+	/** 受治理的 loop 条件执行器；缺省表示本 session 未启用 loop condition。 */
+	readonly loopConditionExecutor?: (command: string, signal: AbortSignal) => Promise<LoopConditionExecution>;
 	/** `/dump` 只读投影：assembler 之后的 provider 面系统提示词与工具。 */
 	readonly promptInspection?: () => PromptInspection;
 	readonly requestDump?: (view: RequestDumpView) => RequestDumpResult;
@@ -150,6 +160,10 @@ export interface SessionRuntimeOptions {
 	readonly lifecycleCleanup?: (reason: "paused" | "detached" | "error" | "fenced") => Promise<void>;
 	/** Canonical user recap settings; absent in low-level runtime fixtures uses defaults. */
 	readonly recapSettings?: EffectiveRecapSettings;
+	/** Canonical goal settings; absent uses defaults. */
+	readonly goalSettings?: EffectiveGoalSettings;
+	/** Canonical loop settings; absent uses defaults. */
+	readonly loopSettings?: EffectiveLoopSettings;
 }
 
 export class SessionRuntime implements SessionController {
@@ -170,6 +184,8 @@ export class SessionRuntime implements SessionController {
 	private readonly listeners = new Set<(event: SessionControllerEvent) => void>();
 	private readonly persistence: SessionEventPersistence;
 	private readonly idleRecap: SessionIdleRecapController;
+	private readonly goalContinuation: SessionGoalContinuationController;
+	private readonly loop: SessionLoopController;
 	private readonly attempts: SessionAttemptController;
 	private readonly lifecycle: SessionLifecycleController;
 	private readonly commandHandler: SessionCommandHandler;
@@ -213,6 +229,35 @@ export class SessionRuntime implements SessionController {
 			emit: (event) => this.emit(event),
 			settings: options.recapSettings ?? DEFAULT_RECAP_SETTINGS,
 		});
+		const goalSettings = options.goalSettings ?? DEFAULT_GOAL_SETTINGS;
+		const loopSettings = options.loopSettings ?? DEFAULT_LOOP_SETTINGS;
+		this.goalContinuation = new SessionGoalContinuationController({
+			domain: this.domain,
+			goal: options.domain?.goalRuntime,
+			sessionId: options.sessionId,
+			fence: options.fence,
+			barrier: this.barrier,
+			server: this.server,
+			state: () => this.lifecycle.currentState,
+			emit: (event) => this.emit(event),
+			settings: goalSettings,
+			// 只有 loop 真的在跑时才让位；settings.loop.enabled 是能力开关，不是运行状态。
+			loopRunning: () => this.loop.inspect().running,
+		});
+		this.loop = new SessionLoopController({
+			domain: this.domain,
+			sessionId: options.sessionId,
+			fence: options.fence,
+			barrier: this.barrier,
+			server: this.server,
+			state: () => this.lifecycle.currentState,
+			emit: (event) => this.emit(event),
+			appendAudit: (eventType, payload) => this.appendLoopAudit(eventType, payload),
+			compact: () => this.runCompaction(),
+			...(options.domain?.loopConditionExecutor === undefined ? {} : { executeCondition: options.domain.loopConditionExecutor }),
+			conditionTimeoutMs: LOOP_CONDITION_TIMEOUT_MS,
+			settings: loopSettings,
+		});
 		this.lifecycle = new SessionLifecycleController(options.crashTakeover ? "recovery_required" : "ready", {
 			owner: this.owner,
 			server: this.server,
@@ -223,6 +268,8 @@ export class SessionRuntime implements SessionController {
 			emit: (event) => this.emit(event),
 			persistence: this.persistence,
 			idleRecap: this.idleRecap,
+			goalContinuation: this.goalContinuation,
+			loop: this.loop,
 			onDomainListenersDisposed: () => {
 				this.trajectoryListener?.();
 				this.domainListener?.();
@@ -255,7 +302,8 @@ export class SessionRuntime implements SessionController {
 			emit: (event) => this.emit(event),
 			withHumanInputWait: (waitId, reason, operation) => this.persistence.withHumanInputWait(waitId, reason, operation),
 			invalidateIdleRecap: () => this.idleRecap.invalidateIdleRecap(),
-			handleEditorActivity: (empty) => this.idleRecap.handleEditorActivity(empty),
+			handleEditorActivity: (empty) => { this.idleRecap.handleEditorActivity(empty); this.goalContinuation.handleEditorActivity(empty); },
+			loop: this.loop,
 			recoveryAssess: () => this.attempts.recoveryAssess(),
 			recoveryDecide: (decision) => this.attempts.recoveryDecide(decision),
 			unresolvedAttemptsCount: () => this.attempts.unresolvedAttemptsCount(),
@@ -269,6 +317,7 @@ export class SessionRuntime implements SessionController {
 			state: () => this.lifecycle.currentState,
 			unresolvedAttemptsCount: () => this.attempts.unresolvedAttemptsCount(),
 			domainSnapshot: () => this.domainSnapshot(),
+			loop: this.loop,
 		});
 		// P0-2:gateway 在构造时绑定(工具执行必然发生在构造之后)。
 		options.attemptPortRef?.bind(this);
@@ -282,6 +331,8 @@ export class SessionRuntime implements SessionController {
 				this.persistence.acceptDomainEvent(event);
 				this.domain?.trajectory?.invalidate();
 				this.idleRecap.handleDomainAgentEvent(event);
+				this.goalContinuation.handleDomainAgentEvent(event);
+				this.loop.handleDomainAgentEvent(event);
 				});
 			this.domainCompactionListener = this.domain.subscribeCompaction?.((event) => this.emit(event));
 			this.domainTitleListener = this.domain.subscribeTitleChanged?.((event) => {
@@ -382,6 +433,7 @@ export class SessionRuntime implements SessionController {
 		const processManifest = this.domain?.process?.operationManifest ?? [];
 		const resourceManifest = this.domain?.resources?.operationManifest ?? [];
 		const multiAgentManifest = this.domain?.multiAgent?.operationManifest ?? [];
+		const loopManifest = this.loop.operationManifest;
 		return freezeSessionProtocolManifest({
 			protocolCapabilities: [
 				...SESSION_CORE_PROTOCOL_MANIFEST.protocolCapabilities,
@@ -389,10 +441,38 @@ export class SessionRuntime implements SessionController {
 				...(processManifest.length === 0 ? [] : ["session.process" as const]),
 				...resourceManifest.map((entry) => entry.capability),
 				...(multiAgentManifest.length === 0 ? [] : ["session.multi-agent" as const]),
+				...loopManifest.map((entry) => entry.capability),
 				...(this.domain?.protocolCapabilities ?? []),
 			],
-			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest, ...processManifest, ...resourceManifest],
+			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest, ...processManifest, ...resourceManifest, ...loopManifest],
 		});
+	}
+
+	/**
+	 * loop 审计事件：loop 状态本身是 ephemeral（不进 canonical reducer），但每次
+	 * 迭代必须落 owner-fenced durable event，否则自主迭代不可审计（D3/D15）。
+	 */
+	private appendLoopAudit(eventType: string, payload: LoopAuditPayload): void {
+		try {
+			const tail = this.store.latestEventHead(this.sessionId);
+			this.store.appendEvent(this.fence, {
+				eventId: `event_loop_${this.sessionId.slice(-12)}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+				ownerGeneration: this.fence.generation,
+				eventType,
+				payloadJson: JSON.stringify(payload),
+				createdAtMs: Date.now(),
+				expectedPreviousEventHash: tail.hash,
+			});
+		} catch {
+			// 审计写入失败不阻断迭代；owner fence 失效由 heartbeat/写失败自停。
+		}
+	}
+
+	/** `loop.mode = compact`：走既有 compaction domain 的独占路径，不自行压缩上下文。 */
+	private async runCompaction(): Promise<void> {
+		const resources = this.domain?.resources;
+		if (resources?.mutate === undefined) return;
+		await resources.mutate("compact.run", {}, { correlationId: `loop-compact-${Date.now().toString(36)}`, effectId: "loop-compact", expectedRevision: this.store.catalogRevision() });
 	}
 
 	public snapshot(): SessionSnapshot {
@@ -449,6 +529,8 @@ export class SessionRuntime implements SessionController {
 
 	public handleDriverStateChange(): void {
 		this.idleRecap.handleDriverStateChange();
+		this.goalContinuation.handleDriverStateChange();
+		this.loop.handleDriverStateChange();
 	}
 
 	public isMutatingKind(kind: string): boolean {

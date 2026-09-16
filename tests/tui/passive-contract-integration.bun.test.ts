@@ -48,7 +48,7 @@ function chatText(mode: InteractiveMode): string {
 
 function seededReplayController(): ContractController {
   const messages: AgentMessage[] = [
-    { role: "user", content: [{ type: "text", text: "historical user text" }] },
+    { role: "user", origin: "user", content: [{ type: "text", text: "historical user text" }] },
     contractAssistantMessage({ content: [{ type: "text", text: "historical assistant text" }] }),
     {
       role: "toolResult",

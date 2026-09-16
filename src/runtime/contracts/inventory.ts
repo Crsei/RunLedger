@@ -58,7 +58,11 @@ function passivePolicy(
 /** 每个 passive DTO 的保存分类；行为实现不得据此扩大保存范围或执行授权。 */
 export const PASSIVE_PERSISTENCE_POLICIES = [
 	passivePolicy("SessionProjection", "reconstructible_passive", "rebuildable_from_source_head", "metadata_only"),
-	passivePolicy("GoalProjection", "reconstructible_passive", "rebuildable_from_source_head", "content_ref_only"),
+	// goal mode 的 objective/usage 是内联标量（非内容引用）；预算与用量必须可重建，
+	// 因此 forbiddenFields 显式禁止把原始 transcript 或凭据带进投影。
+	passivePolicy("GoalProjection", "reconstructible_passive", "rebuildable_from_source_head", "metadata_only", [
+		"absolutePath", "token", "secret", "rawContent", "credential", "usageReport",
+	]),
 	passivePolicy("TaskProjection", "reconstructible_passive", "rebuildable_from_source_head", "content_ref_only"),
 	passivePolicy("QueueProjection", "reconstructible_passive", "rebuildable_from_source_head", "content_ref_only"),
 	passivePolicy("AgentGraphProjection", "reconstructible_passive", "rebuildable_from_source_head", "content_ref_only"),
@@ -362,6 +366,34 @@ export const CONTRACT_INVENTORY = [
 			"tests/runtime-contracts/consumers/plan-context-memory.consumer.ts",
 		],
 		persistence: ["canonical_durable", "external_authority_ref", "reconstructible_passive"],
+		gaps: [],
+	},
+	{
+		id: "goal-mode",
+		owner: "development-doc/plan/17-omp-loop-goal-mode-adaptation-plan.md",
+		modules: ["src/runtime/modes/goal/types.ts", "src/runtime/modes/goal/schema.ts"],
+		types: ["GoalStatus", "GoalAccountingCompleteness", "GoalUsage", "GoalBudget", "GoalModeState"],
+		schemas: ["GoalUsageSchema", "GoalBudgetSchema", "GoalCompletionRequestSchema", "GoalModeStateSchema"],
+		events: [
+			"goal.transitioned", "goal.budget_updated", "goal.budget_exhausted",
+			"goal.usage_accounted", "goal.continuation_requested", "goal.continuation_suppressed",
+		],
+		ports: [],
+		fixtures: ["tests/runtime-contracts/goal-mode/contract-consumer.test.ts"],
+		persistence: ["canonical_durable", "reconstructible_passive"],
+		gaps: [],
+	},
+	{
+		id: "loop",
+		// loop 不进入 canonical reducer：它是用户发起的批处理节奏，重启后不得自动续跑。
+		owner: "development-doc/plan/17-omp-loop-goal-mode-adaptation-plan.md",
+		modules: ["src/runtime/loop/limit.ts", "src/runtime/loop/condition.ts"],
+		types: ["LoopLimit", "LoopLimitUnit", "LoopCondition"],
+		schemas: [],
+		events: ["loop.started", "loop.iteration_submitted", "loop.iteration_settled", "loop.stopped"],
+		ports: [],
+		fixtures: ["tests/runtime/loop/limit.test.ts"],
+		persistence: ["ephemeral"],
 		gaps: [],
 	},
 	{

@@ -91,7 +91,8 @@ export function rowToBlocks(row: TimelineRow, options: TimelineToBlocksOptions =
 	const baseId = `timeline-${row.id}`;
 	switch (row.kind) {
 		case "user":
-			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", role: "user", content: row.text.text }];
+			// runtime-origin 行不是用户输入：用独立 role 让 transcript 折叠呈现。
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", role: row.origin === "runtime" ? "runtime" : "user", content: row.text.text }];
 		case "assistant": {
 			const blocks: PresentationBlock[] = [];
 			if (options.hideThinking !== true && row.thinking !== undefined && row.thinking.text.length > 0) {

@@ -12,6 +12,7 @@ import type { SessionDomainRouter } from "./domain-router.ts";
 import type { SessionId } from "../protocol/ids.ts";
 import { safeJson, objectValue } from "./command-values.ts";
 import type { SessionDomainPort, SessionRuntimeState } from "./session-runtime.ts";
+import type { SessionLoopOperationsPort } from "./command-routes.ts";
 
 export interface SessionQueryPort {
 	readonly store: SessionStore;
@@ -22,6 +23,8 @@ export interface SessionQueryPort {
 	readonly state: () => SessionRuntimeState;
 	readonly unresolvedAttemptsCount: () => number;
 	readonly domainSnapshot: () => Record<string, unknown>;
+	/** owner 侧 loop 驱动；缺省表示本 session 未启用 loop。 */
+	readonly loop?: SessionLoopOperationsPort;
 }
 
 export class SessionQueryHandler {
@@ -35,6 +38,13 @@ export class SessionQueryHandler {
 		switch (request.kind) {
 			case "domain_query": {
 					const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+					const loop = this.port.loop;
+					if (loop !== undefined && loop.operationManifest.some((entry) => entry.operation === operation && entry.access === "read")) {
+						return loop.query(operation, objectValue(request.body.payload) ?? {}, {
+							correlationId: String(request.body.correlationId),
+							effectId: String(request.body.effectId),
+						});
+					}
 					const trajectory = this.port.domain?.trajectory;
 					if (trajectory?.operationManifest.some((entry) => entry.operation === operation)) {
 						const validated = this.port.domainRouter.query(request.body);

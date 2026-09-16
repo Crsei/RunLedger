@@ -119,7 +119,7 @@ export class TimelineEventProjector {
 	private projectReplayMessage(message: AgentMessage, index: number): TimelineEvent[] {
 		if (message.role === "user") {
 			const text = message.content.map((content) => content.text).join("");
-			const row = this.messageRow("user", index, { text, status: "succeeded", streaming: false });
+			const row = this.messageRow("user", index, { text, status: "succeeded", streaming: false, origin: message.origin });
 			return [
 				{ type: "message_start", generation: 0, correlationId: row.id, row },
 				{ type: "message_end", generation: 0, correlationId: row.id, status: "succeeded" },
@@ -206,6 +206,8 @@ export class TimelineEventProjector {
 					streaming: event.role === "assistant",
 					thinking,
 					usageDetails,
+					// runtime 注入的续跑轮与用户输入共用 message_start，靠 origin 区分呈现。
+					...(event.role === "user" && event.message?.role === "user" ? { origin: event.message.origin } : {}),
 				});
 				// user 行立即完成（事件流不为 user 消息发 message_end）
 				if (event.role === "user") {
@@ -300,6 +302,7 @@ export class TimelineEventProjector {
 		streaming: boolean;
 		thinking?: string;
 		usageDetails?: TimelineAssistantUsage;
+		origin?: "user" | "runtime";
 	}): TimelineRow {
 		const base = {
 			id: `${role}:${index}`,
@@ -319,7 +322,7 @@ export class TimelineEventProjector {
 				...(options.usageDetails === undefined ? {} : { usageDetails: options.usageDetails }),
 			};
 		}
-		return { ...base, kind: "user" as const };
+		return { ...base, kind: "user" as const, ...(options.origin === undefined ? {} : { origin: options.origin }) };
 	}
 
 	private toolRow(toolCallId: string, toolName: string, presentation: SafeToolPresentation, status: TimelineStatus): TimelineRow {

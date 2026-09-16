@@ -25,6 +25,13 @@ export interface FooterSnapshot {
 	readonly workspaceDisplayAbsolutePath?: string;
 	readonly gitBranchLabel?: string;
 	readonly planProgress?: { readonly completed: number; readonly total: number };
+	/** Goal Mode 徽标：status + 已观测用量下界；完整度 partial 时必须标注为下界。 */
+	readonly goal?: {
+		readonly status: string;
+		readonly tokensUsed: number;
+		readonly accountingCompleteness: "complete" | "partial";
+		readonly continuations: number;
+	};
 	readonly contextUsage?: { readonly totalTokens?: number; readonly contextWindow?: number };
 	readonly usage?: UsageSnapshot;
 	readonly threadLabel?: string;
@@ -216,6 +223,7 @@ function builtinFooterFields(): readonly FooterFieldDefinition[] {
 		field("identity.branch", "identity", 30, "branch", (snapshot) => snapshot.gitBranchLabel, 50),
 		field("identity.model", "identity", 40, "model", modelText),
 		field("identity.plan", "identity", 50, "progress", planText, 40),
+		field("identity.goal", "identity", 55, "progress", goalText, 45),
 		field("identity.context-used", "identity", 60, "usage", legacyContextUsedText, 20),
 		field("identity.context-limit", "identity", 70, "limit", legacyContextLimitText, 30),
 		field("identity.thread", "identity", 80, "thread", (snapshot) => snapshot.threadLabel),
@@ -280,6 +288,15 @@ function statusText(snapshot: FooterSnapshot): string | undefined {
 
 function modelText(snapshot: FooterSnapshot): string {
 	return `${snapshot.providerId === undefined ? "" : `${snapshot.providerId}/`}${snapshot.modelId}${snapshot.thinkingLevel === undefined ? "" : ` · think:${snapshot.thinkingLevel}`}`;
+}
+
+function goalText(snapshot: FooterSnapshot): string | undefined {
+	const goal = snapshot.goal;
+	if (goal === undefined || goal.status === "inactive") return undefined;
+	// 下界语义必须显式，避免把 partial 用量当成精确值（D6）。
+	const bound = goal.accountingCompleteness === "partial" ? "≥" : "";
+	const continuations = goal.continuations > 0 ? ` ·+${goal.continuations}` : "";
+	return `Goal: ${goal.status} ${bound}${goal.tokensUsed}${continuations}`;
 }
 
 function planText(snapshot: FooterSnapshot): string | undefined {

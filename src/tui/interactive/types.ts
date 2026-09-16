@@ -103,6 +103,8 @@ export interface InteractiveModePorts {
 	readonly sessionPort?: unknown;
 
 	showNotice(text: string, kind?: "note" | "error"): void;
+	/** goal/loop 状态变更后通知 footer 徽标刷新；缺省时徽标保持旧值。 */
+	noteGoalChanged?(): void;
 	showOverlayModal(component: Component, options?: OverlayOptions, kind?: Exclude<TuiOverlayState["state"], "closed">): void;
 	/** Session 权限页;调用方在 `onCancel`/`onUnavailable` 时恢复被挂起的输入。 */
 	readonly openPermissions?: (callbacks?: PermissionsOpenCallbacks) => void;

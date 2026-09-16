@@ -1,6 +1,14 @@
 import { defaultConvertToLlm } from "../agent-loop/context-conversion.ts";
 import { TrajectoryService } from "../trajectory/service.ts";
 import { SessionPlanDomain } from "./plan-domain.ts";
+import { SessionGoalDomain } from "./goal-domain.ts";
+import { createSessionGoalTools } from "./goal-tools.ts";
+import { buildGoalFragment } from "../modes/goal/prompt.ts";
+import type { LoopConditionExecution } from "../loop/condition.ts";
+
+/** 条件谓词的强制超时:坏条件不得挂住 owner。 */
+const LOOP_CONDITION_TIMEOUT_MS = 60_000;
+import { resolveGoalSettings, resolveLoopSettings, type EffectiveGoalSettings, type EffectiveLoopSettings } from "../../storage/settings-manager.ts";
 import { buildStandardExecutionPrompt } from "./standard-system-prompt.ts";
 import { assertAssembledPromptBase } from "../harness-profiles/composition.ts";
 import { createSessionPlanTools } from "./plan-tools.ts";
@@ -27,6 +35,7 @@ import { gatedExecutionEnv, type LateBoundAttemptPort } from "./attempt-gateway.
 import { replaySession } from "../../storage/session-codec.ts";
 import type { ExecutionEnv } from "../execution-env.ts";
 import { createStdlibTools, type StdlibToolsOptions } from "../tools/index.ts";
+import { readTodoPhases, renderTodoPhases } from "../tools/todo.ts";
 import { InteractiveSessionController, type InteractiveSessionControllerOptions, type ModelRequestRouter, type RuntimeSelectionOverrides, type SessionTitleChangedEvent } from "../interactive-session-controller.ts";
 import type { AgentTool } from "../types.ts";
 import type { Models } from "../../models.ts";
@@ -219,6 +228,19 @@ export async function assembleSessionDomain(
 	});
 	const executionEnv = planReadonly ? planReadOnlyExecutionEnv(governedExecutionEnv) : governedExecutionEnv;
 	const planTools = createSessionPlanTools(planDomain);
+	// goal 只在 standard 组合里常驻（D4）：minimal/plan 是冻结 allowlist，既没有
+	// goal 工具，也不该出现 goal.inspect / session.goal，否则能力清单与工具集不一致。
+	const goalEnabled = resolveGoalSettings(options.settings).enabled && harnessProfile.descriptor.tools.mode === "standard";
+	const goalSettings: EffectiveGoalSettings = { ...resolveGoalSettings(options.settings), enabled: goalEnabled };
+	const loopSettings: EffectiveLoopSettings = resolveLoopSettings(options.settings);
+	const goalDomain = new SessionGoalDomain({
+		store, fence,
+		workspaceId: catalog.workspaceId,
+		repositoryId: catalog.repositoryId as SessionPlanInspection["repositoryId"],
+		policyCeilingDigest: security.snapshot.policyDigest,
+		attemptPort: () => attemptPort.get(),
+	});
+	const goalTools = createSessionGoalTools(goalDomain);
 	const lspOptions: LspToolOptions | undefined = harnessProfile.descriptor.tools.mode === "standard"
 		? {
 			spawn: createGovernedLspSpawner(process.toolClient()),
@@ -227,7 +249,11 @@ export async function assembleSessionDomain(
 			linterFactories: createGovernedLinterFactories(process.toolClient(), executionEnv.fs),
 		}
 		: undefined;
-	const baseTools = [...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions), ...planTools.tools];
+	const baseTools = [
+		...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions),
+		...planTools.tools,
+		...(goalSettings.enabled ? goalTools.tools : []),
+	];
 	let extensions: SessionExtensionComposition | undefined;
 	if (Object.values(harnessProfile.descriptor.extensions).some(Boolean)) {
 		extensions = await createProductionSessionExtensionComposition({
@@ -286,6 +312,28 @@ export async function assembleSessionDomain(
 	const titleListeners = new Set<(event: SessionTitleChangedEvent) => void>();
 	let titleLifecycle: SessionTitleLifecycle | undefined;
 	let compaction: SessionCompactionDomain;
+	// todo 快照必须来自持久化状态（P0.5），读取会重放 ledger，因此缓存并在 todo
+	// 工具执行后失效；goal 未激活时不读。
+	let todoSnapshot: string | undefined;
+	let todoSnapshotPending: Promise<void> | undefined;
+	const refreshTodoSnapshot = (): void => {
+		if (todoSnapshotPending !== undefined) return;
+		todoSnapshotPending = readTodoPhases(ledger)
+			.then((phases) => {
+				const rendered = renderTodoPhases(phases);
+				todoSnapshot = rendered.length === 0 ? undefined : rendered;
+			})
+			.catch(() => {
+				todoSnapshot = undefined;
+			})
+			.finally(() => {
+				todoSnapshotPending = undefined;
+			});
+	};
+	await readTodoPhases(ledger).then((phases) => {
+		const rendered = renderTodoPhases(phases);
+		todoSnapshot = rendered.length === 0 ? undefined : rendered;
+	}).catch(() => undefined);
 	const withContextSources = (input: ModelContextAssemblyInput): ModelContextAssemblyInput => {
 		const inspection = planDomain.inspect();
 		const planContent = typeof inspection.content === "string" ? inspection.content : undefined;
@@ -295,6 +343,11 @@ export async function assembleSessionDomain(
 			...(planContent === undefined ? {} : { content: planContent }),
 			...(convergenceReminder === 0 ? {} : { convergenceReminder }),
 		});
+		const goalFragment = buildGoalFragment({
+			state: goalDomain.inspect().state,
+			...(todoSnapshot === undefined ? {} : { todoSnapshot }),
+			...(goalDomain.isContinuationTurn() ? { continuation: true } : {}),
+		});
 		return {
 			...input,
 			sources: [
@@ -302,6 +355,11 @@ export async function assembleSessionDomain(
 					fragmentId: fragment.key, key: fragment.key,
 					layer: "mode" as const, trust: "trusted" as const, taint: "none" as const, priority: "required" as const,
 					content: fragment.text,
+				}]),
+				...(goalFragment === undefined ? [] : [{
+					fragmentId: goalFragment.key, key: goalFragment.key,
+					layer: "mode" as const, trust: "trusted" as const, taint: "none" as const, priority: "required" as const,
+					content: goalFragment.text,
 				}]),
 				...(harnessProfile.descriptor.prompt.mode !== "assembled" ? [] : [{
 					fragmentId: "session-effective-permissions", key: "session-effective-permissions",
@@ -385,6 +443,8 @@ export async function assembleSessionDomain(
 	const resources = composeSessionResourceDomains([
 		...(extensions === undefined ? [] : [extensions.resources]),
 		securitySettings, compaction, planDomain,
+		// goal 与 plan 同属 session-owned canonical 状态域；goal 关闭时不注册。
+		...(goalSettings.enabled ? [goalDomain] : []),
 	]);
 	const childRuntime = !harnessProfile.descriptor.multiAgent
 		? undefined
@@ -467,6 +527,12 @@ export async function assembleSessionDomain(
 	const removeExtensionLifecycle = extensions?.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
+	// todo 快照失效：只认实际发生的工具执行，不在每轮无脑重放 ledger。
+	const removeTodoSnapshotInvalidation = goalSettings.enabled
+		? controller.subscribe((event) => {
+			if (event.type === "tool_execution_end" && event.toolName === "todo") refreshTodoSnapshot();
+		})
+		: undefined;
 	const planInspection = () => planDomain.inspect();
 	return {
 		controller,
@@ -481,6 +547,19 @@ export async function assembleSessionDomain(
 		...(planReadonly ? {} : { process }),
 		resources,
 		planInspection,
+		// P5/D10(a):loop condition 复用本 Session 的 governed ExecutionEnv——与 bash 工具
+		// 同一条能力路径(bash AST 分析、审批分级、attempt fence),不新开执行来源。
+		...(loopSettings.enabled ? { loopConditionExecutor: createLoopConditionExecutor(executionEnv, options.cwd, LOOP_CONDITION_TIMEOUT_MS) } : {}),
+		...(goalSettings.enabled ? {
+			goalRuntime: {
+				inspect: () => goalDomain.inspect(),
+				accountUsage: (delta) => goalDomain.accountUsage(delta),
+				recordContinuation: () => goalDomain.recordContinuation(),
+				recordSuppression: (reasonCode) => goalDomain.recordSuppression(reasonCode),
+				markContinuationTurn: () => goalDomain.markContinuationTurn(),
+				clearContinuationTurn: () => goalDomain.clearContinuationTurn(),
+			},
+		} : {}),
 		start: async () => {
 			await planDomain.start();
 			await extensions?.start();
@@ -490,6 +569,7 @@ export async function assembleSessionDomain(
 			titleLifecycle?.dispose();
 			if (!planReadonly) await process.shutdown(reason);
 			removeExtensionLifecycle?.();
+			removeTodoSnapshotInvalidation?.();
 			try {
 				await extensions?.shutdown(reason);
 			} finally {
@@ -501,7 +581,13 @@ export async function assembleSessionDomain(
 				}
 			}
 		},
-		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan", "session.trajectory"],
+		protocolCapabilities: [
+			"session.approval.reverse", "session.security.inspect", "session.plan", "session.trajectory",
+			// goal/loop 的 operation 由 resource domain 自带 capability；这里补的是
+			// 没有 manifest 入口的会话级能力（loop 的审计与状态查询）。
+			...(goalSettings.enabled ? ["session.goal" as const] : []),
+			...(loopSettings.enabled ? ["session.loop" as const] : []),
+		],
 		// `/dump` 只读投影：provider 面文本取自 controller 捕获点，digest 取自 harness composition。
 		requestDump: (view) => controller.requestDump(view),
 		promptInspection: () => ({
@@ -631,4 +717,43 @@ export function productionSessionTools(
 		.filter((tool: AgentTool) => !excluded.has(tool.name));
 	if (lspOptions !== undefined) tools.push(createLspTool(cwd, lspOptions));
 	return tools;
+}
+
+/**
+ * `/loop --while`/`--until` 的条件执行器:走 Session 的 governed shell。
+ *
+ * 条件命令不使用 bash 工具的持久会话,因此不会污染 agent 的 shell 状态。
+ * 超时在本层强制(不依赖底层是否透传 timeoutMs),并区分超时与用户取消:
+ * 前者是坏条件,后者是 Esc。
+ */
+function createLoopConditionExecutor(executionEnv: ExecutionEnv, cwd: string, timeoutMs: number) {
+	return async (command: string, signal: AbortSignal): Promise<LoopConditionExecution> => {
+		const abort = new AbortController();
+		let timedOut = false;
+		const forward = (): void => { abort.abort(); };
+		signal.addEventListener("abort", forward, { once: true });
+		const timer = setTimeout(() => { timedOut = true; abort.abort(); }, timeoutMs);
+		timer.unref?.();
+		try {
+			const result = await executionEnv.shell.exec(command, {
+				cwd,
+				signal: abort.signal,
+				maxOutputChars: 8_192,
+			});
+			return {
+				exitCode: result.exitCode,
+				timedOut,
+				cancelled: !timedOut && signal.aborted,
+				output: `${result.stdout}${result.stderr}`,
+			};
+		} catch (error) {
+			// 超时/取消会以 abort 错误浮出;区分交给 condition.ts 的三段判定。
+			if (timedOut) return { exitCode: undefined, timedOut: true, cancelled: false };
+			if (signal.aborted) return { exitCode: undefined, timedOut: false, cancelled: true };
+			throw error;
+		} finally {
+			clearTimeout(timer);
+			signal.removeEventListener("abort", forward);
+		}
+	};
 }

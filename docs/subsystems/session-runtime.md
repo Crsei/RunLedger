@@ -46,7 +46,15 @@ domain 在 `SessionRuntime` 构造前装配，因此 attempt、human-wait 与 ru
 
 握手只针对当前 Session、runtime id 和 generation，首帧之外的未认证输入被拒绝。服务端返回冻结的 capability 与 operation manifest，客户端只能按 manifest 构造对应端口。
 
-Core operations 包括 snapshot/timeline/receipts、event subscription、driver claim/release、provider/model/thinking、auth、prompt/steer/follow-up/interrupt、queue clear 和 recovery。Process、extensions、security settings、plan 与 multi-agent 由 domain 在真实组合存在时追加 operation descriptors；类型声明中存在 capability 名称不等于当前握手已提供该 operation。
+Core operations 包括 snapshot/timeline/receipts、event subscription、driver claim/release、provider/model/thinking、auth、prompt/steer/follow-up/interrupt、queue clear 和 recovery。Process、extensions、security settings、plan、goal、loop 与 multi-agent 由 domain 在真实组合存在时追加 operation descriptors；类型声明中存在 capability 名称不等于当前握手已提供该 operation。
+
+## Goal mode 与 loop
+
+`goal` 是会话级 canonical 状态（`SessionGoalDomain`，事件 schema `runledger.session-goal.current`），只在 `standard` 组合出现：`minimal`/`plan` 是冻结 allowlist，既没有 `goal` 工具也没有 `session.goal` capability。状态转移经 reducer（`src/runtime/modes/goal/reducer.ts`）执行，模型只能 `request_complete`（登记请求），结算由用户 `settle_complete` 完成；预算耗尽只在用量完整度为 `complete` 时成立，`partial` 下 `tokensUsed` 是已观测下界，不得据此停止。
+
+`SessionGoalContinuationController` 在 `agent_end` 之后按 `goal.continuationDelaySeconds` 的 idle 窗口判定自动续跑：driver 在位、owner ready、编辑器为空、队列为空、上轮有工具调用、未超 `maxContinuations`、且 run budget 未终止。任一 run budget 终止即不再续跑。续跑消息以 `origin:"runtime"` 提交，进 history 但不作为用户输入（不触发自动标题，TUI 折叠为 `[runtime]` 行）。
+
+loop 是 ephemeral 的 owner 侧迭代驱动（`SessionLoopController`）：不进 canonical reducer，重启后不自动继续；每次迭代写 durable 审计事件（`loop.started`/`iteration_submitted`/`iteration_settled`/`stopped`）。无显式 limit 时由 `loop.maxIterations` 兜底。`--while`/`--until` 条件走本 Session 的 governed `ExecutionEnv`；退出码权威（0/1 按极性映射，>1 判为条件损坏并停止），超时与用户取消分别判定。`reset` 动作 runtime 只回 `loop_reset_requires_client`，由 client 换新 session 执行。
 
 ## Driver、attachment 与 reverse request
 

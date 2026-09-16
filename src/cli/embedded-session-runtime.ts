@@ -29,7 +29,7 @@ import { LateBoundAgentRunBudgetUsage } from "../runtime/session-runtime/run-tim
 import { SessionClient, type OwnedSessionHandle } from "./session-client.ts";
 import { SESSION_CORE_PROTOCOL_MANIFEST, SESSION_PROTOCOL_BOUNDS, type SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import { createRuntimeId, type ExecutionId, type SessionId } from "../runtime/protocol/ids.ts";
-import { resolveRecapSettings } from "../storage/settings-manager.ts";
+import { resolveGoalSettings, resolveLoopSettings, resolveRecapSettings } from "../storage/settings-manager.ts";
 
 export type SessionReverseRequestHandler = (frame: SessionFrameEnvelope, signal: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
@@ -268,6 +268,8 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 			},
 		}),
 		recapSettings: resolveRecapSettings(options.domain?.settings ?? {}),
+		goalSettings: resolveGoalSettings(options.domain?.settings ?? {}),
+		loopSettings: resolveLoopSettings(options.domain?.settings ?? {}),
 	});
 	try {
 		if (crashTakeover) {

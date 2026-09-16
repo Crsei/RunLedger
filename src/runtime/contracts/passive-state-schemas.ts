@@ -12,6 +12,7 @@ import {
 } from "../protocol/foundation-schemas.ts";
 import { isRuntimeId } from "../protocol/ids.ts";
 import { RuntimeEventRangeRefSchema, isRuntimeEventRangeRef } from "../protocol/schemas.ts";
+import { GoalBudgetSchema, GoalUsageSchema } from "../modes/goal/schema.ts";
 import type { RuntimeProjection, RuntimeSnapshotDescriptor } from "./passive-state.ts";
 
 const ProjectionCompletenessSchema = Type.Union([Type.Literal("complete"), Type.Literal("partial")]);
@@ -51,13 +52,18 @@ export const GoalProjectionSchema = Type.Object(
 		goalId: RuntimeIdSchema,
 		revision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		status: Type.Union([
-			Type.Literal("proposed"),
+			Type.Literal("inactive"),
 			Type.Literal("active"),
-			Type.Literal("blocked"),
-			Type.Literal("completed"),
-			Type.Literal("failed"),
-			Type.Literal("cancelled"),
+			Type.Literal("paused"),
+			Type.Literal("budget_limited"),
+			Type.Literal("complete"),
+			Type.Literal("dropped"),
 		]),
+		objective: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
+		// 复用 canonical schema：投影与状态必须拒绝同一组漂移字段。
+		budget: Type.Optional(GoalBudgetSchema),
+		usage: Type.Optional(GoalUsageSchema),
+		continuations: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
 		completionRef: Type.Optional(RuntimeContentRefSchema),
 		verificationRef: Type.Optional(RuntimeContentRefSchema),
 		...projectionMetadataSchemas(),

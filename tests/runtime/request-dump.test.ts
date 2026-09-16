@@ -103,7 +103,7 @@ describe("request dump observes the request sent by the provider", () => {
 				: completions(selected as Model<"openai-completions">, input, adjusted);
 		};
 		const ledger = new MemoryLedger();
-		await runAgentLoop([{ role: "user", content: [{ type: "text", text: "hello" }] }], context(),
+		await runAgentLoop([{ role: "user", origin: "user", content: [{ type: "text", text: "hello" }] }], context(),
 			{ model: requestModel, ledger, runBudget: DEFAULT_AGENT_RUN_BUDGET, modelContextAssembler: assembleAgentModelContext, modelRequestObserver: snapshots.observe },
 			() => {}, undefined, provider);
 		expect(server.bodies).toHaveLength(1);
@@ -144,7 +144,7 @@ describe("request dump observes the request sent by the provider", () => {
 		const snapshots = new ModelRequestSnapshots();
 		const controller = new AbortController();
 		let called = false;
-		await runAgentLoop([{ role: "user", content: [{ type: "text", text: "cancel" }] }], context(), {
+		await runAgentLoop([{ role: "user", origin: "user", content: [{ type: "text", text: "cancel" }] }], context(), {
 			model: model("openai-completions", "http://127.0.0.1"), runBudget: DEFAULT_AGENT_RUN_BUDGET, modelRequestObserver: snapshots.observe,
 			modelContextAssembler: (input) => { const assembled = assembleAgentModelContext(input); controller.abort(); return assembled; },
 		}, () => {}, controller.signal, () => { called = true; throw new Error("must not dispatch"); });
