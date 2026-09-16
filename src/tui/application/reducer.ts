@@ -363,7 +363,9 @@ function isEmptyWorkflowValue(key: WorkflowKey, value: unknown): boolean {
 		case "taskGoalWorkflow":
 			return Array.isArray(record.tasks) && record.tasks.length === 0 && Array.isArray(record.goals) && record.goals.length === 0;
 		case "agentWorkflow":
-			return Array.isArray(record.agents) && record.agents.length === 0;
+			// agent graph 快照始终带 revision 与 lifetime 计数,零 child 时这些值仍然有意义,
+			// 且 modal 自己渲染空态;折叠成 empty 会丢掉真实计数并显示 unknown。
+			return false;
 		case "queueWorkflow":
 			return Array.isArray(record.items) && record.items.length === 0;
 		case "approvalWorkflow":

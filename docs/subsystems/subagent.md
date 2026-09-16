@@ -54,6 +54,16 @@ Agent graph 由 Session events 投影 root/child node、state、request/descript
 
 Child 只返回一种 bounded report。report 保存 UTF-8 byte count、digest、outcome、usage 与可选 terminal reason；超过上限时生成空 report，并以 `outcome=failed`、`reasonCode=report_limit_exceeded` 收束，不截成一个看似成功的结果。
 
+`usage.toolCalls` 与 tool 预算都按**已放行**的调用计数，不用 `tool_execution_start`：该事件在预算 hook 之前发出，被拦下的调用也会被它计入，会让一次并行 tool call 批次多放行一次并虚报用量。
+
+`agent.cancel` 有两类目标。resident child（本 owner 仍持有 runtime）先请求取消，再等同一个 spawn Promise；即使该 Promise 已失败，也会用 child 已产出的真实 report（否则 stopped/owner_takeover）重试提交 durable terminal——否则 prepared/running 阶段的提交失败会永久占住 active child 名额，只能靠 owner takeover 收束。非 resident child 只有已有 durable terminal 时返回该 report，否则返回 `recovery_required`。
+
+## TUI 面板
+
+`/agents`（`agent.inspect` 只读、`availableDuringTask: true`）展示当前 Session 的 child：role、state、model turns / tool calls / active duration、report bytes 与 terminal reason，并在标题栏显示 graph 的 `total / active / free slots`。root 不在列表里；`r` 重新查询，`x` 只对非终态 child 发出 `agent.cancel`（expectedRevision 取面板展示的那次 graph revision），`Esc` 逐级关闭。child 正文不进入该面板：graph 只保存 objective digest 与 bounded report，正文属于父 Session transcript 的 `spawn_agent` 工具卡。
+
+`availableDuringTask: true` 是刻意的：父 turn 阻塞在 `spawn_agent` 上时 child 才处于 running，若沿用 mutation 命令的 idle 门控，面板将永远无法取消正在执行的 child。driver 判定、operation manifest、expected revision 与 recovery barrier 仍由 Session domain 强制。
+
 ## Takeover recovery
 
 新 owner 从 graph 与未决 `agent_spawn` attempt 重建状态。previous owner 为 alive/unknown 时，prepared/running 记录 reconciliation，所有非终态 child 保持 recovery required；只有 previous owner 可验证为 dead 时，requested/prepared/running 才能收束为 owner-takeover stopped terminal，避免双重执行。

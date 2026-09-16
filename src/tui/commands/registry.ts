@@ -54,6 +54,7 @@ export type SlashCommandActionType =
   | "extension.skills"
   | "extension.hooks"
   | "plan.inspect"
+  | "agent.inspect"
   | "compaction.list"
   | "compact.run"
   | "memory.inspect"
@@ -277,6 +278,15 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       requiredOperation: "plan.inspect",
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/plan is available when the current turn is idle.",
+    }),
+    command("agents", "Inspect bounded child agents", 22.5, {
+      actionType: "agent.inspect",
+      category: "agents",
+      policy: READONLY_POLICY,
+      requiredOperation: "agent.inspect",
+      // 观测必须在 child 存活时可读:root turn 阻塞在 spawn_agent 上正是需要看面板的时刻。
+      availableDuringTask: true,
+      unavailableHint: "Start the CLI with --experimental-multi-agent and enable multiAgent in settings.json.",
     }),
 	    command("compact", "Summarize older conversation history", 23, {
       actionType: "compact.run",

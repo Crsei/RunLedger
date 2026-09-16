@@ -147,6 +147,8 @@ async function prepareChild(
 		toolCalls: 0,
 		activeDurationMs: 0,
 	};
+	/** 已放行的 tool call 数；预算判定用它，`tool_execution_start` 会把被拦下的调用也计入。 */
+	let admittedToolCalls = 0;
 	const usageAuthority: AgentRunBudgetUsage = {
 		activeDurationMs: () => {
 			const value = activeDuration();
@@ -178,7 +180,9 @@ async function prepareChild(
 		request: AgentToolHookContext,
 		signal?: AbortSignal,
 	): Promise<BeforeToolCallResult | void> => {
-		if (usage.toolCalls > spec.budget.maxToolCalls) {
+		// `tool_execution_start` 在 hook 之前发出,用它计数会把被拦下的调用也算进去。
+		// admitted 只统计放行且通过授权的调用,所以这里用 `>=` 拒绝第 maxToolCalls+1 次。
+		if (admittedToolCalls >= spec.budget.maxToolCalls) {
 			return {
 				block: true,
 				reason: "child tool-call budget exhausted",
@@ -186,6 +190,7 @@ async function prepareChild(
 		}
 		const authorization = await spec.authorizationPolicy.authorize(request, signal);
 		if (authorization.decision === "deny") return { block: true, reason: authorization.reason };
+		admittedToolCalls += 1;
 		return undefined;
 	};
 
@@ -211,14 +216,14 @@ async function prepareChild(
 			},
 			runBudgetUsage: usageAuthority,
 			beforeToolCall,
-			shouldStopAfterTurn: () => usage.toolCalls >= spec.budget.maxToolCalls,
+			shouldStopAfterTurn: () => admittedToolCalls >= spec.budget.maxToolCalls,
 		},
 		toolExecution: "sequential",
 	});
 
 	agent.subscribe((event) => {
 		if (event.type === "turn_start") usage.modelTurns += 1;
-		if (event.type === "tool_execution_start") usage.toolCalls += 1;
+		// tool_execution_start 在预算 hook 之前发出,被拦下的调用也会计数;真实用量取 admitted。
 		if (event.type === "agent_end") {
 			lastAgentEnd = event;
 			usage.activeDurationMs = usageAuthority.activeDurationMs();
@@ -324,6 +329,7 @@ async function prepareChild(
 		if (finalCompletion !== undefined) return finalCompletion;
 		lifecycle = "terminal";
 		cleanupCompletionResources();
+		usage.toolCalls = admittedToolCalls;
 		usage.activeDurationMs = usageAuthority.activeDurationMs();
 		const terminal = forcedReason === "budget_exhausted"
 			? { outcome: "stopped" as const, reasonCode: "budget_exhausted" as const }

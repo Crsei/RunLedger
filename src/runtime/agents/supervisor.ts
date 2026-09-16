@@ -74,6 +74,8 @@ interface SpawnOperation {
 	prepared?: PreparedChildHandle;
 	active?: ActiveChildHandle;
 	cancelRequested?: ChildStopReason;
+	/** child 已产出的真实 report；terminal 提交失败时留给 cancel 收束重试。 */
+	completion?: ChildReport;
 }
 
 export class AgentSupervisor {
@@ -156,12 +158,37 @@ export class AgentSupervisor {
 		if (operation !== undefined) {
 			operation.cancelRequested ??= reason;
 			if (operation.prepared !== undefined) await operation.prepared.cancel(reason);
-			return operation.promise ?? failure("store_conflict", "child cancel has no spawn operation");
+			const settled = await (operation.promise ?? Promise.resolve<MultiAgentResult<ChildReport>>(
+				failure("store_conflict", "child cancel has no spawn operation"),
+			));
+			if (settled.ok) return settled;
+			// spawn 已失败且 resident child runtime 不再可运行,但 durable node 仍是非终态:
+			// prepared/running 的 activation 发布失败、spawned 提交失败都会留下这种节点。
+			// 只依赖 owner takeover 的 recover() 会让它永久占用 active child 名额,
+			// 因此由显式 cancel 收束该节点(优先复用 child 已产出的真实 report)。
+			return this.closeResidentNode(operation, settled, reason);
 		}
 		const durable = await this.findTerminalReport(agentId);
 		if (!durable.ok) return durable;
 		if (durable.value !== undefined) return { ok: true, value: durable.value };
 		return failure("recovery_required", "child runtime is not resident in this Session Owner");
+	}
+
+	/** resident operation 已失败后的节点收束：terminal 提交本身幂等,重试不会产生第二个终态。 */
+	private async closeResidentNode(
+		operation: SpawnOperation,
+		prior: MultiAgentResult<ChildReport>,
+		reason: ChildStopReason,
+	): Promise<MultiAgentResult<ChildReport>> {
+		const node = await this.findNode(operation.identity.agentId);
+		if (!node.ok) return node;
+		if (node.value === undefined) return prior;
+		if (isTerminal(node.value.state)) {
+			const durable = await this.findTerminalReport(operation.identity.agentId);
+			return durable.ok && durable.value !== undefined ? { ok: true, value: durable.value } : prior;
+		}
+		const report = operation.completion ?? stoppedReport(operation.identity.agentId, reason, node.value.usage);
+		return this.finishAndSettle(operation, await this.commitTerminalForNode(node.value, report, `cancel-${operation.identity.agentId}`));
 	}
 
 	public async inspect(): Promise<MultiAgentResult<AgentGraphInspection>> {
@@ -361,6 +388,8 @@ export class AgentSupervisor {
 
 		const completion = await activated.value.completion;
 		if (!completion.ok) return completion;
+		// terminal 提交可能失败；保留真实 report 以便后续 cancel 收束时重试提交。
+		operation.completion = completion.value.report;
 		const terminal = await this.commitTerminalForNode(await this.requireNode(identity.agentId), completion.value.report, identity.commandId);
 		await prepared.dispose();
 		return this.finishAndSettle(operation, terminal);

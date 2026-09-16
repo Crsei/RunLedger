@@ -126,6 +126,30 @@ function toolStream(toolName: string, calls: { count: number }): StreamFn {
 	};
 }
 
+/**
+ * 同一条 assistant message 内发出 `count` 个并行 tool call。
+ *
+ * loop-runner 只在 turn 边界检查 tool 预算，单个 turn 内由 beforeToolCall 逐次拦；
+ * 这里正是 `>=` 与 `>` 会分出胜负的场景。
+ */
+function parallelToolStream(toolName: string, count: number, calls: { count: number }): StreamFn {
+	return (_model, context) => {
+		calls.count += 1;
+		const stream = createAssistantMessageEventStream();
+		const hasToolResult = context.messages.some((message) => message.role === "toolResult");
+		const message = hasToolResult
+			? assistant([{ type: "text", text: "complete" }], "stop")
+			: assistant(Array.from({ length: count }, (_value, index) => ({
+				type: "toolCall" as const,
+				id: `parallel-tool-call-${index}`,
+				name: toolName,
+				arguments: {},
+			})), "toolUse");
+		queueMicrotask(() => emitMessage(stream, message));
+		return stream;
+	};
+}
+
 function waitingForAbortStream(calls: { count: number }): StreamFn {
 	return (_model, _context, options) => {
 		calls.count += 1;
@@ -269,6 +293,29 @@ describe("in-process governed child runtime", () => {
 		const provider = createInProcessChildRuntimeProvider();
 		const prepared = await provider.prepare({
 			...prepareSpec(createRuntimeId("agent", "tool-budget"), toolStream("read", modelCalls), [childTool]),
+			budget: budget({ maxToolCalls: 1 }),
+		});
+		expect(prepared.ok).toBe(true);
+		if (!prepared.ok) return;
+		const active = await prepared.value.activate();
+		expect(active.ok).toBe(true);
+		if (!active.ok) return;
+		const completion = await active.value.completion;
+		expect(completion).toMatchObject({ ok: true, value: { report: { outcome: "stopped", reasonCode: "budget_exhausted" } } });
+		if (completion.ok) expect(completion.value.report.usage.toolCalls).toBe(1);
+		expect(toolCalls.count).toBe(1);
+	});
+
+	it("blocks the over-ceiling call when one assistant message issues parallel tool calls", async () => {
+		const modelCalls = { count: 0 };
+		const toolCalls = { count: 0 };
+		const childTool = tool("read", async () => {
+			toolCalls.count += 1;
+			return { content: [{ type: "text", text: "read" }], details: {} };
+		});
+		const provider = createInProcessChildRuntimeProvider();
+		const prepared = await provider.prepare({
+			...prepareSpec(createRuntimeId("agent", "parallel-tool-budget"), parallelToolStream("read", 3, modelCalls), [childTool]),
 			budget: budget({ maxToolCalls: 1 }),
 		});
 		expect(prepared.ok).toBe(true);

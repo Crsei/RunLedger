@@ -171,6 +171,76 @@ function spawnProbeStream(model: Model<Api>, context: Context, options?: StreamO
 	return probe ? streamOneToolCall(model, options, spawnCall) : deterministicStream(model, context, options);
 }
 
+/**
+ * 父 Session 发 `spawn_agent`;child 自己的模型请求挂起直到被 abort。
+ * 用于在 child 仍处于 running 时驱动真实的 `agent.cancel`。
+ */
+function hangingChildProvider(): Provider {
+	const streams: ProviderStreams = {
+		stream: (model, context, options) => hangingChildStream(model, context, options),
+		streamSimple: (model, context, options) => hangingChildStream(model, context, options),
+	};
+	return createProvider({
+		id: mockModel.provider,
+		name: "Hanging child integration model",
+		auth: {
+			apiKey: {
+				name: "integration fixture",
+				resolve: async () => ({ auth: { apiKey: "integration-only" }, source: "integration fixture" }),
+			},
+		},
+		models: [{ ...mockModel, contextWindow: 200_000 }],
+		api: streams,
+	});
+}
+
+function hangingChildStream(model: Model<Api>, context: Context, options?: StreamOptions | SimpleStreamOptions) {
+	const parentExposesSpawn = context.tools?.some((tool) => tool.name === "spawn_agent") === true;
+	const toolResultCount = context.messages.filter((message) => message.role === "toolResult").length;
+	if (parentExposesSpawn && toolResultCount === 0) {
+		return streamOneToolCall(model, options, {
+			type: "toolCall",
+			id: "integration-cancel-spawn",
+			name: "spawn_agent",
+			arguments: {
+				role: "research",
+				objective: "Read fixture.txt and report the evidence.",
+				requestedCapabilities: ["workspace.read"],
+				budget: { maxModelTurns: 8, maxToolCalls: 4, maxActiveDurationMs: 60_000 },
+				output: { kind: "report", maxBytes: 4_096 },
+			},
+		});
+	}
+	// 拿到 stopped report 之后父 turn 必须能正常收束,否则用例无法区分
+	// "cancel 结束 child" 与 "父 turn 一起挂死"。
+	if (parentExposesSpawn) return streamFinalText(model, "parent observed the child stop");
+	// child 侧:永不 settle 的 stream,只响应 abort。cancel 必须由 owner 侧收束,
+	// 不能依赖模型自己结束。
+	const stream = createAssistantMessageEventStream();
+	const signal = options?.signal;
+	const onAbort = (): void => {
+		const message = assistant(model, []);
+		stream.push({ type: "error", reason: "aborted", error: { ...message, stopReason: "aborted" as const, errorMessage: "aborted" } });
+		stream.end({ ...message, stopReason: "aborted" as const });
+	};
+	if (signal?.aborted) queueMicrotask(onAbort);
+	else signal?.addEventListener("abort", onAbort, { once: true });
+	return stream;
+}
+
+function streamFinalText(model: Model<Api>, text: string) {
+	const stream = createAssistantMessageEventStream();
+	const base = assistant(model, []);
+	const message = { ...assistant(model, [{ type: "text" as const, text }]), stopReason: "stop" as const };
+	queueMicrotask(() => {
+		stream.push({ type: "start", partial: base });
+		stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: message });
+		stream.push({ type: "done", reason: "stop", message });
+		stream.end(message);
+	});
+	return stream;
+}
+
 function streamOneToolCall(model: Model<Api>, options: StreamOptions | SimpleStreamOptions | undefined, toolCall: ToolCall) {
 	const stream = createAssistantMessageEventStream();
 	const base = assistant(model, []);
@@ -322,6 +392,101 @@ describe("bounded multi-agent production integration", () => {
 				"agent.activated",
 				"agent.finished",
 			]);
+		} finally {
+			await embedded?.handle.close().catch(() => undefined);
+			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
+			db.close();
+		}
+	});
+
+	it("cancels a running child through the production domain and commits one durable stopped terminal", async () => {
+		const root = mkdtempSync(join(tmpdir(), "runledger-bounded-cancel-"));
+		cleanup = () => rmSync(root, { recursive: true, force: true });
+		writeFileSync(join(root, "fixture.txt"), "needle in the governed fixture\n", "utf8");
+		const home = join(root, "home");
+		mkdirSync(home, { recursive: true, mode: 0o700 });
+		const layout = buildRunledgerLayout(home, "posix");
+		const db = openSessionDatabase(layout.database);
+		installSessionStoreSchema(db);
+		const store = new SessionStore(db);
+		const ownerStore = new OwnerStore(db);
+		const workspaceId = "bounded-cancel";
+		const workspaceKey = workspacePolicyKey(workspaceId, workspaceId);
+		await saveProjectSettings({ layout }, { provider: mockModel.provider, model: mockModel.id, multiAgent: { enabled: true } });
+		await saveProjectSettings({ layout, workspaceKey }, { multiAgent: { enabled: true } });
+		const sessionId = createRuntimeId("session", "bounded-cancel");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", workspaceId),
+			repositoryId: createRuntimeId("repository", workspaceId),
+			harnessProfile: standardHarnessProfileRef(),
+			settingsDigest: "c".repeat(64),
+		});
+		const models = createModels({ credentials: AuthStorage.create(layout) });
+		models.setProvider(hangingChildProvider());
+		const settings = await loadProjectSettings({ layout });
+		const layered = await loadLayeredProjectSettings({ layout, workspaceKey });
+		const source = (layer: typeof layered.user) => layer.multiAgent.state === "valid" ? layer.multiAgent.value : undefined;
+		let embedded: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
+		try {
+			embedded = await createEmbeddedSessionRuntime({
+				sessionId,
+				store,
+				ownerStore,
+				domain: {
+					cwd: root,
+					layout,
+					settings,
+					models,
+					securitySources: noPromptTestSecurity,
+					multiAgent: { runtimeEnabled: true, user: source(layered.user), workspace: source(layered.workspace) },
+				},
+			});
+			const runtime = embedded.runtime;
+			if (runtime === undefined) throw new Error("production runtime was not claimed");
+			const domain = (runtime as unknown as { readonly domain?: SessionDomainPort }).domain;
+			if (domain === undefined) throw new Error("production Session domain was not composed");
+			const generation = embedded.handle.generation;
+			const inspectGraph = async (): Promise<{ readonly revision: number; readonly counts: { readonly nonTerminalChildren: number; readonly totalAgents: number }; readonly nodes: readonly { readonly agentId: string; readonly role: string; readonly state: string }[] }> => {
+				const inspected = await runtime.handleQuery({
+					kind: "domain_query",
+					body: { sessionId, generation, correlationId: createRuntimeId("connection", "cancel-inspect"), effectId: "cancel-inspect-effect", operation: "agent.inspect", payload: {} },
+				});
+				// handleQuery 直接返回 SessionDomainResult；handleCommand 才包一层 { ok, kind, result }。
+				if (inspected.ok !== true) throw new Error(`agent.inspect failed: ${String(inspected.code)}`);
+				return inspected.value as never;
+			};
+
+			// 父 turn 会阻塞在 spawn_agent 上;不 await,先等 child 进入 running。
+			const parentTurn = domain.controller.prompt("spawn a scout to read the fixture");
+			let running: Awaited<ReturnType<typeof inspectGraph>> | undefined;
+			for (let attempt = 0; attempt < 400; attempt += 1) {
+				const inspected = await inspectGraph();
+				if (inspected.counts.nonTerminalChildren === 1 && inspected.nodes.some((node) => node.state === "running")) {
+					running = inspected;
+					break;
+				}
+				await new Promise<void>((resolve) => setTimeout(resolve, 5));
+			}
+			if (running === undefined) throw new Error("child never reached running");
+			const child = running.nodes.find((node) => node.role === "research");
+			if (child === undefined) throw new Error("child node was not projected");
+
+			const cancelled = await runtime.handleCommand({
+				commandId: createRuntimeId("command", "cancel-running-child"),
+				kind: "domain_command",
+				body: { sessionId, generation, correlationId: "corr-cancel", effectId: "effect-cancel", operation: "agent.cancel", expectedRevision: running.revision, payload: { agentId: child.agentId } },
+			}, { connectionId: createRuntimeId("connection", "driver"), clientId: "client_driver", isDriver: true });
+			expect(JSON.parse(JSON.stringify(cancelled))).toEqual(cancelled);
+			expect(cancelled).toMatchObject({ ok: true, result: { ok: true, status: "ok", value: { report: { outcome: "stopped", reasonCode: "cancelled" } } } });
+
+			const settled = await inspectGraph();
+			expect(settled.counts.nonTerminalChildren).toBe(0);
+			expect(settled.nodes.find((node) => node.agentId === child.agentId)).toMatchObject({ state: "stopped", reasonCode: "cancelled" });
+			// 父 turn 以 stopped 报告收束,而不是挂死或重跑 child。
+			await parentTurn;
+			const terminalEvents = store.replaySessionEvents(sessionId).filter((event) => event.eventType === "agent.stopped");
+			expect(terminalEvents).toHaveLength(1);
 		} finally {
 			await embedded?.handle.close().catch(() => undefined);
 			await embedded?.runtime?.shutdownAfterLastAttachment("paused");

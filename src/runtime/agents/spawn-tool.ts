@@ -61,8 +61,8 @@ export function createSpawnAgentTool(options: SpawnAgentToolOptions): AgentTool<
 		parameters: spawnAgentSchema,
 		isConcurrencySafe: () => false,
 		isDestructive: () => false,
-		execute: async (toolCallId, params, signal, _onUpdate, context): Promise<AgentToolResult<SpawnAgentToolDetails>> => {
-			const trusted = trustedInvocation(options, toolCallId, signal, context);
+		execute: async (_runtimeToolCallId, params, signal, _onUpdate, context): Promise<AgentToolResult<SpawnAgentToolDetails>> => {
+			const trusted = trustedInvocation(options, signal, context);
 			if (!trusted.ok) return toolError(trusted.error.code, trusted.error.message);
 			const validated = validateSpawnSubagentRequest(params, options.policy);
 			if (!validated.ok) return toolError(validated.error.code, validated.error.message);
@@ -78,7 +78,6 @@ export function createSpawnAgentTool(options: SpawnAgentToolOptions): AgentTool<
 
 function trustedInvocation(
 	options: SpawnAgentToolOptions,
-	toolCallId: string,
 	signal: AbortSignal | undefined,
 	context: ToolContext | undefined,
 ): MultiAgentResult<SubagentInvocationContext> {
@@ -86,7 +85,8 @@ function trustedInvocation(
 	if (!isRuntimeId(context.sessionId, "session") || (options.sessionId !== undefined && context.sessionId !== options.sessionId)) {
 		return { ok: false, error: { code: "invalid_request", message: "spawn_agent ToolContext session identity is invalid" } };
 	}
-	if (context.toolCallId.length === 0 || context.toolCallId !== toolCallId && toolCallId.length === 0) {
+	// execute 的 toolCallId 参数来自模型输入,不参与身份派生:只有 ToolContext 是可信来源。
+	if (context.toolCallId.length === 0) {
 		return { ok: false, error: { code: "invalid_request", message: "spawn_agent ToolContext tool identity is invalid" } };
 	}
 	const trustedToolCallId = context.toolCallId as ToolCallId;

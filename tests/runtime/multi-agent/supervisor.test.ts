@@ -537,6 +537,42 @@ describe("bounded child supervisor", () => {
 		expect(eventTypes().filter((eventType) => eventType === "agent.stopped")).toHaveLength(1);
 	});
 
+	it("closes a resident node that failed before activation through cancel", async () => {
+		const calls = { count: 0 };
+		const graph = new AgentGraphStore({
+			store: sessionStore,
+			fence,
+			rootAgentId: ROOT_AGENT_ID,
+			appendEvent: (input) => {
+				// prepared 提交失败:durable node 停在 requested,resident operation 已失败。
+				if (input.eventType === "agent.spawned") throw new Error("prepared event append failed");
+				return sessionStore.appendEvent(fence, input);
+			},
+		});
+		const childSupervisor = supervisor(stopStream(calls), { graph });
+		expect(await childSupervisor.registerRoot()).toMatchObject({ ok: true });
+
+		const failed = await childSupervisor.spawn(request(), invocation("cancel-closes-resident"));
+		expect(failed).toMatchObject({ ok: false, error: { code: "store_conflict" } });
+		const identity = deriveChildIdentity(request(), invocation("cancel-closes-resident"));
+		const stuck = await childSupervisor.inspect();
+		expect(stuck).toMatchObject({ ok: true, value: { counts: { nonTerminalChildren: 1 }, nodes: [{ role: "root" }, { state: "requested" }] } });
+
+		// cancel 必须把该节点收束成 durable terminal,而不是把 spawn 的失败原样返回。
+		const closed = await childSupervisor.cancel(identity.agentId);
+		expect(closed).toMatchObject({ ok: true, value: { agentId: identity.agentId, outcome: "stopped", reasonCode: "cancelled" } });
+		const inspected = await childSupervisor.inspect();
+		expect(inspected).toMatchObject({ ok: true, value: { counts: { nonTerminalChildren: 0 }, nodes: [{ role: "root" }, { state: "stopped", reasonCode: "cancelled" }] } });
+		expect(calls.count).toBe(0);
+		expect(eventTypes()).toEqual([
+			"agent.root_registered",
+			"agent.spawn_requested",
+			"agent.stopped",
+		]);
+		// terminal 已落地:再次 cancel 幂等返回同一 report。
+		expect(await childSupervisor.cancel(identity.agentId)).toMatchObject({ ok: true, value: { outcome: "stopped", reasonCode: "cancelled" } });
+	});
+
 	it("keeps completion as the first terminal when cancellation arrives during terminal append", async () => {
 		let childSupervisor!: AgentSupervisor;
 		let cancelPromise: Promise<MultiAgentResult<unknown>> | undefined;

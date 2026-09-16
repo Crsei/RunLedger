@@ -42,6 +42,17 @@ RunLedger 现状：`handleSubmit`（`src/tui/interactive-mode.ts:1156`）里有�
 修复后移除 `hidden` 并同步恢复 `tips.txt` 中的说明行。回归入口：
 `tests/tui/commands/registry.test.ts`、`tests/tui/welcome-tips.bun.test.ts`。
 
+### 0.2 `/agents` 门控例外（2026-09-16）
+
+`/agents`（`actionType: "agent.inspect"`、`requiredOperation: "agent.inspect"`）是唯一
+`availableDuringTask: true` 的 domain 命令。原因是父 turn 阻塞在 `spawn_agent` 上时 child 才
+处于 running：若沿用 mutation 命令的 idle 门控，用户将永远无法在 child 存活期间打开面板或取消它。
+该命令只发只读 `agent.inspect`；取消走独立的 `agent.cancel` mutation，driver 判定、
+operation manifest、expected revision 与 recovery barrier 仍由 Session domain 强制，
+因此放宽的是展示时机，不是写权限。会话未协商 `agent.inspect` 时端口不构造，
+`capabilities.agents` 为 `port-not-wired` 且命令给出 typed notice。回归入口：
+`tests/tui/agents-panel.test.ts`、`tests/tui/agents-modal.test.ts`。
+
 ## 1. codex 实现剖析（参考定位）
 
 ### 1.1 命令注册表 —— `tui/src/slash_command.rs` + `tui/src/bottom_pane/slash_commands.rs`
@@ -374,3 +385,11 @@ RunLedger 现状：`handleSubmit`（`src/tui/interactive-mode.ts:1156`）里有�
   `/commands` `SelectionView`;Esc 返回后 `/quit` 以 exit 0 退出。
 - 本实现随本次提交进入 HEAD;上述证据只关闭本计划的实现与自动门禁,不替代其他权威文档中的
   独立审计、跨平台或人工验收门禁。
+
+### 0.3 门禁证据（2026-09-16，`/agents` 面板）
+
+- 聚焦回归：`npx vitest run tests/tui/agents-panel.test.ts tests/tui/agents-modal.test.ts tests/tui/adapters/adapters.test.ts tests/tui/application/reducer.test.ts` 全绿（4 files / 53 tests）。
+- 运行时配套：`npx vitest run tests/runtime/multi-agent tests/runtime/session-runtime/multi-agent-domain.test.ts --no-file-parallelism` 全绿（12 files / 87 tests）。
+- `npm run check` 全绿（boundaries + 646 consumer typechecks，0 diagnostics）；`npm run build` 通过。
+- 标准 PATH（`/home/nzq/.npm-global/bin/runledger` → 本仓库 `bin/runledger.js`）隔离 `RUNLEDGER_DIR` 的真实 tmux TTY：`--experimental-multi-agent` + 用户级 `multiAgent.enabled=true` 下 `/agents` 打开面板并渲染 `total 1 · active 0 · free slots 3`（root 计入 total、不计入 child 列表）；零 child 时显示空态而不是丢失计数。
+- 未覆盖：真实 provider 的 `spawn_agent` turn 本轮未跑通（本机未接线的 provider 连接失败），因此"面板列出 running child 并 `x` 取消"只有自动测试与面板渲染证据，没有真实模型 TTY 证据。

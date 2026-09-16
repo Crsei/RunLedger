@@ -11,9 +11,11 @@ import type { TuiDomainPorts } from "../application/ports.ts";
 import type { ExtensionMutationReceiptOperation, ExtensionResourcePort, ExtensionResourceSnapshot, ExtensionResourceView, ExtensionKind, ExtensionTrust, ExtensionActivation, ExtensionReloadReceipt } from "../extensions/types.ts";
 import type { McpResourcePort, McpCatalogSnapshot, McpServerView, McpToolView, McpDiagnosticView } from "../mcp/types.ts";
 import type { PlanRenderQueryPort, PlanRenderView } from "../goal-plan/types.ts";
+import type { AgentActivityCounts, AgentActivityQueryPort, AgentActivitySnapshot, AgentNodeRole, AgentNodeState, AgentNodeView } from "../agents/types.ts";
 import type { SecurityModeWorkflowPort, SecurityModeSnapshot } from "../security-mode/types.ts";
 import type { WorkspaceGitPort, WorkspaceGitSnapshot, WorkspaceGitHead } from "../workspace/types.ts";
 import { boundedToolText } from "../presentation/tools/projector.ts";
+import type { SafeCount } from "../presentation/tools/types.ts";
 import type { SessionDomainResult } from "../../runtime/session-runtime/domain-router.ts";
 import { isValidPlanModeState } from "../../runtime/modes/plan/reducer.ts";
 import type { PlanModeStatus } from "../../runtime/modes/plan/types.ts";
@@ -131,6 +133,10 @@ function createAvailableResourcePorts(resources: SessionResourcePortsInput): Tui
 		inspect: (request) => envelope(request, () => inspectPlan(query, request)),
 	};
 
+	const agentsPort: AgentActivityQueryPort = {
+		inspect: (request) => envelope(request, () => inspectAgents(query, request)),
+	};
+
 	const securityPort: SecurityModeWorkflowPort = {
 		inspect: (request) => envelope(request, () => inspectSecurityMode(query, request)),
 		// 当前 Session 只有 session.security.inspect（无 mutation operation）→ 显式 unavailable。
@@ -145,6 +151,7 @@ function createAvailableResourcePorts(resources: SessionResourcePortsInput): Tui
 		...(supports("extension.inspect") ? { extensions: extensionPort } : {}),
 		...(supports("mcp.list") ? { mcp: mcpPort } : {}),
 		...(supports("plan.inspect") ? { plan: planPort } : {}),
+		...(supports("agent.inspect") ? { agents: agentsPort } : {}),
 		...(supports("session.security.inspect") ? { securityMode: securityPort } : {}),
 		...(supports("worktree.inspect") ? { workspaceGit: workspaceGitPort } : {}),
 	};
@@ -358,6 +365,94 @@ function planSummary(status: PlanModeStatus, content: string): string {
 		case "awaiting_approval": return "Plan mode is awaiting approval.";
 		case "exit_pending": return "The approved plan is waiting to exit Plan mode.";
 	}
+}
+
+/**
+ * `agent.inspect` -> panel 视图。
+ *
+ * graph 只返回 digest 与 bounded report，不返回 objective/report 正文，
+ * 因此这里也不构造正文。counts 与 nodes 必须同时是本 Session 的真实投影：
+ * 缺少 counts 时保留 unknown，不由空数组推断为 0。
+ */
+async function inspectAgents(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<AgentActivitySnapshot>> {
+	const body = await query("agent.inspect", {}, request);
+	if (body.ok === false) {
+		return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
+	}
+	const revision = numberField(body.revision);
+	if (revision === undefined) {
+		return { ok: false, ref: request, error: { code: "session_domain_malformed", message: "agent.inspect returned no graph revision", retryable: false } };
+	}
+	if (body.nodes !== undefined && !Array.isArray(body.nodes)) {
+		return { ok: false, ref: request, error: { code: "session_domain_malformed", message: "agent.inspect nodes must be an array", retryable: false } };
+	}
+	const agents = asArray(body.nodes).flatMap((node) => {
+		if (!isRecord(node)) return [];
+		// root 是当前 Session 自身，不是可委派/可取消的 child；计数仍包含它。
+		if (node.role === "root") return [];
+		const agentId = stringField(node.agentId);
+		if (agentId.length === 0) return [];
+		const usage = isRecord(node.usage) ? node.usage : {};
+		const reportBytes = numberField(node.reportBytes);
+		const view: AgentNodeView = {
+			agentId,
+			role: agentNodeRole(node.role),
+			state: agentNodeState(node.state),
+			...(stringField(node.parentAgentId).length === 0 ? {} : { parentAgentId: stringField(node.parentAgentId) }),
+			usage: {
+				modelTurns: countField(usage.modelTurns),
+				toolCalls: countField(usage.toolCalls),
+				activeDurationMs: countField(usage.activeDurationMs),
+			},
+			...(stringField(node.reasonCode).length === 0 ? {} : { reasonCode: boundedToolText(node.reasonCode, LABEL_BOUND) }),
+			...(reportBytes === undefined ? {} : { reportBytes: { state: "known", value: reportBytes } }),
+		};
+		return [view];
+	});
+	const counts = isRecord(body.counts) ? body.counts : undefined;
+	const projectedCounts: AgentActivityCounts = {
+		totalAgents: counts === undefined ? unknownCount("graph-counts-not-reported") : countField(counts.totalAgents),
+		nonTerminalChildren: counts === undefined ? unknownCount("graph-counts-not-reported") : countField(counts.nonTerminalChildren),
+		remainingLifetimeSlots: counts === undefined ? unknownCount("graph-counts-not-reported") : countField(counts.remainingLifetimeSlots),
+	};
+	return { ok: true, ref: request, value: { revision, counts: projectedCounts, agents } };
+}
+
+function agentNodeState(value: unknown): AgentNodeState {
+	switch (value) {
+		case "requested":
+		case "prepared":
+		case "running":
+		case "completed":
+		case "failed":
+		case "stopped":
+		case "recovery_required":
+			return value;
+		default:
+			return "unknown";
+	}
+}
+
+function agentNodeRole(value: unknown): AgentNodeRole {
+	switch (value) {
+		case "root":
+		case "research":
+		case "review":
+		case "qa":
+		case "summarize":
+			return value;
+		default:
+			return "unknown";
+	}
+}
+
+function countField(value: unknown): SafeCount {
+	const parsed = numberField(value);
+	return parsed === undefined ? unknownCount("not-reported") : { state: "known", value: parsed };
+}
+
+function unknownCount(reason: string): SafeCount {
+	return { state: "unknown", reason };
 }
 
 async function inspectSecurityMode(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<SecurityModeSnapshot>> {

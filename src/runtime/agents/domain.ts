@@ -7,7 +7,7 @@ import type { AttemptPort } from "../session-runtime/attempt-gateway.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
 import type { AgentTool } from "../types.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
-import { createRuntimeId, isRuntimeId, type AgentId, type SessionId, type ToolCallId } from "../protocol/ids.ts";
+import { createRuntimeId, isRuntimeId, type AgentId, type SessionId } from "../protocol/ids.ts";
 import { AgentGraphStore } from "./graph-store.ts";
 import { AgentSupervisor, type AgentRecoverySummary, type PreviousOwnerLiveness, type SupervisorChildRuntimeTemplate } from "./supervisor.ts";
 import { createInProcessChildRuntimeProvider, type ChildRuntimeProviderPort } from "./child-runtime.ts";
@@ -76,11 +76,6 @@ export type MultiAgentDomainCreationResult = MultiAgentResult<MultiAgentDomainPo
 /** Root identity is stable for the canonical Session and contains no model input. */
 export function deriveRootAgentId(sessionId: SessionId): AgentId {
 	return createRuntimeId("agent", `root-${runtimeDigest({ scope: "session-root-agent", sessionId }).digest}`);
-}
-
-/** Domain commands may reuse the exact identity produced by the model tool. */
-export function deriveSpawnEffectId(sessionId: SessionId, toolCallId: ToolCallId | string): string {
-	return `effect_${runtimeDigest({ scope: "agent.spawn", sessionId, toolCallId }).digest}`;
 }
 
 export async function createMultiAgentDomain(

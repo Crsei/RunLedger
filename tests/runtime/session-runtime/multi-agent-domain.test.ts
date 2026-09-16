@@ -9,10 +9,9 @@ import type { SessionDomainResult } from "../../../src/runtime/session-runtime/d
 import {
 	createMultiAgentDomain,
 	deriveRootAgentId,
-	deriveSpawnEffectId,
 	type MultiAgentDomainPort,
 } from "../../../src/runtime/agents/domain.ts";
-import { createSpawnAgentTool } from "../../../src/runtime/agents/spawn-tool.ts";
+import { createSpawnAgentTool, deriveToolEffectId } from "../../../src/runtime/agents/spawn-tool.ts";
 import { createSessionProductionToolSource } from "../../../src/runtime/agents/capability-subset.ts";
 import type { ChildModelRuntimeFactoryPort } from "../../../src/runtime/agents/child-model-runtime.ts";
 import type { ChildRuntimeProviderPort } from "../../../src/runtime/agents/child-runtime.ts";
@@ -226,7 +225,7 @@ describe("Session Domain multi-agent consumer", () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.sessionId).toBe(sessionId);
 		expect(calls[0]?.toolCallId).toBe(toolCallId);
-		expect(calls[0]?.effectId).toBe(deriveSpawnEffectId(sessionId, toolCallId));
+		expect(calls[0]?.effectId).toBe(deriveToolEffectId(sessionId, toolCallId));
 		expect(calls[0]?.source).toBe("model_tool");
 	});
 
@@ -277,7 +276,7 @@ describe("Session Domain multi-agent consumer", () => {
 			sessionId: harness.sessionId,
 			toolCallId: createRuntimeId("toolCall", "shared-replay"),
 		});
-		const second = await created.value.mutate("agent.spawn", input, { correlationId: "domain", effectId: deriveSpawnEffectId(harness.sessionId, createRuntimeId("toolCall", "shared-replay")), expectedRevision: 0 });
+		const second = await created.value.mutate("agent.spawn", input, { correlationId: "domain", effectId: deriveToolEffectId(harness.sessionId, createRuntimeId("toolCall", "shared-replay")), expectedRevision: 0 });
 		expect(first.details).toEqual(expect.objectContaining({ report: expect.objectContaining({ outcome: "completed" }) }));
 		expect(second).toMatchObject({ ok: true, status: "ok", value: { report: expect.objectContaining({ outcome: "completed" }) } });
 		expect(prepareCalls).toBe(1);

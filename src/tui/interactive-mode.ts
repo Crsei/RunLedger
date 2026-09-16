@@ -103,6 +103,7 @@ import { ModelWorkflow } from "./interactive/model-workflow.ts";
 import { AuthWorkflow } from "./interactive/auth-workflow.ts";
 import { ExtensionWorkflow } from "./interactive/extension-workflow.ts";
 import { PlanWorkflow } from "./interactive/plan-workflow.ts";
+import { AgentWorkflow } from "./interactive/agent-workflow.ts";
 import { PromptDumpWorkflow } from "./interactive/prompt-dump-workflow.ts";
 import { ProcessWorkflow } from "./interactive/process-workflow.ts";
 import { ApprovalWorkflow } from "./interactive/approval-workflow.ts";
@@ -278,6 +279,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly authWorkflow: AuthWorkflow;
   private readonly extensionWorkflow: ExtensionWorkflow;
   private readonly planWorkflow: PlanWorkflow;
+  private readonly agentWorkflow: AgentWorkflow;
   private readonly promptDumpWorkflow: PromptDumpWorkflow;
   private readonly processWorkflow: ProcessWorkflow;
   private readonly approvalWorkflow: ApprovalWorkflow;
@@ -377,6 +379,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.authWorkflow = new AuthWorkflow(port);
     this.extensionWorkflow = new ExtensionWorkflow(port);
     this.planWorkflow = new PlanWorkflow(port);
+    this.agentWorkflow = new AgentWorkflow(port);
     this.promptDumpWorkflow = new PromptDumpWorkflow(port);
     this.processWorkflow = new ProcessWorkflow(port);
     this.approvalWorkflow = new ApprovalWorkflow(port);
@@ -1238,6 +1241,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       case "plan.inspect":
         void this.planWorkflow.openPlanWorkflow();
+        return;
+      case "agent.inspect":
+        void this.agentWorkflow.openAgentsPanel();
         return;
       case "compaction.list":
         void this.planWorkflow.runDomainCommand("compaction.list", {}, "/compact", true);

@@ -302,6 +302,7 @@ export {
 } from "./components/list-selection-modal.ts";
 export { ExtensionToggleModal, type ExtensionToggleItem, type ExtensionToggleModalProps } from "./components/extension-toggle-modal.ts";
 export { McpServersModal, type McpServerViewItem, type McpServersModalProps } from "./components/mcp-servers-modal.ts";
+export { AgentsModal, type AgentsModalProps } from "./components/agents-modal.ts";
 export { SlashCommandSelector, type SlashCommandSelectorProps } from "./components/slash-command-selector.ts";
 export { PromptSelector, type PromptSelectorProps } from "./components/prompt-selector.ts";
 export { McpServerSelector, type McpServerSelectorProps } from "./components/mcp-server-selector.ts";

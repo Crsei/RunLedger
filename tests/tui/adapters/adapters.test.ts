@@ -260,9 +260,9 @@ describe("B4 Session resource adapter", () => {
 		expect(ports.plan).toBeDefined();
 		expect(ports.securityMode).toBeDefined();
 		expect(ports.workspaceGit).toBeDefined();
+		expect(ports.agents).toBeDefined();
 		expect(ports.runtimeSnapshot).toBeUndefined();
 		expect(ports.taskGoal).toBeUndefined();
-		expect(ports.agents).toBeUndefined();
 		expect(ports.update).toBeUndefined();
 		expect(ports.process).toBeUndefined();
 	});
@@ -277,6 +277,7 @@ describe("B4 Session resource adapter", () => {
 		expect(ports.extensions).toBeUndefined();
 		expect(ports.plan).toBeUndefined();
 		expect(ports.workspaceGit).toBeUndefined();
+		expect(ports.agents).toBeUndefined();
 	});
 
 	it("no Host channel means the ports are undefined (unavailable)", () => {
@@ -316,5 +317,58 @@ describe("B4 Session resource adapter", () => {
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error.code).toBe("session_operation_unsupported");
 		expect(query).not.toHaveBeenCalled();
+	});
+
+	it("projects the durable agent graph into bounded child rows and lifetime counts", async () => {
+		const query = vi.fn(async () => ({
+			ok: true,
+			revision: 9,
+			counts: { totalAgents: 2, nonTerminalChildren: 1, remainingLifetimeSlots: 2 },
+			nodes: [
+				{ agentId: "agent_root", role: "root", state: "running", usage: { modelTurns: 2, toolCalls: 3, activeDurationMs: 10 } },
+				{
+					agentId: "agent_child_a",
+					parentAgentId: "agent_root",
+					role: "research",
+					state: "running",
+					usage: { modelTurns: 1, toolCalls: 4, activeDurationMs: 2500 },
+				},
+				// 未识别的投影值落 unknown，且不影响其它行。
+				{ agentId: "agent_child_b", role: "no-such-role", state: "no-such-state" },
+			],
+		}));
+		const ports = createSessionResourcePorts({ query, supports: (operation) => operation === "agent.inspect" });
+		const result = await ports.agents!.inspect(request);
+		expect(query).toHaveBeenCalledWith("agent.inspect", {}, request);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.value.revision).toBe(9);
+		expect(result.value.counts).toEqual({
+			totalAgents: { state: "known", value: 2 },
+			nonTerminalChildren: { state: "known", value: 1 },
+			remainingLifetimeSlots: { state: "known", value: 2 },
+		});
+		// root 不是 child，不出现在面板列表里。
+		expect(result.value.agents.map((agent) => agent.agentId)).toEqual(["agent_child_a", "agent_child_b"]);
+		expect(result.value.agents[0]).toMatchObject({
+			role: "research",
+			state: "running",
+			parentAgentId: "agent_root",
+			usage: { modelTurns: { state: "known", value: 1 }, toolCalls: { state: "known", value: 4 }, activeDurationMs: { state: "known", value: 2500 } },
+		});
+		expect(result.value.agents[1]).toMatchObject({
+			role: "unknown",
+			state: "unknown",
+			usage: { modelTurns: { state: "unknown", reason: "not-reported" } },
+		});
+	});
+
+	it("keeps an unreported agent graph revision and node list out of the contract", async () => {
+		const noRevision = await createSessionResourcePorts({ query: async () => ({ ok: true, nodes: [] }), supports: () => true }).agents!.inspect(request);
+		expect(noRevision.ok).toBe(false);
+		if (!noRevision.ok) expect(noRevision.error.code).toBe("session_domain_malformed");
+		const badNodes = await createSessionResourcePorts({ query: async () => ({ ok: true, revision: 1, nodes: "nope" }), supports: () => true }).agents!.inspect(request);
+		expect(badNodes.ok).toBe(false);
+		if (!badNodes.ok) expect(badNodes.error.code).toBe("session_domain_malformed");
 	});
 });
