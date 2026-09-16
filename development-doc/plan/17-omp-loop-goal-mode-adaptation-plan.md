@@ -650,3 +650,25 @@ SQLite 侧确认无迁移:`schema.ts:66/:179` 的 `event_type TEXT NOT NULL` 无
 
 - 真实 CLI/TTY 的 `/goal set` → 自动续跑 → `complete` 与 `/loop 3` 精确迭代计数尚未执行：自动续跑需要真实 provider 往返，本机未配置外部 provider；owner 侧的迭代计数与审计已由 `loop-controller.test.ts` 的真实 store/owner 组合覆盖。
 - `npm run build` 与构建后 CLI 尚未在本阶段重跑。
+
+### 2026-09-17 — 真实 CLI/TTY 验收与由此发现并修复的缺陷
+
+在隔离 home、真实 tmux PTY、本地确定性 HTTP provider（每轮先调 `goal` 工具再收尾，保证 run 真正结束）下，用构建后的 `runledger` 跑通两条路径。证据目录 `/tmp/runledger-plan17-real-v49V5W`（含 `plan17goal.pane.txt`、`plan17loop.pane.txt`、`requests.jsonl`、`report.json` 与两份验收脚本）。
+
+- `/goal set Ship the goal mode adaptation end to end.` → 真实用户轮 → owner 自动续跑 → `/goal complete`：provider 观察到 4 次固定文案 `Continue the active goal.` 的续跑轮，第 5 次被 `goal.continuation_suppressed`（`max_continuations`）抑制；随后 `goal.request_complete` + `goal.settle_complete` 把目标结算为 `complete`。
+- `/loop 3 check the objective status`：恰好 4 次 `loop.iteration_submitted`（首轮 + 3 次迭代），8 次 provider 往返（每轮 2 次），最后 `loop.stopped` 的 `reasonCode` 为 `iteration_limit_reached`；loop 事件未进入 goal 会话流（两边各自独立审计）。
+
+本轮验收暴露并修复了 6 个只有真实链路才会显形的问题；每个都补了回归覆盖：
+
+1. **组合根未传 goal/loop settings**：`embedded-session-runtime` 只解析 `recap`，`goal.continuationDelaySeconds`/`loop.maxIterations` 等配置形同虚设（续跑按默认 30s 而非配置的 1s）。现按 `recap` 同款注入 `resolveGoalSettings`/`resolveLoopSettings`。
+2. **owner 侧并发提交抢 revision**：每轮 `message_end` 记账与 `agent_end` 续跑记账并发触发，互相读到过期 revision，续跑记账被 CAS 拒绝。`SessionGoalDomain` 现以单一写队列串行化全部写（含客户端 mutation）。
+3. **清除可选字段写成 `undefined`**：`resume`/`replace`/`drop`/`record_continuation` 用 `{ completion: undefined }` 表达清除，exact schema 直接拒绝，导致 `resume` 与续跑记账全部失败。`nextState` 现把显式 `undefined` 解释为删除键。
+4. **空转判定按 turn 而非按 run**：`turn_start` 就重置「本轮有工具调用」，于是末轮只回文本的 run 一律被判空转，第二次续跑起全部被抑制。改为 `agent_start` 重置、`tool_execution_end` 置位。
+5. **注入轮与在飞 run 竞态**：`agent_end` 时 `agent.inFlight` 尚未清除，直接 `prompt` 会落进 steering 队列而当前 run 已过 dequeue 点，消息无人消费 → loop 停在第 2 次迭代。goal 续跑与 loop 迭代现在都先 `waitForIdle()` 再注入。
+6. **`prompt` 丢失接收者**：两个 controller 都解构 `const prompt = controller.prompt` 后调用，丢掉 `this`；改为保留 controller 再调用。
+7. **用户结算路径不闭环**：`/goal complete` 只登记请求，没有任何客户端能结算，目标永远停在 pending。用户是唯一权威，一次 `/goal complete` 现在先登记（若未登记）再按新 revision 结算；另加 `/goal reject` 撤回请求。
+8. **loop 启动失败静默**：迭代提交失败只停止 loop，不给用户原因。现在投递 `session.loop_notice` 并记录 `prompt_failed`。
+
+验证：`npm run check`、`npm run test:runtime`、`npm run test:security-storage`、`npm run test:tui-native`、`npm run build` 通过；`tests/runtime/session-runtime/loop-controller.test.ts`（含 governed 条件真实执行与启动失败提示）、`goal-continuation.test.ts`（含空转判定按 run）、`tests/runtime/modes/goal/reducer.test.ts`（含字段清除）为对应回归。
+
+提交：`12d0552`（仅本计划改动；工作树中既有的 Web 可观测性工作按显式路径排除，混合文件用过滤补丁只暂存 `origin` 相关 hunk）。
