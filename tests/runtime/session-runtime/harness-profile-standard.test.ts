@@ -53,15 +53,15 @@ describe("standard@1 production characterization", () => {
 			"MultiEdit",
 			"bash",
 			"grep",
-			"find",
 			"glob",
 			"ls",
 			"WebFetch",
+			"todo",
 		]);
 		expect(canonicalDigest(tools.map((tool) => ({
 			name: tool.name,
 			description: tool.description,
 			parameters: tool.parameters,
-		})))).toBe("66d5088dd8a7353de830a26fb0bfeb383baabd7024163654e8ce1f6a48f67eed");
+		})))).toBe("b1a927fee83d3071ab06da810fc496c4f2fc65164eec0c5c7338ddbd76334dec");
 	});
 });

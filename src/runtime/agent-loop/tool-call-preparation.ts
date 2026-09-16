@@ -10,6 +10,7 @@ import { newId } from "../ledger/types.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
 import type { Tool } from "../../types.ts";
 import { validateToolArguments } from "../../utils/validation.ts";
+import { findToolByCallName } from "../tool-name-aliases.ts";
 import { executePreparedToolCall } from "./tool-call-execution.ts";
 import { finalizeExecutedToolCall } from "./tool-call-finalization.ts";
 import type {
@@ -91,13 +92,13 @@ export function resolveExecutionMode(
   if (fallback === "sequential") return "sequential";
   // 任一工具自身声明 executionMode="sequential" → 整批 sequential
   for (const tc of toolCalls) {
-    const tool = tools.find((t) => t.name === tc.name);
+    const tool = findToolByCallName(tools, tc.name);
     if (tool?.executionMode === "sequential") return "sequential";
   }
   // 任一工具 isConcurrencySafe?.() 不返回 true → 整批 sequential
   // (对齐 claude-code-bun docs/tools/what-are-tools.mdx §"并行执行模式")
   for (const tc of toolCalls) {
-    const tool = tools.find((t) => t.name === tc.name);
+    const tool = findToolByCallName(tools, tc.name);
     const safe = tool?.isConcurrencySafe?.();
     if (safe !== true) return "sequential";
   }
@@ -137,7 +138,8 @@ export async function prepareToolCall(
     },
   );
 
-  const tool = tools.find((t) => t.name === tc.name);
+  // 调用名先按别名表解析,再匹配规范名(如历史 `find` → `glob`)。
+  const tool = findToolByCallName(tools, tc.name);
   if (!tool) {
     return { toolCall: tc, tool: undefined, args: tc.arguments };
   }

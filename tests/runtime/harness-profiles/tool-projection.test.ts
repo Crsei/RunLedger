@@ -47,10 +47,10 @@ describe("Harness Profile tool projection", () => {
 	it("fails closed when an allowlisted governed tool is missing or duplicated", () => {
 		const tools = productionSessionTools("/workspace", inertExecutionEnv("/workspace"));
 		expect(() => projectHarnessTools(minimalDescriptor(), tools.filter((tool) => tool.name !== "edit")))
-			.toThrow(/minimal governed tool must exist exactly once: edit/u);
+			.toThrow(/governed tool must exist exactly once for minimal@1: edit/u);
 		const bash = tools.find((tool) => tool.name === "bash")!;
 		expect(() => projectHarnessTools(minimalDescriptor(), [...tools, bash]))
-			.toThrow(/minimal governed tool must exist exactly once: bash/u);
+			.toThrow(/governed tool must exist exactly once for minimal@1: bash/u);
 	});
 
 	it("fails closed before a model call when an allowlisted schema drifts in place", () => {

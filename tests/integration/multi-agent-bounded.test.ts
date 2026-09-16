@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createModels, createProvider } from "../../src/models.ts";
+import { createModels, createProvider, type Provider } from "../../src/models.ts";
 import type { ProviderStreams, Api, AssistantMessage, Context, Model, SimpleStreamOptions, StreamOptions, ToolCall } from "../../src/types.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import { AuthStorage } from "../../src/storage/auth-storage.ts";
@@ -127,6 +127,73 @@ function assistant(model: Model<Api>, content: AssistantMessage["content"]): Ass
 	};
 }
 
+/**
+ * 父 Session 首轮就发 `spawn_agent` 的 provider:同一 provider 也服务 child,
+ * 因此以"当前请求是否暴露 spawn_agent"区分父/子,而不是靠调用次数。
+ */
+function spawnProbeProvider(): Provider {
+	const streams: ProviderStreams = {
+		stream: (model, context, options) => spawnProbeStream(model, context, options),
+		streamSimple: (model, context, options) => spawnProbeStream(model, context, options),
+	};
+	return createProvider({
+		id: mockModel.provider,
+		name: "Spawn probe integration model",
+		auth: {
+			apiKey: {
+				name: "integration fixture",
+				resolve: async () => ({ auth: { apiKey: "integration-only" }, source: "integration fixture" }),
+			},
+		},
+		// mockModel 的 8k context 装不下 standard Session 的完整工具面与受保护上下文片段,
+		// 会在 assemble 阶段抛 required_fragment_exceeds_budget;本用例只验证 admission。
+		models: [{ ...mockModel, contextWindow: 200_000 }],
+		api: streams,
+	});
+}
+
+function spawnProbeStream(model: Model<Api>, context: Context, options?: StreamOptions | SimpleStreamOptions) {
+	const parentExposesSpawn = context.tools?.some((tool) => tool.name === "spawn_agent") === true;
+	const spawnCall: ToolCall = {
+		type: "toolCall",
+		id: "integration-spawn",
+		name: "spawn_agent",
+		arguments: {
+			role: "research",
+			objective: "Read fixture.txt and report the evidence.",
+			requestedCapabilities: ["workspace.read"],
+			budget: { maxModelTurns: 8, maxToolCalls: 4, maxActiveDurationMs: 20_000 },
+			output: { kind: "report", maxBytes: 4_096 },
+		},
+	};
+	const toolResultCount = context.messages.filter((message) => message.role === "toolResult").length;
+	const probe = parentExposesSpawn && toolResultCount === 0;
+	return probe ? streamOneToolCall(model, options, spawnCall) : deterministicStream(model, context, options);
+}
+
+function streamOneToolCall(model: Model<Api>, options: StreamOptions | SimpleStreamOptions | undefined, toolCall: ToolCall) {
+	const stream = createAssistantMessageEventStream();
+	const base = assistant(model, []);
+	const signal = options?.signal;
+	queueMicrotask(() => {
+		if (signal?.aborted) {
+			const aborted = { ...base, stopReason: "aborted" as const, errorMessage: "aborted" };
+			stream.push({ type: "error", reason: "aborted", error: aborted });
+			stream.end(aborted);
+			return;
+		}
+		stream.push({ type: "start", partial: base });
+		const partial = assistant(model, [toolCall]);
+		stream.push({ type: "toolcall_start", contentIndex: 0, partial });
+		stream.push({ type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify(toolCall.arguments), partial });
+		stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial });
+		const finalMessage = { ...partial, stopReason: "toolUse" as const };
+		stream.push({ type: "done", reason: "toolUse", message: finalMessage });
+		stream.end(finalMessage);
+	});
+	return stream;
+}
+
 describe("bounded multi-agent production integration", () => {
 	it("runs a real child Agent through governed read/search and returns one parent tool report", async () => {
 		const root = mkdtempSync(join(tmpdir(), "runledger-bounded-integration-"));
@@ -189,7 +256,7 @@ describe("bounded multi-agent production integration", () => {
 			const childTool = domain?.multiAgent?.tools.find((tool) => tool.name === "spawn_agent");
 			expect(childTool).toBeDefined();
 			if (childTool === undefined || domain?.childRuntime === undefined) throw new Error("production child tool was not composed");
-			expect(domain.childRuntime.productionToolSource.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["read", "write", "bash", "grep", "find", "glob", "ls"]));
+			expect(domain.childRuntime.productionToolSource.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["read", "write", "bash", "grep", "glob", "ls", "todo"]));
 			expect((childTool.parameters as { properties?: Record<string, unknown> }).properties).not.toHaveProperty("parentAgentId");
 			expect((childTool.parameters as { properties?: Record<string, unknown> }).properties).not.toHaveProperty("providerId");
 			const spawnInput = {
@@ -255,6 +322,71 @@ describe("bounded multi-agent production integration", () => {
 				"agent.activated",
 				"agent.finished",
 			]);
+		} finally {
+			await embedded?.handle.close().catch(() => undefined);
+			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
+			db.close();
+		}
+	});
+
+	it("admits a model-issued spawn_agent call through the governed Session tool gate", async () => {
+		const root = mkdtempSync(join(tmpdir(), "runledger-bounded-admission-"));
+		cleanup = () => rmSync(root, { recursive: true, force: true });
+		writeFileSync(join(root, "fixture.txt"), "needle in the governed fixture\n", "utf8");
+		const home = join(root, "home");
+		mkdirSync(home, { recursive: true, mode: 0o700 });
+		const layout = buildRunledgerLayout(home, "posix");
+		const db = openSessionDatabase(layout.database);
+		installSessionStoreSchema(db);
+		const store = new SessionStore(db);
+		const ownerStore = new OwnerStore(db);
+		const workspaceId = "bounded-admission";
+		const workspaceKey = workspacePolicyKey(workspaceId, workspaceId);
+		await saveProjectSettings({ layout }, { provider: mockModel.provider, model: mockModel.id, multiAgent: { enabled: true } });
+		await saveProjectSettings({ layout, workspaceKey }, { multiAgent: { enabled: true } });
+		const sessionId = createRuntimeId("session", "bounded-admission");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", workspaceId),
+			repositoryId: createRuntimeId("repository", workspaceId),
+			harnessProfile: standardHarnessProfileRef(),
+			settingsDigest: "a".repeat(64),
+		});
+		const models = createModels({ credentials: AuthStorage.create(layout) });
+		models.setProvider(spawnProbeProvider());
+		const settings = await loadProjectSettings({ layout });
+		const layered = await loadLayeredProjectSettings({ layout, workspaceKey });
+		const source = (layer: typeof layered.user) => layer.multiAgent.state === "valid" ? layer.multiAgent.value : undefined;
+		let embedded: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
+		try {
+			embedded = await createEmbeddedSessionRuntime({
+				sessionId,
+				store,
+				ownerStore,
+				domain: {
+					cwd: root,
+					layout,
+					settings,
+					models,
+					securitySources: noPromptTestSecurity,
+					multiAgent: { runtimeEnabled: true, user: source(layered.user), workspace: source(layered.workspace) },
+				},
+			});
+			const runtime = embedded.runtime;
+			if (runtime === undefined) throw new Error("production runtime was not claimed");
+			const domain = (runtime as unknown as { readonly domain?: SessionDomainPort }).domain;
+			if (domain === undefined) throw new Error("production Session domain was not composed");
+			expect(domain.multiAgent?.tools.map((tool) => tool.name)).toEqual(["spawn_agent"]);
+			// 走完整 Session 链路:controller 的 beforeToolCall → governed 门禁 →
+			// spawn_agent.execute。名单式门禁会在这里静默拒绝,模型只看到 tool_admission_denied。
+			await domain.controller.prompt("spawn a scout to read the fixture");
+			const results = domain.snapshot().messages
+				.filter((message) => message.role === "toolResult")
+				.flatMap((message) => message.content)
+				.filter((content) => content.toolName === "spawn_agent");
+			expect(results).toHaveLength(1);
+			expect(results[0]!.isError).not.toBe(true);
+			expect(JSON.stringify(results[0]!.details)).toContain("completed");
 		} finally {
 			await embedded?.handle.close().catch(() => undefined);
 			await embedded?.runtime?.shutdownAfterLastAttachment("paused");

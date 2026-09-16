@@ -26,7 +26,7 @@ import {
   createEditTool,
   createBashTool,
   createGrepTool,
-  createFindTool,
+  createGlobTool,
   createLsTool,
 } from "../src/index.ts";
 import type { AgentTool, ToolContext } from "../src/index.ts";
@@ -102,7 +102,7 @@ describe("stdlib tool concurrency / read-only markers", () => {
     { name: "edit", tool: createEditTool("."), isDestructive: true },
     { name: "bash", tool: createBashTool("."), isDestructive: true },
     { name: "grep", tool: createGrepTool("."), isReadOnly: true, isConcurrencySafe: true },
-    { name: "find", tool: createFindTool("."), isReadOnly: true, isConcurrencySafe: true },
+    { name: "glob", tool: createGlobTool("."), isReadOnly: true, isConcurrencySafe: true },
     { name: "ls", tool: createLsTool("."), isReadOnly: true, isConcurrencySafe: true },
     { name: "echo", tool: echoTool, isReadOnly: true, isConcurrencySafe: true },
   ];

@@ -3,12 +3,8 @@
 import type { HarnessProfileDescriptor } from "./types.ts";
 import type { AgentTool } from "../types.ts";
 import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
+import { frozenToolManifest } from "./frozen-manifests.ts";
 import { createMinimalBashDelegate, HarnessToolProjectionError } from "./minimal-bash.ts";
-
-const MINIMAL_MANIFESTS: Readonly<Record<number, string>> = {
-	1: "3325e5598de3f84582ef89c65532a6c969355c3eb4821bd19c4529ea7bdacafc",
-	2: "ae5d2f08cd47a0c48d2a1408eae36e4cac0376a3f8a7d9bc339b8894c2350712",
-};
 
 export interface HarnessToolProjection {
 	readonly tools: readonly AgentTool[];
@@ -19,21 +15,27 @@ export function projectHarnessTools(
 	descriptor: HarnessProfileDescriptor,
 	governedTools: readonly AgentTool[],
 ): HarnessToolProjection {
+	// standard 直通:catalog 增长(新增模型可见工具)不改变本 profile 语义,故不 pin。
 	if (descriptor.tools.mode === "standard") return projection(governedTools);
 
 	const projected = descriptor.tools.allowlist.map((name) => {
 		const matches = governedTools.filter((tool) => tool.name === name);
 		if (matches.length !== 1) {
 			throw new HarnessToolProjectionError(
-				`minimal governed tool must exist exactly once: ${name} (found ${matches.length})`,
+				`governed tool must exist exactly once for ${descriptor.id}@${descriptor.version}: ${name} (found ${matches.length})`,
 			);
 		}
 		const tool = matches[0]!;
 		return name === "bash" ? createMinimalBashDelegate(tool) : tool;
 	});
 	const result = projection(projected);
-	const expected = descriptor.id === "plan" ? "7b5b2a3c5e04a75321d057bbdc9dac200dc97878088e62427f49afb1c3640f5e" : MINIMAL_MANIFESTS[descriptor.version];
-	if (result.manifestDigest.digest !== expected) {
+	const frozen = frozenToolManifest(descriptor.id, descriptor.version);
+	if (frozen === undefined) {
+		throw new HarnessToolProjectionError(
+			`${descriptor.id}@${descriptor.version} is an allowlist profile without a frozen tool manifest`,
+		);
+	}
+	if (result.manifestDigest.digest !== frozen.raw) {
 		throw new HarnessToolProjectionError(
 			`${descriptor.id}@${descriptor.version} tool manifest drift: ${result.manifestDigest.digest}`,
 		);

@@ -1,5 +1,5 @@
 /**
- * M4 占位工具单测 —— MultiEdit / WebFetch / Skill / NotebookEdit / TodoWrite.
+ * M4 占位工具单测 —— MultiEdit / WebFetch / Skill / NotebookEdit / todo。
  *
  * 覆盖:
  *   - MultiEdit: 一次调用 N 处编辑 + 任一 fail 整体 abort(不写文件)。
@@ -9,14 +9,14 @@
  *   - Skill: handler 不存在 → 友好提示。
  *   - Skill: handler 命中 → 透传结果。
  *   - NotebookEdit: 永远返回 not-implemented 提示。
- *   - TodoWrite: 整盘覆盖增删改 status。
+ *   - todo: 相位表 op 模型(init/append/start/done/block/view)。
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { createMultiEditTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoWriteTool, MemoryLedger } from "../src/index.ts";
+import { createMultiEditTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoTool, MemoryLedger } from "../src/index.ts";
 
 describe("M4 占位工具", () => {
   describe("MultiEdit", () => {
@@ -35,8 +35,8 @@ describe("M4 占位工具", () => {
       const r = await tool.execute("tc", {
         filePath: "a.txt",
         edits: [
-          { oldString: "alpha", newString: "ALPHA" },
-          { oldString: "gamma", newString: "GAMMA" },
+          { oldText: "alpha", newText: "ALPHA" },
+          { oldText: "gamma", newText: "GAMMA" },
         ],
       });
       const after = await readFile(fp, "utf8");
@@ -44,7 +44,7 @@ describe("M4 占位工具", () => {
       expect(r.details.applied).toBe(2);
     });
 
-    it("任一 oldString 不存在 → abort(不写文件)", async () => {
+    it("任一 oldText 不存在 → abort(不写文件)", async () => {
       const fp = path.join(dir, "b.txt");
       await writeFile(fp, "hello world", "utf8");
       const tool = createMultiEditTool(dir);
@@ -52,8 +52,8 @@ describe("M4 占位工具", () => {
         tool.execute("tc", {
           filePath: "b.txt",
           edits: [
-            { oldString: "hello", newString: "HELLO" },
-            { oldString: "missing", newString: "x" },
+            { oldText: "hello", newText: "HELLO" },
+            { oldText: "missing", newText: "x" },
           ],
         }),
       ).rejects.toThrow();
@@ -67,10 +67,23 @@ describe("M4 占位工具", () => {
       const tool = createMultiEditTool(dir);
       const r = await tool.execute("tc", {
         filePath: "c.txt",
-        edits: [{ oldString: "x", newString: "Y", replaceAll: true }],
+        edits: [{ oldText: "x", newText: "Y", replaceAll: true }],
       });
       expect(await readFile(fp, "utf8")).toBe("Y Y Y");
       expect(r.details.applied).toBe(1);
+    });
+
+    it("prepareArguments 接受外部命名 oldString/newString 与 path", async () => {
+      const fp = path.join(dir, "d.txt");
+      await writeFile(fp, "one two", "utf8");
+      const tool = createMultiEditTool(dir);
+      const prepared = tool.prepareArguments!({
+        path: "d.txt",
+        edits: [{ oldString: "one", newString: "1", replace_all: true }],
+      });
+      expect(prepared).toEqual({ filePath: "d.txt", edits: [{ oldText: "one", newText: "1", replaceAll: true }] });
+      await tool.execute("tc", prepared);
+      expect(await readFile(fp, "utf8")).toBe("1 two");
     });
   });
 
@@ -173,23 +186,121 @@ describe("M4 占位工具", () => {
     });
   });
 
-  describe("TodoWrite", () => {
-    it("整盘覆盖:增 2 = written 2、删 1 = deleted 1", async () => {
+  describe("todo(op 模型)", () => {
+    it("init 建表 + start/done 改单条,不整表重发", async () => {
       const ledger = new MemoryLedger();
-      const tool = createTodoWriteTool({ ledger });
-      // 第一轮:写两条
-      const r1 = await tool.execute("tc", {
-        todos: [
-          { content: "task A", status: "pending" },
-          { content: "task B", status: "in_progress" },
-        ],
+      const tool = createTodoTool({ ledger });
+
+      const init = await tool.execute("tc", {
+        op: "init",
+        list: [{ phase: "Foundation", items: ["scaffold crate", "wire workspace"] }],
       });
-      expect(r1.details).toMatchObject({ written: 2, deleted: 0 });
-      // 第二轮:只保留 A,旧 B 被删
-      const r2 = await tool.execute("tc", {
-        todos: [{ content: "task A", status: "in_progress" }],
-      });
-      expect(r2.details).toMatchObject({ written: 0, updated: 1, deleted: 1 });
+      expect(init.details.operation).toBe("init");
+      // 无 in_progress 时最早的 pending 自动提升。
+      expect(init.details.phases).toEqual([
+        { name: "Foundation", tasks: [
+          { content: "scaffold crate", status: "in_progress" },
+          { content: "wire workspace", status: "pending" },
+        ] },
+      ]);
+
+      const done = await tool.execute("tc", { op: "done", task: "scaffold crate" });
+      expect(done.details.transitions).toEqual([{ phase: "Foundation", content: "scaffold crate", to: "completed" }]);
+      expect(done.details.phases[0]!.tasks).toEqual([
+        { content: "scaffold crate", status: "completed" },
+        { content: "wire workspace", status: "in_progress" },
+      ]);
+    });
+
+    it("append 建新相位,block 记录 blocker,view 只读不写", async () => {
+      const ledger = new MemoryLedger();
+      const tool = createTodoTool({ ledger });
+      await tool.execute("tc", { op: "init", list: [{ phase: "A", items: ["one"] }] });
+      const appended = await tool.execute("tc", { op: "append", phase: "B", items: ["two"] });
+      expect(appended.details.phases.map((phase) => phase.name)).toEqual(["A", "B"]);
+
+      const blocked = await tool.execute("tc", { op: "block", task: "two", reason: "waiting on schema" });
+      expect(blocked.details.phases[1]!.tasks[0]).toEqual({ content: "two", status: "blocked", blocker: "waiting on schema" });
+
+      const before = (await ledger.findByType("custom")).length;
+      const viewed = await tool.execute("tc", { op: "view" });
+      expect(viewed.details.transitions).toEqual([]);
+      expect((await ledger.findByType("custom")).length).toBe(before);
+    });
+
+    it("未给 task/phase 时目标为全部任务;给 phase 时只作用于该相位", async () => {
+      const ledger = new MemoryLedger();
+      const tool = createTodoTool({ ledger });
+      await tool.execute("tc", { op: "init", list: [
+        { phase: "A", items: ["a1"] },
+        { phase: "B", items: ["b1"] },
+      ] });
+
+      const phaseOnly = await tool.execute("tc", { op: "done", phase: "A" });
+      expect(phaseOnly.details.phases[0]!.tasks[0]).toMatchObject({ status: "completed" });
+      // A 相位完成后没有 in_progress,最早的 pending(b1)自动提升。
+      expect(phaseOnly.details.phases[1]!.tasks[0]).toMatchObject({ status: "in_progress" });
+
+      const all = await tool.execute("tc", { op: "done" });
+      expect(all.details.transitions.map((t) => t.content).sort()).toEqual(["a1", "b1"]);
+      expect(all.details.phases.flatMap((p) => p.tasks).every((t) => t.status === "completed")).toBe(true);
+    });
+
+    it("block/unblock 必须给目标;blocked 不参与自动提升", async () => {
+      const ledger = new MemoryLedger();
+      const tool = createTodoTool({ ledger });
+      await tool.execute("tc", { op: "init", list: [{ phase: "A", items: ["first", "second"] }] });
+      await expect(tool.execute("tc", { op: "block" })).rejects.toThrow(/需要 task 或 phase 目标/);
+
+      // 把唯一 in_progress 阻断后,指针应移到下一个 pending(而不是留在 blocked)。
+      const blocked = await tool.execute("tc", { op: "block", task: "first", reason: "waiting\non\nschema" });
+      const tasks = blocked.details.phases[0]!.tasks;
+      expect(tasks[0]).toEqual({ content: "first", status: "blocked", blocker: "waiting on schema" });
+      expect(tasks[1]).toMatchObject({ status: "in_progress" });
+
+      const unblocked = await tool.execute("tc", { op: "unblock", task: "first" });
+      expect(unblocked.details.phases[0]!.tasks[0]).toEqual({ content: "first", status: "pending" });
+    });
+
+    it("rm 给目标时只删该任务,不给目标时清空整表", async () => {
+      const ledger = new MemoryLedger();
+      const tool = createTodoTool({ ledger });
+      await tool.execute("tc", { op: "init", list: [{ phase: "A", items: ["one", "two"] }] });
+      const removed = await tool.execute("tc", { op: "rm", task: "two" });
+      expect(removed.details.phases[0]!.tasks.map((t) => t.content)).toEqual(["one"]);
+
+      const cleared = await tool.execute("tc", { op: "rm" });
+      expect(cleared.details.phases).toEqual([]);
+    });
+
+    it("漏 op 时按参数形状推断(init/append)", async () => {
+      const ledger = new MemoryLedger();
+      const tool = createTodoTool({ ledger });
+      const inferredInit = await tool.execute("tc", { list: [{ phase: "A", items: ["one"] }] } as never);
+      expect(inferredInit.details).toMatchObject({ operation: "init", inferredOp: true });
+
+      const inferredAppend = await tool.execute("tc", { phase: "A", items: ["two"] } as never);
+      expect(inferredAppend.details).toMatchObject({ operation: "append", inferredOp: true });
+      expect(inferredAppend.details.phases[0]!.tasks.map((t) => t.content)).toEqual(["one", "two"]);
+    });
+
+    it("init 支持扁平 items 写法", async () => {
+      const ledger = new MemoryLedger();
+      const tool = createTodoTool({ ledger });
+      const flat = await tool.execute("tc", { op: "init", items: ["only"] });
+      expect(flat.details.phases).toEqual([
+        { name: "Tasks", tasks: [{ content: "only", status: "in_progress" }] },
+      ]);
+    });
+
+    it("非法 op 与找不到目标任务都抛错,且不写 ledger", async () => {
+      const ledger = new MemoryLedger();
+      const tool = createTodoTool({ ledger });
+      await tool.execute("tc", { op: "init", list: [{ phase: "A", items: ["only"] }] });
+      const before = (await ledger.findByType("custom")).length;
+      await expect(tool.execute("tc", { op: "done", task: "nonexistent" })).rejects.toThrow(/找不到任务 "nonexistent"/);
+      await expect(tool.execute("tc", { op: "append", items: ["x"] })).rejects.toThrow(/需要 phase/);
+      expect((await ledger.findByType("custom")).length).toBe(before);
     });
   });
 });

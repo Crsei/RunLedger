@@ -21,7 +21,6 @@ export interface AgentToolExecutedResult {
   isError: boolean;
   details?: unknown;
   addedToolNames?: string[];
-  terminate?: boolean;
 }
 
 /**
@@ -100,7 +99,6 @@ export async function executePreparedToolCall(
       isError: result.isError === true,
       details: result.details,
       addedToolNames: result.addedToolNames,
-      terminate: result.terminate,
     };
   } catch (e) {
     await updateChain;

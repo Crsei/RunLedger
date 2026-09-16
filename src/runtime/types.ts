@@ -105,19 +105,25 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
   /** 工具级执行模式覆写;未指定时跟随 AgentLoopConfig.toolExecution。 */
   executionMode?: ToolExecutionMode;
   /**
-   * 工具是否只读(无副作用)。read-only 工具可放心并发且不污染审计 ledger。
-   * 缺省 = false。
+   * 工具是否只读(无副作用)。
+   *
+   * 真实消费者是子代理能力子集与 MCP/资源描述符(见
+   * `runtime/agents/capability-subset.ts` 的只读校验)。agent-loop 不消费它:
+   * 结果预算只看 `maxResultSizeChars`,ledger 记账对每个工具都发生。
    */
   isReadOnly?: () => boolean;
   /**
    * 工具是否可与其他工具并发执行。任一非 concurrency-safe 工具在 batch 内时,
    * agent-loop 把整批降级为 sequential(对齐 claude-code-bun
    * docs/tools/what-are-tools.mdx §"并行执行模式")。缺省 = false。
+   *
+   * 注意:当前所有生产组合都传 `toolExecution: "sequential"`,因此该判定虽已实现
+   * 却不会让批次真正并行。启用并行是独立决策,不要只改这一个字段。
    */
   isConcurrencySafe?: () => boolean;
   /**
-   * 工具是否破坏性(写文件 / 改 ledger / 删除资源)。本期仅作 metadata 显式
-   * 标注不消费,留待后续 trust gate hooks(对齐 what-are-tools.mdx)。
+   * 工具是否破坏性(写文件 / 改 ledger / 删除资源)。目前只是显式 metadata,
+   * 没有任何消费者;不要据此假设存在 trust gate。
    */
   isDestructive?: () => boolean;
   /**
@@ -134,9 +140,14 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
  *
  * - `content` 回灌给 LLM 的文本/图像。
  * - `details` 给审计日志/UI 渲染用的结构化数据(自由 schema)。
- * - `addedToolNames` deferred tool loading:本条 result 之后请把列出的工具
- *   加入 AgentContext.tools;兼容支持该字段的 provider 会下发到下一轮 LLM。
- * - `terminate` 批次内所有 finalized 都置 true 时才会提前停止 agent 循环。
+ * - `addedToolNames` 是 **wire 层** 的 deferred tool loading 信号:它只被
+ *   provider 转换读取(见 `src/utils/deferred-tools.ts`),由历史中的该字段决定
+ *   哪些工具定义按需下发。agent-loop 不会据此改写 `AgentContext.tools` ——
+ *   工具集只在 turn 边界经 `prepareNextTurn` 变化。
+ *
+ * 批次早停不存在:续跑只由 assistant 的 `stopReason` 决定(见 `loop-runner.ts`
+ * 的 `hasMoreToolCalls`)。需要提前结束的调用应通过 `runBudget` 或用户中断表达,
+ * 不要新增未实现的 result 字段。
  */
 export interface AgentToolResult<T = unknown> {
   content: (TextContent | ImageContent)[];
@@ -144,7 +155,6 @@ export interface AgentToolResult<T = unknown> {
   /** 工具已完成但结果应作为错误回灌,例如 bash 非零退出。 */
   isError?: boolean;
   addedToolNames?: string[];
-  terminate?: boolean;
 }
 
 // ===== AgentMessage =====
@@ -191,8 +201,6 @@ export interface ToolResultContent {
   details?: unknown;
   /** deferred tool loading 提示;convertToLlm 时透传到 pi-ai ToolResultMessage */
   addedToolNames?: string[];
-  /** 与 pi 一致的早停 hint;agent-loop 按"批次内全部 finalized 都置 true"判定 */
-  terminate?: boolean;
 }
 
 export type AgentMessage = UserAgentMessage | AssistantAgentMessage | ToolResultAgentMessage;
@@ -227,7 +235,6 @@ export interface AfterToolCallResult {
   content?: (TextContent | ImageContent)[];
   details?: unknown;
   isError?: boolean;
-  terminate?: boolean;
 }
 
 // ===== AgentEvent =====
@@ -265,7 +272,19 @@ export type AgentEvent =
       role: "user" | "assistant";
       stopReason?: StopReason;
       message?: AgentMessage;
+      modelCallId?: string;
       runId?: string;
+    }
+  | {
+      type: "model_call";
+      dispatched?: boolean;
+      timestamp: number;
+      runId?: string;
+      originSessionId: string;
+      callId: string;
+      startedAtMs: number;
+      phase: "started" | "finished";
+      usage?: AssistantAgentMessage["usage"];
     }
   | { type: "message_update"; timestamp: number; assistantMessageEvent: RuntimeAssistantMessageEvent; runId?: string }
   | {

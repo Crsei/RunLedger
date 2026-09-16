@@ -70,7 +70,7 @@ export function createWebFetchTool(options: WebFetchToolOptions = {}): AgentTool
 	async execute(_toolCallId, params, signal): Promise<{
       content: Array<{ type: "text"; text: string }>;
       details: WebFetchDetails;
-      terminate: false;
+
     }> {
       const input = params.url;
       if (!input) throw new Error("WebFetch: url 必填");
@@ -122,7 +122,6 @@ export function createWebFetchTool(options: WebFetchToolOptions = {}): AgentTool
           fetchedBytes: fetched.length,
           truncated,
         },
-        terminate: false,
       };
     },
   };

@@ -10,8 +10,9 @@ import type { AgentTool } from "../types.ts";
 
 type ClaimKind = Extract<CapabilityName, "repository_read" | "workspace_write" | "process" | "network">;
 
-const READ_TOOLS = new Set(["read", "grep", "find", "glob", "ls"]);
-const WRITE_TOOLS = new Set(["write", "edit", "MultiEdit", "TodoWrite"]);
+// 只列实际注册的工具名:别名调用(历史 `find`)解析到 glob 实例,claims 随实例走。
+const READ_TOOLS = new Set(["read", "grep", "glob", "ls"]);
+const WRITE_TOOLS = new Set(["write", "edit", "MultiEdit", "todo"]);
 const PROCESS_TOOLS = new Set(["bash", "process_output", "process_wait", "write_stdin", "process_stop", "process_resize"]);
 
 export function builtinCapabilityClaims(toolName: string): readonly CapabilityClaim[] | undefined {

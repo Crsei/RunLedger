@@ -30,6 +30,8 @@ export function resolveToolAccessRequests(
 ): SecurityResult<readonly AccessRequest[]> {
 	const args = record(argumentsValue);
 	if (!args) return failure("tool arguments must be an object");
+	// `find` 是 `glob` 的历史调用名:调用解析会落到 glob 实例,但分类按调用名做,
+	// 因此别名同样按 filesystem read 处理。
 	if (["read", "ls", "grep", "find", "glob"].includes(toolName)) {
 		return { ok: true, value: [{ kind: "filesystem", operation: "read", path: pathFrom(args) ?? cwd }] };
 	}

@@ -86,6 +86,7 @@ import {
 	resolveHarnessComposition,
 	resolveHarnessProfile,
 } from "../harness-profiles/index.ts";
+import { SessionModelCalls, observeSessionModels } from "./model-call-observer.ts";
 import type { HarnessCompositionReceipt } from "../harness-profiles/index.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
@@ -125,6 +126,7 @@ export async function assembleSessionDomain(
 	runBudgetUsage?: AgentRunBudgetUsage,
 	multiAgentPreviousOwnerLiveness?: PreviousOwnerLiveness,
 ): Promise<SessionDomainPort> {
+	const models = observeSessionModels(options.models, new SessionModelCalls(store, fence));
 	const ledger = new SqliteLedgerSink({ store, fence: () => fence });
 	const replay = await replayDomain(ledger, restored);
 	const catalog = store.getSession(sessionId);
@@ -315,11 +317,12 @@ export async function assembleSessionDomain(
 			],
 		};
 	};
-	const controller = await InteractiveSessionController.create({
+	let controller: InteractiveSessionController;
+	controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
 		systemPrompt: harnessComposition.systemPrompt,
-		models: options.models,
+		models,
 		settings: options.settings,
 		replay,
 		ledger,
@@ -331,6 +334,9 @@ export async function assembleSessionDomain(
 		authorizationPolicy: new GovernedToolAuthorizationPolicy({
 			basePolicy: security.authorizationPolicy, planState: () => planDomain.inspect().state,
 			planProfileReadonly: planReadonly, planArtifactWriteTools: planTools.writeGates,
+			// 基准是 controller 的当前工具实例,含之后 `addTools` 追加的 Session-owned
+			// 工具(如 spawn_agent);构造期快照会漏掉它们并静默拒绝。
+			admittedTools: () => controller.composedTools,
 		}),
 		traceRecorderFactory,
 		...(extensions?.hookRuntime === undefined || !harnessProfile.descriptor.extensions.hooks
@@ -353,7 +359,7 @@ export async function assembleSessionDomain(
 
 	});
 	compaction = new SessionCompactionDomain({
-		store, fence, layout: options.layout, models: options.models,
+		store, fence, layout: options.layout, models,
 		getInput: (model) => withContextSources(controller.compactionInput(model)),
 		getHistory: () => defaultConvertToLlm([...controller.messages]),
 		getPruneHints: () => {
@@ -413,7 +419,7 @@ export async function assembleSessionDomain(
 	titleLifecycle = new SessionTitleLifecycle({
 			sessionId,
 			fence,
-			models: options.models,
+			models,
 			enabled: options.settings.autoTitle !== false,
 		getSelection: () => controller.currentSelection,
 		getCurrentTitle: () => store.getSession(sessionId)?.title,

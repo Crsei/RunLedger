@@ -6,7 +6,8 @@
  * MCP / Skills / 用户态注入工具铺路。
  *
  * 合并策略:
- *   - 同 namespace 内 first-wins(先注册胜出,后注册的同名工具被拒收)
+ *   - 同 namespace 内 first-wins(先注册胜出,后注册的同名工具被拒收,并记入
+ *     `listConflicts()`;不得静默丢弃的组合点用 `registerStrict()` 直接抛错)
  *   - 跨 namespace 隔离(`get(name)` 命中前精确匹配 namespace,再兜底全局)
  *   - `list()` 不带 namespace 时返回所有 namespace 的扁平列表
  *
@@ -37,6 +38,26 @@ export interface RegisterOptions {
   version?: string;
 }
 
+/** 一次被 first-wins 拒绝的注册。composition 可据此诊断同名工具撞车。 */
+export interface ToolRegistryConflict {
+  readonly name: string;
+  readonly namespace: string;
+  /** 已注册并胜出的工具。 */
+  readonly kept: AgentTool;
+  /** 被拒收的工具。 */
+  readonly rejected: AgentTool;
+}
+
+/** `registerStrict` 在撞车时抛出,用于不得静默丢弃的 composition 点。 */
+export class ToolRegistryConflictError extends Error {
+  public readonly code = "tool_registry_conflict" as const;
+
+  public constructor(conflict: ToolRegistryConflict) {
+    super(`duplicate tool in namespace ${conflict.namespace}: ${conflict.name}`);
+    this.name = "ToolRegistryConflictError";
+  }
+}
+
 const DEFAULT_NAMESPACE = "stdlib";
 
 /**
@@ -44,19 +65,40 @@ const DEFAULT_NAMESPACE = "stdlib";
  */
 export class ToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
+  private readonly conflicts: ToolRegistryConflict[] = [];
 
   /**
-   * 注册工具。同名同 namespace 已存在时不变(first-wins)。
-   * 返回是否成功(false = 被先注册的覆盖)。
+   * 注册工具。同名同 namespace 已存在时不变(first-wins),并把这次被拒的注册
+   * 记入 `listConflicts()`;返回是否成功(false = 被先注册的覆盖)。
    */
   register(tool: AgentTool, opts: RegisterOptions = {}): boolean {
     const ns = opts.namespace ?? DEFAULT_NAMESPACE;
     const key = makeKey(ns, tool.name);
-    if (this.tools.has(key)) {
+    const existing = this.tools.get(key);
+    if (existing !== undefined) {
+      this.conflicts.push({ name: tool.name, namespace: ns, kept: existing.tool, rejected: tool });
       return false;
     }
     this.tools.set(key, { tool, namespace: ns, version: opts.version });
     return true;
+  }
+
+  /**
+   * 同 `register`,但撞车时抛出 —— 供"同名即组合错误"的 composition 使用,
+   * 避免像 `register` 那样静默改变可见工具集。
+   */
+  registerStrict(tool: AgentTool, opts: RegisterOptions = {}): void {
+    const ns = opts.namespace ?? DEFAULT_NAMESPACE;
+    const existing = this.tools.get(makeKey(ns, tool.name));
+    if (existing !== undefined) {
+      throw new ToolRegistryConflictError({ name: tool.name, namespace: ns, kept: existing.tool, rejected: tool });
+    }
+    this.tools.set(makeKey(ns, tool.name), { tool, namespace: ns, version: opts.version });
+  }
+
+  /** 累计被 first-wins 拒绝的注册;按发生顺序。 */
+  listConflicts(): readonly ToolRegistryConflict[] {
+    return [...this.conflicts];
   }
 
   /**

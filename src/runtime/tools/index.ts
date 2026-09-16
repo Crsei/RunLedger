@@ -10,10 +10,12 @@
  *   - write : 写文件,递归建目录
  *   - edit  : 多块 oldText → newText + replaceAll + findActualString
  *   - bash  : 受治理 shell 执行,stdout/stderr 截断 + stdin + output_format；后台请求在 Host manager 接线前 fail closed
- *   - grep  : ripgrep / grep 查找 + afterContext + beforeContext + multiline + outputFormat
- *   - find  : fd / find glob
- *   - glob  : 第一方手写 ** 递归(无外部依赖)
+ *   - grep  : ripgrep / grep 查找 + afterContext + beforeContext + multiline + outputFormat + skip 翻页
+ *   - glob  : 第一方手写 ** 递归(无外部依赖);不含 `/` 的 pattern 任意深度匹配,
+ *             支持 hidden / gitignore 过滤。历史 `find` 工具已并入 glob,旧调用名由
+ *             注册表的别名条目继续解析到同一个工具实例。
  *   - ls    : 列目录
+ *   - todo  : 相位化任务表(op 增量更新),需注入 ledger 才持久化
  *
  * 兼容:echo.ts 中 demo echo tool 也归入 stdlib namespace,但走自己的
  * `name: "echo"`,不与上面冲突。
@@ -29,10 +31,9 @@ import { createEditTool, type EditToolOptions } from "./edit.ts";
 import { createMultiEditTool } from "./multi-edit.ts";
 import { createBashTool, type ManagedBackgroundBashOperations } from "./bash.ts";
 import { createGrepTool } from "./grep.ts";
-import { createFindTool } from "./find.ts";
 import { createGlobTool, type GlobToolOptions } from "./glob.ts";
 import { createLsTool, type LsToolOptions } from "./ls.ts";
-import { createTodoWriteTool } from "./todo-write.ts";
+import { createTodoTool, type TodoToolOptions } from "./todo.ts";
 import { createWebFetchTool } from "./web-fetch.ts";
 import { createSkillTool } from "./skill.ts";
 import { createNotebookEditTool } from "./notebook-edit.ts";
@@ -55,6 +56,8 @@ export interface StdlibToolsOptions {
 	readonly skillLoader?: import("./skill.ts").SkillLoader;
 	/** Host-governed permission request port；P6 接入完整 approval UX。 */
 	readonly permissionRequester?: RequestPermissionsPort;
+	/** todo 工具的持久化 sink;未注入时 todo 只在进程内维护状态。 */
+	readonly ledger?: import("../ledger/types.ts").LedgerSink;
 }
 
 /**
@@ -83,11 +86,11 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
 		...(options.managedProcess === undefined ? {} : { managedProcess: options.managedProcess }),
 	}));
   register(createGrepTool(cwd, helperShell === undefined ? {} : { shell: helperShell }));
-  register(createFindTool(cwd, helperShell === undefined ? {} : { shell: helperShell }));
   register(createGlobTool(cwd, env === undefined ? {} : { operations: globOperations(env) }));
   register(createLsTool(cwd, env === undefined ? {} : { operations: lsOperations(env) }));
   register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }));
   register(createSkillTool(options.skillLoader === undefined ? {} : { loader: options.skillLoader }));
+	register(createTodoTool(options.ledger === undefined ? {} : { ledger: options.ledger }));
 	register(createNotebookEditTool());
 	if (options.permissionRequester !== undefined) register(createRequestPermissionsTool(options.permissionRequester));
 	register(echoTool);
@@ -130,6 +133,7 @@ function editOperations(env: ExecutionEnv): NonNullable<EditToolOptions["operati
 function globOperations(env: ExecutionEnv): NonNullable<GlobToolOptions["operations"]> {
 	return {
 		readdir: (path) => env.fs.readdir(path),
+		readFile: (path) => env.fs.readFile(path),
 		stat: async (path) => {
 			const value = await env.fs.stat(path);
 			return { isDirectory: value.isDirectory, mtimeMs: value.mtimeMs, isSymbolicLink: value.isSymbolicLink === true };
@@ -183,15 +187,9 @@ function isCompleteProcessToolClient(
 		typeof client.resize === "function";
 }
 
-/**
- * 创建带 ledger 注入的扩展工具集(stdlib + Task 系列 + TodoWrite)。
- * 与 pi "全 18 工具集"对齐:9 stdlib + 3 Task + 1 TodoWrite + MultiEdit +
- * WebFetch + Skill + NotebookEdit。
- */
+/** 带 ledger 的 stdlib 视图:todo 的持久化由 createStdlibTools 的 ledger 选项承担。 */
 export function createExtendedTools(cwd: string = process.cwd(), taskOptions: { ledger?: import("../ledger/types.ts").LedgerSink } = {}): ToolRegistry {
-  const r = createStdlibTools(cwd);
-  r.register(createTodoWriteTool(taskOptions), { namespace: "stdlib" });
-  return r;
+  return createStdlibTools(cwd, taskOptions);
 }
 
 /** AgentTool[] 视图,与 AgentContext.tools 直接相容。 */
@@ -199,7 +197,8 @@ export function stdlibTools(cwd: string = process.cwd()): AgentTool[] {
   return createStdlibTools(cwd).toContext();
 }
 
-export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createFindTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoWriteTool };
+export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoTool };
+export type { TodoToolOptions };
 export { createProcessOutputTool, createProcessWaitTool, createWriteStdinTool, createProcessStopTool, createProcessResizeTool };
 export { createRequestPermissionsTool } from "../../security/tools/request-permissions.ts";
 export { echoTool };

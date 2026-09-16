@@ -44,8 +44,8 @@ describe("explicit schema migration CLI", () => {
 			const migration = run(root, ["migrate", "schema", "--confirm"]);
 			expect(migration.stderr).not.toContain("migration failed");
 			expect(migration.status).toBe(0);
-			expect(migration.stdout).toContain("schema 6 ready");
-			expect(db.querySingle("SELECT schema_version FROM schema_meta")).toEqual({ schema_version: 6 });
+			expect(migration.stdout).toContain("schema 7 ready");
+			expect(db.querySingle("SELECT schema_version FROM schema_meta")).toEqual({ schema_version: 7 });
 		} finally { db.close(); }
 	}, 60_000);
 });

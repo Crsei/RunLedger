@@ -102,10 +102,10 @@ describe("R1 exact 首版 schema", () => {
 
 	it("freezes the current schema with exact harness profile columns and invariants", () => {
 		const exported = sessionSchema as unknown as Record<string, unknown>;
-		expect(SESSION_STORE_SCHEMA_VERSION).toBe(6);
+		expect(SESSION_STORE_SCHEMA_VERSION).toBe(7);
 		expect(exported.SESSION_STORE_SCHEMA_V4_SQL).toBe(SESSION_STORE_SCHEMA_V3_SQL + EXPECTED_HARNESS_SCHEMA_SQL);
 		expect(exported.SESSION_STORE_SCHEMA_V3_TO_V4_SQL).toBe(EXPECTED_HARNESS_SCHEMA_SQL);
-		expect(sessionStoreSchemaFormatDigest()).toBe(sessionStoreSchemaFormatDigest(exported.SESSION_STORE_SCHEMA_V6_SQL as string));
+		expect(sessionStoreSchemaFormatDigest()).toBe(sessionStoreSchemaFormatDigest(exported.SESSION_STORE_SCHEMA_V7_SQL as string));
 
 		const db = openInstalled();
 		const columns = db.queryAll("PRAGMA table_info(sessions)")

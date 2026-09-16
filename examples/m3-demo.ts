@@ -1,16 +1,15 @@
 /**
- * Task 系列 + MultiEdit + WebFetch + lockfile + high-water 演示。
+ * todo(op 模型)+ MultiEdit + lockfile + high-water 演示。
  *
  * 用法:
  *   npx tsx examples/m3-demo.ts
  *
  * 行为(全程无网络,无 LLM):
  *   1. 开 JsonlLedger 到 tmp 目录(含 lockfile)
- *   2. createTaskTool / createTaskUpdateTool / createTaskListTool 演示任务 timeline
- *   3. createTodoWriteTool 作整盘覆盖演示
- *   4. highWaterMark 跟踪
- *   5. MultiEdit 多处编辑同一文件演示
- *   6. acquireLedgerLock 互斥验证
+ *   2. createTodoTool 演示相位任务表的 op 增量更新
+ *   3. highWaterMark 跟踪
+ *   4. MultiEdit 多处编辑同一文件演示
+ *   5. acquireLedgerLock 互斥验证
  */
 
 import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
@@ -24,16 +23,8 @@ import {
   LedgerLockError,
 } from "../src/runtime/ledger/lockfile.ts";
 import { newId } from "../src/runtime/ledger/types.ts";
-import { createTaskTool, createTaskUpdateTool, createTaskListTool } from "../src/runtime/tasks/task-tools.ts";
-import { createTodoWriteTool } from "../src/runtime/tools/todo-write.ts";
+import { createTodoTool } from "../src/runtime/tools/todo.ts";
 import { createMultiEditTool } from "../src/runtime/tools/multi-edit.ts";
-
-function requireTaskId(details: unknown): string {
-  if (typeof details !== "object" || details === null || !("taskId" in details) || typeof details.taskId !== "string") {
-    throw new Error("Task creation did not return a taskId");
-  }
-  return details.taskId;
-}
 
 async function main() {
   const dir = await mkdtemp(path.join(tmpdir(), "m3-demo-"));
@@ -55,34 +46,23 @@ async function main() {
     await release();
     console.log("  isLocked after release =", await isLedgerLocked(fp));
 
-    console.log("\n=== phase 2: Task 系列 timeline ===");
-    const task = createTaskTool({ ledger });
-    const up = createTaskUpdateTool({ ledger });
-    const list = createTaskListTool({ ledger });
-    const a = requireTaskId((await task.execute("demo", { content: "实现 Task 类型", priority: "high" })).details);
-    const b = requireTaskId((await task.execute("demo", { content: "lockfile 机制", priority: "high" })).details);
-    const c = requireTaskId((await task.execute("demo", { content: "high-water mark 演示", priority: "medium" })).details);
-    await up.execute("demo", { taskId: a, status: "in_progress" });
-    await up.execute("demo", { taskId: b, status: "in_progress" });
-    await up.execute("demo", { taskId: b, status: "completed" });
-    console.log("  现存任务清单:");
-    (await list.execute("demo", {})).content.forEach((c) => console.log("   ", (c as { text: string }).text));
-
-    console.log("\n  其中曾任 in_progress 的 task A 在 B 转为 in_progress 时已自动落 pending(排他机制)");
-
-    console.log("\n=== phase 3: TodoWrite 整盘覆盖 ===");
-    const todo = createTodoWriteTool({ ledger });
-    const r = await todo.execute("demo", {
-      todos: [
-        { content: "实现 Task 类型", status: "completed" },
-        { content: "lockfile 机制", status: "completed" },
-        { content: "high-water mark 演示", status: "in_progress" },
-        { content: "M6 文档同步", status: "pending" },
+    console.log("\n=== phase 2: todo op 模型 ===");
+    const todo = createTodoTool({ ledger });
+    const init = await todo.execute("demo", {
+      op: "init",
+      list: [
+        { phase: "Task 系列", items: ["实现任务表", "lockfile 机制"] },
+        { phase: "演示", items: ["high-water mark 演示", "M6 文档同步"] },
       ],
     });
-    console.log("  TodoWrite: ", (r.content[0] as { text: string }).text);
-    console.log("  最最新清单:");
-    (await list.execute("demo", {})).content.forEach((c) => console.log("   ", (c as { text: string }).text));
+    console.log("  todo init:");
+    console.log((init.content[0] as { text: string }).text);
+    const started = await todo.execute("demo", { op: "start", task: "lockfile 机制" });
+    console.log("  todo start(指针移到 lockfile,原 in_progress 落回 pending):");
+    console.log((started.content[0] as { text: string }).text);
+    const done = await todo.execute("demo", { op: "done" });
+    console.log("  todo done(未给 task/phase 时目标是全部任务,与参考实现一致):");
+    console.log((done.content[0] as { text: string }).text);
 
     console.log("\n最终 highWaterMark:", ledger.highWaterMark(), "(单躅自旋单调增)");
     await ledger.close();
@@ -91,11 +71,13 @@ async function main() {
     const mEdit = createMultiEditTool(dir);
     const fp2 = path.join(dir, "demo.txt");
     await writeFile(fp2, "alpha beta gamma delta", "utf8");
+    // 直接调 execute 需给规范字段;agent-loop 路径会先过 prepareArguments,
+    // 因此 oldString/newString/replace_all 等外部命名同样可用。
     const er = await mEdit.execute("demo", {
       filePath: "demo.txt",
       edits: [
-        { oldString: "alpha", newString: "ALPHA" },
-        { oldString: "delta", newString: "DELTA" },
+        { oldText: "alpha", newText: "ALPHA" },
+        { oldText: "delta", newText: "DELTA" },
       ],
     });
     console.log("  MultiEdit 详情:", (er.content[0] as { text: string }).text);

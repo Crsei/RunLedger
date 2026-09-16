@@ -61,16 +61,12 @@ export function localGrepShell(cwd: string): Shell {
   return localExecutionEnv(cwd).shell;
 }
 
-/** find 默认 shell。 */
-export function localFindShell(cwd: string): Shell {
-  return localExecutionEnv(cwd).shell;
-}
-
-/** glob 默认 ops：本地 fs readdir/stat。 */
+/** glob 默认 ops：本地 fs readdir/stat/readFile(.gitignore)。 */
 export function localGlobOperations(): GlobOperations {
   const fs: FileSystem = localExecutionEnv().fs;
   return {
     readdir: (p) => fs.readdir(p),
+    readFile: (p) => fs.readFile(p),
     stat: async (p) => {
       const s = await fs.stat(p);
       return { isDirectory: s.isDirectory, mtimeMs: s.mtimeMs, isSymbolicLink: s.isSymbolicLink === true };

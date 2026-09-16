@@ -71,14 +71,14 @@ export function createPlanWriteTool(client: HostDomainToolClient): AgentTool<typ
 		parameters: planWriteSchema,
 		isReadOnly: () => false,
 		isConcurrencySafe: () => false,
-		async execute(_tc, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: PlanWriteDetails; terminate: false }> {
+		async execute(_tc, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: PlanWriteDetails }> {
 			const body = await runDomain("command", client, "plan.write", {
 				expectedRevision: params.expectedRevision,
 				expectedPlanRevision: params.expectedPlanRevision,
 				content: params.content,
 			});
 			if (body.ok === false) {
-				return { content: [{ type: "text", text: domainError(body) }], details: { code: body.code }, terminate: false };
+				return { content: [{ type: "text", text: domainError(body) }], details: { code: body.code } };
 			}
 			const state = (body.body?.state ?? {}) as Record<string, unknown>;
 			const plan = (state.plan ?? {}) as Record<string, unknown>;
@@ -88,7 +88,6 @@ export function createPlanWriteTool(client: HostDomainToolClient): AgentTool<typ
 					...(typeof state.revision === "number" ? { revision: state.revision } : {}),
 					...(typeof plan.revision === "number" ? { planRevision: plan.revision } : {}),
 				},
-				terminate: false,
 			};
 		},
 	};
@@ -117,20 +116,20 @@ export function createMemorySearchTool(client: HostDomainToolClient): AgentTool<
 		parameters: memorySearchSchema,
 		isReadOnly: () => true,
 		isConcurrencySafe: () => true,
-		async execute(_tc, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: MemorySearchDetails; terminate: false }> {
+		async execute(_tc, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: MemorySearchDetails }> {
 			const body = await runDomain("query", client, "memory.search", {
 				scope: params.scope ?? "workspace",
 				query: params.query,
 				...(params.maxResults === undefined ? {} : { maxResults: params.maxResults }),
 			});
 			if (body.ok === false) {
-				return { content: [{ type: "text", text: domainError(body) }], details: { code: body.code }, terminate: false };
+				return { content: [{ type: "text", text: domainError(body) }], details: { code: body.code } };
 			}
 			const rows = Array.isArray(body.body?.results) ? body.body.results as Record<string, unknown>[] : [];
 			const text = rows.length === 0
 				? "No matching memory records."
 				: rows.map((row) => `- [${String(row.memoryId ?? "?")}] ${String(row.title ?? "")}\n  ${String(row.snippet ?? "")}`).join("\n");
-			return { content: [{ type: "text", text }], details: { results: rows.length }, terminate: false };
+			return { content: [{ type: "text", text }], details: { results: rows.length } };
 		},
 	};
 }
@@ -155,12 +154,12 @@ export function createMemoryGetTool(client: HostDomainToolClient): AgentTool<typ
 		parameters: memoryGetSchema,
 		isReadOnly: () => true,
 		isConcurrencySafe: () => true,
-		async execute(_tc, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: MemoryGetDetails; terminate: false }> {
+		async execute(_tc, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: MemoryGetDetails }> {
 			const body = await runDomain("query", client, "memory.get", { memoryId: params.memoryId });
 			if (body.ok === false) {
-				return { content: [{ type: "text", text: domainError(body) }], details: { code: body.code }, terminate: false };
+				return { content: [{ type: "text", text: domainError(body) }], details: { code: body.code } };
 			}
-			return { content: [{ type: "text", text: shortBody(body.body?.record ?? body.body ?? {}) }], details: {}, terminate: false };
+			return { content: [{ type: "text", text: shortBody(body.body?.record ?? body.body ?? {}) }], details: {} };
 		},
 	};
 }
@@ -188,7 +187,7 @@ export function createMemoryProposeTool(client: HostDomainToolClient): AgentTool
 		parameters: memoryProposeSchema,
 		isReadOnly: () => false,
 		isConcurrencySafe: () => false,
-		async execute(_tc, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: MemoryProposeDetails; terminate: false }> {
+		async execute(_tc, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: MemoryProposeDetails }> {
 			const sourceDigest = params.content;
 			const body = await runDomain("command", client, "memory.propose", {
 				scope: params.scope ?? "workspace",
@@ -199,13 +198,12 @@ export function createMemoryProposeTool(client: HostDomainToolClient): AgentTool
 				sourceDigest,
 			});
 			if (body.ok === false) {
-				return { content: [{ type: "text", text: domainError(body) }], details: { code: body.code }, terminate: false };
+				return { content: [{ type: "text", text: domainError(body) }], details: { code: body.code } };
 			}
 			const proposal = (body.body?.proposal ?? {}) as Record<string, unknown>;
 			return {
 				content: [{ type: "text", text: `memory proposal ${String(proposal.proposalId ?? "?")} pending approval` }],
 				details: { ...(typeof proposal.proposalId === "string" ? { proposalId: proposal.proposalId } : {}) },
-				terminate: false,
 			};
 		},
 	};

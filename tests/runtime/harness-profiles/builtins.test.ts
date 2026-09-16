@@ -11,9 +11,10 @@ const STANDARD_DIGEST = "377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9
 const MINIMAL_DIGEST = "f77ad882678905487fc76b109d8c88dac16622174553ae7bd08772f8a1a15fa7";
 
 describe("builtin HarnessProfiles", () => {
-	it("freezes standard@1 and minimal@1 in stable registry order", () => {
+	it("freezes every builtin in stable registry order", () => {
 		const builtins = builtinHarnessProfiles();
-		expect(builtins.map(({ id, version }) => `${id}@${version}`)).toEqual(["standard@1", "minimal@1", "minimal@2", "plan@1", "standard@2"]);
+		// plan@2 与 plan@1 并存:plan@1 只为既有 Session 的 receipt 重放保留。
+		expect(builtins.map(({ id, version }) => `${id}@${version}`)).toEqual(["standard@1", "minimal@1", "minimal@2", "plan@1", "plan@2", "standard@2"]);
 		expect(builtins.every((descriptor) => Object.isFrozen(descriptor))).toBe(true);
 		expect(builtins.every((descriptor) => Object.isFrozen(descriptor.prompt)
 			&& Object.isFrozen(descriptor.tools)
@@ -32,6 +33,15 @@ describe("builtin HarnessProfiles", () => {
 			extensions: { tools: false, context: false, hooks: false, lifecycle: false },
 			multiAgent: false,
 		});
+	});
+
+	it("keeps plan@1 and plan@2 on the same allowlist with distinct versions", () => {
+		const plans = builtinHarnessProfiles().filter((descriptor) => descriptor.id === "plan");
+		expect(plans.map((descriptor) => descriptor.version)).toEqual([1, 2]);
+		expect(plans[1]!.tools).toEqual(plans[0]!.tools);
+		expect(plans[1]!.prompt).toEqual(plans[0]!.prompt);
+		expect(harnessProfileDescriptorDigest(plans[0]!).digest)
+			.not.toBe(harnessProfileDescriptorDigest(plans[1]!).digest);
 	});
 
 	it("pins canonical descriptor digests", () => {

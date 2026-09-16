@@ -100,7 +100,6 @@ export function createLsTool(
       return {
         content: [{ type: "text", text: `${text}${hint}` }],
         details,
-        terminate: false,
       };
     },
   };

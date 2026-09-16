@@ -42,6 +42,12 @@ const grepSchema = Type.Object({
     }),
   ),
   limit: Type.Optional(Type.Number({ description: "结果行数上限,默认 100" })),
+  skip: Type.Optional(
+    Type.Number({
+      description:
+        "跳过前 N 个命中的文件(按结果顺序),用于翻页:上一页命中文件数达上限时,用 skip=已返回文件数 读取后续页。缺省 0。",
+    }),
+  ),
 });
 
 export type GrepToolInput = Static<typeof grepSchema>;
@@ -53,6 +59,8 @@ export interface GrepToolDetails {
   resultCount: number;
   resultUnit: "matches" | "files";
   matchLimitReached?: number;
+  /** 本次因 skip 被丢弃的文件数;未使用 skip 时不设置。 */
+  skippedFileCount?: number;
 }
 
 export interface GrepToolOptions {
@@ -127,24 +135,54 @@ export function createGrepTool(
         .split("\n")
         .map((l) => (l.length > MAX_LINE_LENGTH ? l.slice(0, MAX_LINE_LENGTH) + "… [truncated]" : l))
         .join("\n");
-      const { text, truncation } = truncateHead(trimmed, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes: DEFAULT_MAX_BYTES });
-      const counts = grepOutputCounts(trimmed, outputFormat, searchPath);
+      // skip 按"命中的文件"翻页:先剔除前 N 个文件的所有行,再截断与计数。
+      const paged = dropLeadingFiles(trimmed, params.skip ?? 0, searchPath);
+      const visible = paged.text;
+      const { text, truncation } = truncateHead(visible, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes: DEFAULT_MAX_BYTES });
+      const counts = grepOutputCounts(visible, outputFormat, searchPath);
       const details: GrepToolDetails = {
         truncation,
         fileCount: counts.fileCount,
         resultCount: counts.resultCount,
         resultUnit: outputFormat === "files-with-matches" ? "files" : "matches",
         ...(counts.matchCount === undefined ? {} : { matchCount: counts.matchCount }),
+        ...(paged.skipped === 0 ? {} : { skippedFileCount: paged.skipped }),
       };
       if (counts.matchCount !== undefined && counts.matchCount >= limit) details.matchLimitReached = limit;
 
       return {
         content: [{ type: "text", text: isError ? `${r.stderr}\n${r.stdout}` : text }],
         details,
-        terminate: false,
       };
     },
   };
+}
+
+/**
+ * 丢弃输出中最先出现的 `skip` 个文件的所有结果行(含其上下文行)。
+ * 文件归属复用 `grepOutputFile`,与计数口径一致;`--` 分隔行随之丢弃。
+ */
+function dropLeadingFiles(
+  output: string,
+  skip: number,
+  searchPath: string,
+): { text: string; skipped: number } {
+  if (skip <= 0 || output.length === 0) return { text: output, skipped: 0 };
+  const lines = output.split(/\r?\n/u);
+  const dropped = new Set<string>();
+  for (const line of lines) {
+    if (line.length === 0 || line === "--") continue;
+    const file = grepOutputFile(line, searchPath);
+    if (dropped.has(file)) continue;
+    if (dropped.size >= skip) break;
+    dropped.add(file);
+  }
+  if (dropped.size === 0) return { text: output, skipped: 0 };
+  const kept = lines.filter((line) => {
+    if (line.length === 0 || line === "--") return false;
+    return !dropped.has(grepOutputFile(line, searchPath));
+  });
+  return { text: kept.join("\n"), skipped: dropped.size };
 }
 
 function grepOutputCounts(

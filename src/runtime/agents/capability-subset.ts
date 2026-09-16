@@ -15,7 +15,7 @@ import { SUBAGENT_CAPABILITIES } from "./types.ts";
 
 export const CHILD_CAPABILITY_TOOL_NAMES: Readonly<Record<SubagentCapability, readonly string[]>> = Object.freeze({
 	"workspace.read": Object.freeze(["read"]),
-	"workspace.search": Object.freeze(["grep", "find", "glob"]),
+	"workspace.search": Object.freeze(["grep", "glob"]),
 	"workspace.list": Object.freeze(["ls"]),
 });
 

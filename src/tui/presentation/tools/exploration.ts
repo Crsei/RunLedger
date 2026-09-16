@@ -6,15 +6,16 @@ import type {
 	SafeToolPresentation,
 } from "./types.ts";
 import type { TimelineRow, TimelineStatus } from "../../timeline/types.ts";
+import { resolveToolName } from "../../../runtime/tool-name-aliases.ts";
 
 /** 第一方只读发现工具的精确分类；不对 MCP/plugin 名称做猜测。 */
 export type ExplorationKind = "read" | "search" | "list";
 
 export function explorationKindForTool(toolName: string): ExplorationKind | undefined {
-	switch (toolName) {
+	// 别名调用(历史 `find`)与其规范工具同组,避免同一工具两种展示。
+	switch (resolveToolName(toolName)) {
 		case "read": return "read";
-		case "grep":
-		case "find": return "search";
+		case "grep": return "search";
 		case "glob":
 		case "ls": return "list";
 		default: return undefined;
@@ -90,12 +91,14 @@ export function explorationDetailForRow(row: TimelineRow, finalized: boolean): {
 }
 
 function matchesToolInput(toolName: string, input: SafeToolInputMetadata): boolean {
-	if (toolName === "read") return input.kind === "read";
-	if (toolName === "grep") return input.kind === "grep";
-	if (toolName === "find") return input.kind === "find";
-	if (toolName === "glob") return input.kind === "glob";
-	if (toolName === "ls") return input.kind === "ls";
-	return false;
+	// projector 已按规范名派生 input kind,因此这里也必须先解析别名。
+	switch (resolveToolName(toolName)) {
+		case "read": return input.kind === "read";
+		case "grep": return input.kind === "grep";
+		case "glob": return input.kind === "glob";
+		case "ls": return input.kind === "ls";
+		default: return false;
+	}
 }
 
 function targetForInput(input: SafeToolInputMetadata): SafeBoundedText | undefined {

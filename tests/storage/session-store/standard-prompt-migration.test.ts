@@ -30,7 +30,7 @@ describe("standard prompt schema migration", () => {
 			expect(migrateSessionStoreToCurrent(db)).toMatchObject({ ok: false, code: "active_owners_present" });
 			expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 5 } });
 			db.runSync("UPDATE session_owners SET state = 'unowned' WHERE session_id = ?", [legacyId]);
-			expect(migrateSessionStoreToCurrent(db)).toMatchObject({ ok: true, storeVersion: 6 });
+			expect(migrateSessionStoreToCurrent(db)).toMatchObject({ ok: true, storeVersion: 7 });
 			expect(store.getSession(legacyId)?.harnessProfile).toEqual(standardHarnessProfileRef());
 			store.createSession({ ...identity, sessionId: currentId, harnessProfile: standardHarnessProfileRef(2) });
 			expect(store.getSession(currentId)?.harnessProfile).toEqual(standardHarnessProfileRef(2));

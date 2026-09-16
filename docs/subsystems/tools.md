@@ -8,19 +8,35 @@
 
 `AgentTool` 把 model-facing name/description/parameters 与 host-side `execute()`、只读声明、capability claims 和展示 metadata 绑定。模型只接收工具 schema；执行函数、Security object、cwd native path 和 receipt identity 不进入模型输入。
 
-`ToolRegistry` 以 namespace + name 注册工具，拒绝同一可见集合中的冲突，并输出 `AgentContext.tools`。registry 管理发现与选择，不授予执行权限；工具在 prompt 中可见后仍要经过 hook、authorization 和最终 leaf 检查。
+`ToolRegistry` 以 namespace + name 注册工具，并输出 `AgentContext.tools`。同 namespace 同名注册是 first-wins，被拒的那次记入 `listConflicts()`；不允许静默丢弃的组合点改用 `registerStrict()` 直接抛错。registry 管理发现与选择，不授予执行权限；工具在 prompt 中可见后仍要经过 hook、authorization 和最终 leaf 检查。
+
+工具名别名（`src/runtime/tool-name-aliases.ts`）只在**调用解析**时生效：模型发出的 `toolCall.name` 先按别名表解析（如历史 `find` → `glob`），再匹配规范名。别名不会新增注册条目，也不改变 provider 看到的工具表；admission 按工具实例身份判定，因此别名调用与规范名调用的授权结果一致。
 
 ## Production tool composition
 
-`createStdlibTools()` 可以构造 read/write/edit/multi-edit/bash/grep/find/glob/ls/web-fetch、可选 permission/process tools 以及兼容工具。标准 Session domain 强制传入 `requireExecutionEnv: true`，再显式排除 demo/placeholder 工具，并叠加 LSP、Extension Skill、MCP 和可选 bounded-subagent tool。
+`createStdlibTools()` 可以构造 read/write/edit/multi-edit/bash/grep/glob/ls/web-fetch/todo、可选 permission/process tools 以及兼容工具；`todo` 经注入的 `ledger` 选项持久化。标准 Session domain 强制传入 `requireExecutionEnv: true`，再显式排除 demo/placeholder 工具，并叠加 LSP、Extension Skill、MCP 和可选 bounded-subagent tool。
 
 生产工具集由 [`productionSessionTools()`](../../src/runtime/session-runtime/domain.ts)与 Session extension composition 共同决定。新增工具文件但不在这里组合，不会让标准 CLI 自动获得该能力。
+
+工具可见 schema 是**版本化**的：`tools.mode === "allowlist"` 的 Harness Profile（`minimal`、`plan`）把被投影工具的 name/description/parameters 摘要冻结在 [`frozen-manifests.ts`](../../src/runtime/harness-profiles/frozen-manifests.ts)，投影与 receipt 重放都按它 fail closed。因此任一被投影工具的描述或 schema 变化都必须**新增 profile version**，而不是改写既有版本的摘要；旧版本条目继续为已存在 Session 的重放服务。`standard` 是直通投影，工具表增长不需要新版本。
 
 ## ExecutionEnv
 
 `ExecutionEnv` 聚合 cwd-bound `FileSystem`、`Network` 与 `Shell` port。低层测试可以使用 `localExecutionEnv()`；生产 Session 使用 Security composition 返回的 governed implementation。
 
-Read/grep/find/glob/ls 经 governed filesystem/shell 读取；write/edit/multi-edit 经 governed filesystem 修改；WebFetch 经 governed network；Bash 与 process tools 经 governed shell/managed process。工具不得在 execute 内另开 raw filesystem、fetch 或 child process 作为 fallback。
+Read/grep/glob/ls 经 governed filesystem/shell 读取（`glob` 的 `.gitignore` 读取也走同一 governed fs port）；write/edit/multi-edit 经 governed filesystem 修改；WebFetch 经 governed network；Bash 与 process tools 经 governed shell/managed process；`todo` 写入注入的 `LedgerSink`。工具不得在 execute 内另开 raw filesystem、fetch 或 child process 作为 fallback。
+
+`read` 接受内联行选择器（`file:A-B`、`file:-N`、多段、`:raw` 复合）。**未实现的模式**（`:conflicts`、`:img`）与非法选择器一律报错，而不是静默放宽成整文件读取。
+
+## 新增 model-facing tool 的准入清单
+
+1. 在 `src/runtime/tools/<name>.ts` 定义 `AgentTool`，并声明 `capabilityClaims`（缺 claim ⇒ Plan Mode 一律 `plan_mode_unknown_effect` 拒绝）。
+2. 在 `createStdlibTools()` 注册，或在组合点显式注入（`Session domain` 的 base/governed 工具表，或 `controller.addTools`）。工具不得只在 `ToolRegistry.register` 里出现却不进组合。
+3. admission 门禁按 Session 组合出的工具实例身份判定；组合点必须把该实例纳入注入的工具集，否则调用会被拒。
+4. 判定是否进入 `minimal`/`plan` allowlist；若进入，按上文新增 profile version 并同步冻结摘要。
+5. 判定 access classification（`src/security/permission/access-resolver.ts`），否则该工具落进不透明的 `{kind:"tool"}` 分支，filesystem/network 规则不再适用。
+6. 补展示：TUI `rendererForTool` 的显式登记（`tests/tui/presentation/tools/projector.test.ts` 的登记表会因未登记而失败）与 Web `RENDERERS`。
+7. 更新 golden/digest 测试（`tests/runtime/session-runtime/harness-profile-standard.test.ts`、`tests/stdlib-tools.test.ts`）与本页。
 
 ## 调用流水线
 

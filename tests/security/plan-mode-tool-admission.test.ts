@@ -8,6 +8,8 @@ import { echoTool } from "../../src/runtime/tools/echo.ts";
 import { createStdlibTools } from "../../src/runtime/tools/index.ts";
 import { createRequestPermissionsTool } from "../../src/security/tools/request-permissions.ts";
 import { HostGovernedToolAuthorizationPolicy } from "../../src/security/integration/runtime-tool-authorization.ts";
+import { createSpawnAgentTool } from "../../src/runtime/agents/spawn-tool.ts";
+import { MULTI_AGENT_HARD_LIMITS } from "../../src/runtime/agents/limits.ts";
 import { createLspTool } from "../../src/lsp/tool.ts";
 
 const sessionId = createRuntimeId("session", "plan-tool-admission");
@@ -44,18 +46,62 @@ function request(tool: AgentTool): ToolAuthorizationRequest {
 	};
 }
 
-describe("Host tool admission in Plan Mode", () => {
-	it("admits the governed Skill and request_permissions tool names outside Plan Mode", () => {
-		const policy = new HostGovernedToolAuthorizationPolicy();
-		const skill = createStdlibTools("/tmp/runledger-plan-policy").get("Skill")!;
-		const requestPermissions = createRequestPermissionsTool();
-		expect(policy.authorize(request(skill))).toEqual({ decision: "allow" });
-		expect(policy.authorize(request(requestPermissions))).toEqual({ decision: "allow" });
+/**
+ * 复制一个工具并改名(可附带 claims)。先把实例放宽到 `AgentTool`,否则
+ * 具体泛型的 `execute` 签名无法赋给默认类型参数。
+ */
+function renameTool(tool: AgentTool, name: string, capabilityClaims?: readonly CapabilityClaim[]): AgentTool {
+	return { ...tool, name, ...(capabilityClaims === undefined ? {} : { capabilityClaims }) };
+}
+
+/** 生产 composition 会组合出的、非 stdlib 来源的 Session-owned 工具。 */
+function sessionOwnedTools(): readonly AgentTool[] {
+	return [
+		createSpawnAgentTool({
+			domain: { spawn: async () => ({ ok: false as const, error: { code: "runtime_unavailable" as const, message: "fixture" } }) },
+			policy: { enabled: true, limits: MULTI_AGENT_HARD_LIMITS },
+			sessionId,
+			rootAgentId: createRuntimeId("agent", "plan-tool-admission-root"),
+			ownerGeneration: 1,
+		}),
+	];
+}
+
+describe("governed tool admission", () => {
+	it("admits every tool the Session composition actually exposes", () => {
+		const registry = createStdlibTools("/tmp/runledger-plan-policy");
+		const composed = [...registry.toContext(), createRequestPermissionsTool(), ...sessionOwnedTools()];
+		const policy = new HostGovernedToolAuthorizationPolicy({ admittedTools: () => composed });
+		for (const tool of composed) {
+			expect(policy.authorize(request(tool)), `${tool.name} must be admitted`).toEqual({ decision: "allow" });
+		}
+		// 名单式实现曾漏掉这些工具名并静默拒绝;逐个点名以防回归。
+		expect(composed.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+			"Skill", "request_permissions", "spawn_agent",
+		]));
+	});
+
+	it("admits tools appended after policy construction", () => {
+		const composed: AgentTool[] = [...createStdlibTools("/tmp/runledger-plan-policy").toContext()];
+		const policy = new HostGovernedToolAuthorizationPolicy({ admittedTools: () => composed });
+		const [spawn] = sessionOwnedTools();
+		composed.push(spawn!);
+		expect(policy.authorize(request(spawn!))).toEqual({ decision: "allow" });
+	});
+
+	it("denies a tool that is not part of the composed set", () => {
+		const registry = createStdlibTools("/tmp/runledger-plan-policy");
+		const policy = new HostGovernedToolAuthorizationPolicy({ admittedTools: () => registry.toContext() });
+		const foreign = renameTool(echoTool, "not_composed");
+		expect(policy.authorize(request(foreign))).toMatchObject({
+			decision: "deny",
+			reason: expect.stringContaining("not admitted by the governed composition"),
+		});
 	});
 
 	it("admits the governed lsp tool outside Plan Mode", () => {
-		const policy = new HostGovernedToolAuthorizationPolicy();
 		const lsp = createLspTool("/tmp/runledger-plan-policy", { getConfig: () => ({ servers: {} }) });
+		const policy = new HostGovernedToolAuthorizationPolicy({ admittedTools: () => [lsp] });
 		expect(policy.authorize(request(lsp))).toEqual({ decision: "allow" });
 	});
 
@@ -63,7 +109,7 @@ describe("Host tool admission in Plan Mode", () => {
 		const basePolicy = {
 			authorize: () => ({ decision: "deny" as const, reason: "security policy denied" }),
 		};
-		const policy = new HostGovernedToolAuthorizationPolicy({ basePolicy, planState: () => undefined });
+		const policy = new HostGovernedToolAuthorizationPolicy({ basePolicy, planState: () => undefined, admittedTools: () => [echoTool] });
 		expect(policy.authorize(request(echoTool))).toEqual({ decision: "deny", reason: "security policy denied" });
 	});
 
@@ -71,18 +117,18 @@ describe("Host tool admission in Plan Mode", () => {
 		const basePolicy = {
 			authorize: () => ({ decision: "deny" as const, reason: "security policy denied" }),
 		};
-		const policy = new HostGovernedToolAuthorizationPolicy({ basePolicy, planState: () => activeState });
+		const policy = new HostGovernedToolAuthorizationPolicy({ basePolicy, planState: () => activeState, admittedTools: () => [echoTool] });
 		expect(policy.authorize(request(echoTool))).toEqual({ decision: "deny", reason: "security policy denied" });
 	});
 
 	it("denies a write-capability tool before execute even when it is in the Host registry", () => {
-		const tool: typeof echoTool = { ...echoTool, name: "write", capabilityClaims: [claim("workspace_write", "filesystem")] };
-		const policy = new HostGovernedToolAuthorizationPolicy({ planState: () => activeState });
+		const tool = renameTool(echoTool, "write", [claim("workspace_write", "filesystem")]);
+		const policy = new HostGovernedToolAuthorizationPolicy({ planState: () => activeState, admittedTools: () => [tool] });
 		expect(policy.authorize(request(tool))).toMatchObject({ decision: "deny", reason: expect.stringContaining("plan_mode_write_denied") });
 	});
 
 	it("denies an unclaimed tool effect in Plan Mode", () => {
-		const policy = new HostGovernedToolAuthorizationPolicy({ planState: () => activeState });
+		const policy = new HostGovernedToolAuthorizationPolicy({ planState: () => activeState, admittedTools: () => [echoTool] });
 		expect(policy.authorize(request(echoTool))).toMatchObject({ decision: "deny", reason: expect.stringContaining("plan_mode_unknown_effect") });
 	});
 

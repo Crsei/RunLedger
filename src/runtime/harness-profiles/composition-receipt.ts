@@ -1,5 +1,6 @@
 /** 模型 composition 的 bounded receipt；不保存 prompt 或 extension 正文。 */
 
+import { frozenToolManifest } from "./frozen-manifests.ts";
 import { resolveHarnessProfile } from "./resolver.ts";
 import { harnessToolReceiptTable } from "./tool-receipt-table.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
@@ -96,15 +97,16 @@ export function auditHarnessCompositionReceipts(input: {
 			|| (resolved.descriptor.tools.mode === "allowlist" && runtimeDigest(parsed.tools.map((tool) => tool.name)).digest !== runtimeDigest(resolved.descriptor.tools.allowlist).digest)) {
 			return failure("descriptor_mismatch", event, "harness receipt violates the exact builtin descriptor");
 		}
-		if (parsed.profile.id === "plan" && (parsed.manifestFormat !== "descriptor-digests@1" || parsed.toolManifestDigest.digest !== "d11dcb4da8c9e40e0f03c31f807d1511c9c2f38663b851021e0d6e00c1032cf6")) {
-			return failure("tool_manifest_mismatch", event, "plan tool descriptors differ from the frozen builtin manifest");
-		}
-		if (parsed.profile.id === "minimal") {
-			const expected = parsed.manifestFormat === undefined
-				? (parsed.profile.version === 1 ? "3325e5598de3f84582ef89c65532a6c969355c3eb4821bd19c4529ea7bdacafc" : "ae5d2f08cd47a0c48d2a1408eae36e4cac0376a3f8a7d9bc339b8894c2350712")
-				: (parsed.profile.version === 1 ? "d2c8fe72792fcd0313513f23eab6ddd7f0f6e9073796c01fa245e1818a2c9327" : "dc93397ad8328602012d01d24bda980f50fd970e5c6527855421685c2941e1ea");
-			const expectedTable = parsed.profile.version === 1 ? "d2c8fe72792fcd0313513f23eab6ddd7f0f6e9073796c01fa245e1818a2c9327" : "dc93397ad8328602012d01d24bda980f50fd970e5c6527855421685c2941e1ea";
-			if (parsed.toolManifestDigest.digest !== expected || runtimeDigest(parsed.tools).digest !== expectedTable) return failure("tool_manifest_mismatch", event, "minimal tool descriptors differ from the frozen builtin manifest");
+		// allowlist profile(plan/minimal)比对冻结 manifest;冻结值集中在
+		// frozen-manifests.ts,新增 version 时两处口径不会漂移。
+		const frozen = frozenToolManifest(parsed.profile.id, parsed.profile.version);
+		if (frozen !== undefined) {
+			// 旧 receipt 没有 manifestFormat 标记,其 toolManifestDigest 用的是 raw 形态;
+			// 当前格式则统一为 table 形态。
+			const expectedManifest = parsed.manifestFormat === undefined ? frozen.raw : frozen.table;
+			if (parsed.toolManifestDigest.digest !== expectedManifest || runtimeDigest(parsed.tools).digest !== frozen.table) {
+				return failure("tool_manifest_mismatch", event, `${parsed.profile.id} tool descriptors differ from the frozen builtin manifest`);
+			}
 		}
 		if (new Set(parsed.tools.map((tool) => tool.name)).size !== parsed.tools.length
 			|| (parsed.manifestFormat !== undefined && runtimeDigest(parsed.tools).digest !== parsed.toolManifestDigest.digest)) {

@@ -74,7 +74,8 @@ describe("Codex exploration output summary", () => {
 	it("classifies only exact first-party discovery tool names", () => {
 		expect(explorationKindForTool("read")).toBe("read");
 		expect(explorationKindForTool("grep")).toBe("search");
-		expect(explorationKindForTool("find")).toBe("search");
+		// find 已是 glob 的历史调用名,与规范工具同组。
+		expect(explorationKindForTool("find")).toBe("list");
 		expect(explorationKindForTool("glob")).toBe("list");
 		expect(explorationKindForTool("ls")).toBe("list");
 		expect(explorationKindForTool("Read")).toBeUndefined();

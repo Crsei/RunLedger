@@ -326,7 +326,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 				trustStore: extensionTrustStore,
 				principalId: extensionPrincipalId,
 				storage: extensionStorage,
-				currentTools: () => ["read", "write", "edit", "MultiEdit", "bash", "grep", "find", "glob", "ls", "WebFetch", "Task", "TaskList", "TaskUpdate", "TodoWrite"],
+				currentTools: () => ["read", "write", "edit", "MultiEdit", "bash", "grep", "glob", "ls", "WebFetch", "todo"],
 			}),
 			extensionIdentity: {
 				authorityId: scope.authorityId,

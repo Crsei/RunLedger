@@ -22,7 +22,7 @@ function fakeTool(name: string): AgentTool {
 }
 
 describe("ToolRegistry", () => {
-  it("register first-wins: 同 namespace 同名再注册被静默拒绝", () => {
+  it("register first-wins: 同 namespace 同名再注册被拒收并记为冲突", () => {
     const r = new ToolRegistry();
     const t1 = fakeTool("a");
     const t2 = fakeTool("a");
@@ -30,6 +30,22 @@ describe("ToolRegistry", () => {
     expect(r.register(t2)).toBe(false);
     expect(r.get("a")).toBe(t1);
     expect(r.size).toBe(1);
+    expect(r.listConflicts()).toEqual([{ name: "a", namespace: "stdlib", kept: t1, rejected: t2 }]);
+  });
+
+  it("registerStrict 在同名撞车时抛错而不是改变可见工具集", () => {
+    const r = new ToolRegistry();
+    r.registerStrict(fakeTool("plan_write"));
+    expect(() => r.registerStrict(fakeTool("plan_write"))).toThrowError(/duplicate tool in namespace stdlib: plan_write/);
+    expect(r.size).toBe(1);
+    expect(r.listConflicts()).toEqual([]);
+  });
+
+  it("registerStrict 允许跨 namespace 同名", () => {
+    const r = new ToolRegistry();
+    r.registerStrict(fakeTool("read"), { namespace: "stdlib" });
+    expect(() => r.registerStrict(fakeTool("read"), { namespace: "mcp" })).not.toThrow();
+    expect(r.size).toBe(2);
   });
 
   it("register 跨 namespace 隔离:同名不同 namespace 互不影响", () => {

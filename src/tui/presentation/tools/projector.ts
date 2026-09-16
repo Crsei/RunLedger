@@ -32,6 +32,7 @@ import {
 	EXEC_OUTPUT_MAX_LINES_USER_SHELL,
 	EXEC_OUTPUT_PREFIX,
 } from "../../opentui/block-layout.ts";
+import { resolveToolName } from "../../../runtime/tool-name-aliases.ts";
 
 /** 工具正文/标签的显示上界；超出截断并标记 truncated。 */
 export const TOOL_TEXT_BOUND_BYTES = 64 * 1024;
@@ -59,29 +60,51 @@ export function boundedToolText(value: unknown, maxBytes = TOOL_TEXT_BOUND_BYTES
 	};
 }
 
-/** TodoWrite 输入 -> 有界 plan update；不把 raw args 直接交给 renderer。 */
+/**
+ * `todo` 调用的输入 -> 有界 plan update;不把 raw args 直接交给 renderer。
+ *
+ * op 模型下,`init`/`append` 携带可展示的任务条目;单条变更 op 只带 `task`,
+ * 展示为一条对应 status 的步骤。`view` 只读,不产生步骤。
+ */
 export function projectPlanUpdate(input: unknown): SafePlanUpdate {
 	if (!isRecord(input)) return { steps: [] };
-	const rawTodos = Array.isArray(input.todos) ? input.todos.slice(0, PLAN_STEP_MAX_COUNT) : [];
-	const steps = rawTodos.flatMap((todo): SafePlanUpdate["steps"] => {
-		if (!isRecord(todo)) return [];
-		const content = typeof todo.content === "string" ? todo.content : typeof todo.text === "string" ? todo.text : "";
-		if (content.length === 0) return [];
-		return [{ text: boundedToolText(content), status: planStepStatus(todo.status) }];
-	});
+	const steps: Array<SafePlanUpdate["steps"][number]> = [];
+	const list = Array.isArray(input.list) ? input.list.slice(0, PLAN_STEP_MAX_COUNT) : [];
+	for (const entry of list) {
+		if (!isRecord(entry)) continue;
+		const items = Array.isArray(entry.items) ? entry.items.slice(0, PLAN_STEP_MAX_COUNT) : [];
+		for (const item of items) {
+			if (typeof item !== "string" || item.length === 0) continue;
+			steps.push({ text: boundedToolText(item), status: "pending" });
+		}
+	}
+	const appended = Array.isArray(input.items) ? input.items : [];
+	for (const item of appended) {
+		if (typeof item !== "string" || item.length === 0) continue;
+		steps.push({ text: boundedToolText(item), status: "pending" });
+	}
+	if (typeof input.task === "string" && input.task.length > 0) {
+		steps.push({ text: boundedToolText(input.task), status: planStepStatus(input.op) });
+	}
+	// `explanation` 不在 todo schema 里,但计划型调用可能携带;渲染链读它,故保留透传。
 	const explanation = typeof input.explanation === "string" ? boundedToolText(input.explanation) : undefined;
 	return {
 		...(explanation === undefined ? {} : { explanation }),
-		steps,
+		steps: steps.slice(0, PLAN_STEP_MAX_COUNT),
 	};
 }
 
+/** todo op → 展示状态:done→completed、start→in-progress、其余(含 block/drop)→pending。 */
 function planStepStatus(value: unknown): SafePlanStepStatus {
 	switch (value) {
+		case "done":
 		case "completed": return "completed";
+		case "start":
 		case "in_progress":
 		case "in-progress": return "in-progress";
-		case "pending": return "pending";
+		case "pending":
+		case "append":
+		case "init": return "pending";
 		default: return "pending";
 	}
 }
@@ -98,15 +121,18 @@ function safeBytes(value: unknown): SafeCount {
 		: { state: "unknown", reason: "not-reported" };
 }
 
-/** 工具名 -> 安全 renderer（unknown 工具归 generic，不做路由）。 */
+/**
+ * 工具名 -> 安全 renderer（unknown 工具归 generic，不做路由）。
+ *
+ * 别名调用(如历史 `find`)先解析到规范名,使展示与它实际执行的工具一致;
+ * 事件流仍保留模型发出的原名,所以这里必须自己解析而不能依赖调用方归一。
+ */
 export function rendererForTool(toolName: string): SafeToolRenderer {
-	switch (toolName) {
+	switch (resolveToolName(toolName)) {
 		case "bash":
 		case "sh":
 		case "!":
 			return "shell";
-		case "TodoWrite":
-		case "todo-write":
 		case "todo":
 		case "plan":
 			return "plan";

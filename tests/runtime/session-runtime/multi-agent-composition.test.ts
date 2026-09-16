@@ -227,7 +227,8 @@ describe("SessionRuntime multi-agent composition", () => {
 			const subset = await deriveGovernedChildCapabilitySubset(productionSource, ["workspace.read", "workspace.search", "workspace.list"]);
 			expect(subset).toMatchObject({ ok: true });
 			if (!subset.ok) return;
-			expect(subset.value.tools.map((tool) => tool.name)).toEqual(["read", "grep", "find", "glob", "ls"]);
+			// find 已并入 glob,子代理能力子集里不再有独立条目。
+			expect(subset.value.tools.map((tool) => tool.name)).toEqual(["read", "grep", "glob", "ls"]);
 		} finally {
 			await embedded?.handle.close().catch(() => undefined);
 			await embedded?.runtime?.shutdownAfterLastAttachment("paused");

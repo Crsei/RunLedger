@@ -58,19 +58,18 @@ export function createRequestPermissionsTool(port?: RequestPermissionsPort): Age
 		isConcurrencySafe: () => false,
 		async execute(toolCallId, params, signal) {
 			if (port === undefined) {
-				return { content: [{ type: "text", text: "Permission request denied: governed Host port unavailable." }], details: { ok: false, code: "governed_port_unavailable" }, terminate: false };
+				return { content: [{ type: "text", text: "Permission request denied: governed Host port unavailable." }], details: { ok: false, code: "governed_port_unavailable" } };
 			}
 			let result: SecurityResult<PermissionGrant>;
 			try {
 				result = await port.request({ toolCallId, scope: params.scope, permissions: params.permissions }, signal);
 			} catch {
-				return { content: [{ type: "text", text: "Permission request denied: governed Host port failed." }], details: { ok: false, code: "governed_port_failed" }, terminate: false };
+				return { content: [{ type: "text", text: "Permission request denied: governed Host port failed." }], details: { ok: false, code: "governed_port_failed" } };
 			}
-			if (!result.ok) return { content: [{ type: "text", text: `Permission request denied: ${result.error.message}` }], details: { ok: false, code: result.error.code }, terminate: false };
+			if (!result.ok) return { content: [{ type: "text", text: `Permission request denied: ${result.error.message}` }], details: { ok: false, code: result.error.code } };
 			return {
 				content: [{ type: "text", text: `Permission grant approved for ${result.value.scope}.` }],
 				details: { ok: true, scope: result.value.scope, grantId: result.value.grantId },
-				terminate: false,
 			};
 		},
 	};

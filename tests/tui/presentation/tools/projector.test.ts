@@ -18,6 +18,7 @@ import {
 	projectToolUsage,
 	rendererForTool,
 } from "../../../../src/tui/presentation/tools/projector.ts";
+import type { SafeToolRenderer } from "../../../../src/tui/presentation/tools/types.ts";
 
 const startedAt = "2026-08-06T00:00:00.000Z";
 
@@ -30,6 +31,33 @@ describe("B2 safe tool projector", () => {
 		expect(rendererForTool("read")).toBe("read");
 		expect(rendererForTool("grep")).toBe("grep");
 		expect(rendererForTool("totally-unknown")).toBe("generic");
+	});
+
+	/**
+	 * 每个受治理工具都必须在这里显式登记渲染归属。
+	 * 新增工具若不登记,本用例失败 —— 不允许静默落到 generic 而无人判断。
+	 */
+	it("registers an explicit renderer decision for every governed tool name", () => {
+		const decisions: Readonly<Record<string, SafeToolRenderer>> = {
+			// 专用 renderer
+			read: "read", write: "write", edit: "edit", MultiEdit: "edit",
+			bash: "shell", grep: "grep", glob: "glob", ls: "ls", todo: "plan",
+			// 历史调用名:事件流带旧名,但展示与它实际执行的 glob 一致。
+			find: "glob",
+			// 计划模式工具与扩展/子代理工具:保持 generic（无专用布局,但已显式决定）。
+			plan: "plan", plan_read: "generic", plan_write: "generic",
+			enter_plan_mode: "generic", exit_plan_mode: "generic",
+			WebFetch: "generic", Skill: "generic", lsp: "generic",
+			spawn_agent: "generic", request_permissions: "generic",
+			NotebookEdit: "generic", echo: "generic",
+			mcp_catalog: "generic", mcp_search: "generic", mcp_call: "generic",
+			process_output: "generic", process_wait: "generic",
+			write_stdin: "generic", process_stop: "generic", process_resize: "generic",
+		};
+		for (const [toolName, expected] of Object.entries(decisions)) {
+			expect(rendererForTool(toolName), `${toolName} renderer decision`).toBe(expected);
+		}
+		expect(Object.keys(decisions).length).toBeGreaterThan(0);
 	});
 
 	it("never lets raw args, secrets or base64 into the presentation", () => {

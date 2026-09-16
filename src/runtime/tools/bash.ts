@@ -157,21 +157,18 @@ export function createBashTool(
               return {
                 content: [{ type: "text", text: `background process started: ${started.handle.executionId}` }],
                 details: { background: { handle: started.handle, summary: started.summary }, outputFormat },
-                terminate: false,
               };
             }
             return {
               content: [{ type: "text", text: `background process rejected: ${started.code}` }],
               details: { outputFormat, errorCode: started.code },
               isError: true,
-              terminate: false,
             };
           } catch {
             return {
               content: [{ type: "text", text: "background process request failed" }],
               details: { outputFormat },
               isError: true,
-              terminate: false,
             };
           }
         }
@@ -190,7 +187,6 @@ export function createBashTool(
             outputFormat,
           },
           isError: true,
-          terminate: false,
         };
       }
 
@@ -205,7 +201,6 @@ export function createBashTool(
             outputFormat,
           },
           isError: true,
-          terminate: false,
         };
       }
       try {
@@ -237,7 +232,6 @@ export function createBashTool(
           content: [{ type: "text", text: `bash 执行失败: ${(e as Error).message ?? String(e)}` }],
           details: { exitCode: 127, ...(errorCode === undefined ? {} : { errorCode }) },
           isError: true,
-          terminate: false,
         };
       }
 
@@ -269,7 +263,6 @@ export function createBashTool(
         content: [{ type: "text", text }],
         details,
         isError: r.exitCode !== 0 || r.signaled === true,
-        terminate: false,
       };
     },
   };

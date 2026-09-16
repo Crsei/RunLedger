@@ -3,7 +3,7 @@
 npm test 会同时运行 Vitest 与 Bun OpenTUI 测试，测试失败时不要把历史通过记录当作当前证据。
 npm run demo 会展示模型 catalog、无密钥 mock Agent loop，以及在凭据可用时的真实 provider demo。
 npm run demo:tui 可用 mock stream 启动独立 TUI 示例，不需要远程模型密钥。
-npx tsx examples/m3-demo.ts 可演示 Task、TodoWrite、MultiEdit、ledger high-water mark 与 lockfile。
+npx tsx examples/m3-demo.ts 可演示 Task、todo、MultiEdit、ledger high-water mark 与 lockfile。
 npm run generate-models 会重新生成 provider 模型 catalog；修改 provider 或模型数据后必须重新执行它。
 npm run build 会生成 dist 与 Host build manifest；全局 runledger 只加载编译产物，不直接加载 src。
 npm link 后可用 runledger --version 检查全局链接；链接异常时先确认 npm link 指向当前仓库。
@@ -79,9 +79,9 @@ runledger migrate --source <path> --confirm-delete 会把旧 settings/auth/AGENT
 migrate 不提供 --dry-run、--read-only 或 --fallback；执行前必须确认 source 范围，迁移失败时不要手工删除 source。
 runledger migrate session-store --confirm-archive 将现行 JSONL Session 导入 state.db 并归档 source；归档本身不会物理删除 source。
 确认归档可恢复且不再需要后，才使用 runledger storage prune-legacy --manifest=<digest> --confirm-delete 物理删除指定归档。
-生产标准工具集由受治理 ExecutionEnv 提供 read、write、edit、bash、grep、find、glob、ls 等文件与命令能力。
+生产标准工具集由受治理 ExecutionEnv 提供 read、write、edit、bash、grep、glob、ls、todo 等文件、命令与任务能力。
 标准工具集另外提供 MultiEdit、WebFetch、Skill、NotebookEdit 与 echo；WebFetch、Skill 和后台进程能力仍受 Host policy 与 capability gate 控制。
-createExtendedTools 会在标准工具集上加入 TodoWrite；Task、TaskUpdate、TaskList 通过 LedgerSink 注入并把任务状态追加到 ledger。
+todo 工具用 op 增量维护相位任务表，经 createStdlibTools 的 ledger 选项持久化；find 为 glob 的历史调用名，由别名表解析。
 createStdlibAgent({ systemPrompt, cwd, model, streamFn, tools, ledger }) 可在几行代码内组装 Agent；未提供 model/streamFn 时使用 mock 默认值。
 runAgentLoop 与 Agent 支持 reasoning、toolCalls、steering、follow-up、interrupt、waitForIdle 与完整 agent/tool 事件。
 mockStreamFn 用于无密钥测试，按 toolResult 数量运行 phase 0/1/2；stdlibStreamFn 只是 mockStreamFn 的便利别名，不是新的协议。

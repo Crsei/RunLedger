@@ -223,15 +223,17 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 					command: (operation, body = {}) => options.domainClient!.command(operation, { sessionId, ...body }),
 				};
 				for (const tool of createPlanMemoryTools(bound)) {
-					tools.register(tool, { namespace: "stdlib" });
+					// Host domain 工具与 stdlib 同名即组合错误,不能静默丢弃其中一个。
+					tools.registerStrict(tool, { namespace: "stdlib" });
 				}
 			}
-			const authorizationPolicy = options.planStateProvider === undefined
-				? security?.toolAuthorizationPolicy
-				: new HostGovernedToolAuthorizationPolicy({
-					basePolicy: security?.toolAuthorizationPolicy,
-					planState: () => options.planStateProvider?.(manager.sessionId()),
-				});
+			const authorizationPolicy = new HostGovernedToolAuthorizationPolicy({
+				...(security === undefined ? {} : { basePolicy: security.toolAuthorizationPolicy }),
+				...(options.planStateProvider === undefined
+					? {}
+					: { planState: () => options.planStateProvider?.(manager.sessionId()) }),
+				admittedTools: () => tools.toContext(),
+			});
 			if (options.createMcpRuntime !== undefined) {
 				if (security === undefined) throw new Error("Host MCP requires session Security");
 				mcp = await options.createMcpRuntime({ sessionId: manager.sessionId(), sessionGeneration, cwd, toolRegistry: tools, security });

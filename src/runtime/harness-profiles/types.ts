@@ -166,11 +166,11 @@ export const HarnessCompositionReceiptSchema = Type.Object(
 );
 
 export function isHarnessProfileRef(value: unknown): value is HarnessProfileRef {
-	return Value.Check(HarnessProfileRefSchema, value) && supportedIdentity(value.id, value.version);
+	return Value.Check(HarnessProfileRefSchema, value) && supportedVersion(value.version);
 }
 
 export function isHarnessProfileDescriptor(value: unknown): value is HarnessProfileDescriptor {
-	if (!Value.Check(HarnessProfileDescriptorSchema, value) || !supportedIdentity(value.id, value.version)) return false;
+	if (!Value.Check(HarnessProfileDescriptorSchema, value) || !supportedVersion(value.version)) return false;
 	const requiresText = value.prompt.mode === "complete" || (value.id === "standard" && value.version === 2);
 	if (requiresText ? value.prompt.text === undefined : value.prompt.text !== undefined) return false;
 	if (value.tools.mode === "standard" ? value.tools.allowlist.length !== 0 : value.tools.allowlist.length === 0) return false;
@@ -181,6 +181,11 @@ export function isHarnessCompositionReceipt(value: unknown): value is HarnessCom
 	return Value.Check(HarnessCompositionReceiptSchema, value);
 }
 
-function supportedIdentity(id: HarnessProfileId, version: number): boolean {
-	return version === 1 || ((id === "minimal" || id === "standard") && version === 2);
+/**
+ * schema 级版本上界。这里不断言 `(id, version)` 一定存在 —— 该判断由
+ * `resolveHarnessProfile` 的 descriptor 查表给出(`unsupported_harness_profile`),
+ * 避免 schema 模块反向依赖 builtin registry。新增 version 时同步放宽此上界。
+ */
+function supportedVersion(version: number): boolean {
+	return Number.isSafeInteger(version) && version >= 1 && version <= 2;
 }

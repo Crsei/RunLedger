@@ -65,7 +65,7 @@ describe("Host-injected stdlib ExecutionEnv", () => {
 		]);
 	});
 
-	it("routes grep and find helper shells through the managed process facade", async () => {
+	it("routes the grep helper shell through the managed process facade", async () => {
 		const rawShellCalls: string[] = [];
 		const managedShellCalls: string[] = [];
 		const env: ExecutionEnv = {
@@ -98,10 +98,10 @@ describe("Host-injected stdlib ExecutionEnv", () => {
 		});
 
 		await tools.get("grep")?.execute("tool-grep", { pattern: "needle" });
-		await tools.get("find")?.execute("tool-find", { pattern: "*.ts" });
 
+		// glob 不再 shell 出 fd/find(第一方递归),因此只有 grep 的 shell 出站被断言。
 		expect(rawShellCalls).toEqual([]);
 		expect(managedShellCalls.some((command) => command === "rg --version")).toBe(true);
-		expect(managedShellCalls.some((command) => command === "fd --version")).toBe(true);
+		expect(managedShellCalls.some((command) => command.startsWith("fd "))).toBe(false);
 	});
 });

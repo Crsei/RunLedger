@@ -119,7 +119,6 @@ describe("governed child capability subset and model seam", () => {
 			tools: [
 				tool("read", { readOnly: true, claims: [readClaim()] }),
 				tool("grep", { readOnly: true, claims: [readClaim()] }),
-				tool("find", { readOnly: true, claims: [readClaim()] }),
 				tool("glob", { readOnly: true, claims: [readClaim()] }),
 				tool("ls", { readOnly: true, claims: [readClaim()] }),
 				tool("write", { readOnly: false }),
@@ -131,7 +130,8 @@ describe("governed child capability subset and model seam", () => {
 
 		expect(result).toMatchObject({ ok: true, value: { capabilities: ["workspace.read", "workspace.search", "workspace.list"] } });
 		if (!result.ok) return;
-		expect(result.value.tools.map((candidate) => candidate.name)).toEqual(["read", "grep", "find", "glob", "ls"]);
+		// find 已并入 glob:子集不再有独立条目。
+		expect(result.value.tools.map((candidate) => candidate.name)).toEqual(["read", "grep", "glob", "ls"]);
 		expect(result.value.tools.map((candidate) => candidate.name)).not.toContain("write");
 		expect(result.value.tools.map((candidate) => candidate.name)).not.toContain("bash");
 		expect(result.value.executionEnv).toBe(env);

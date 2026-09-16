@@ -9,11 +9,16 @@ export type {
 } from "./composition-receipt.ts";
 export { HarnessToolProjectionError, createMinimalBashDelegate, minimalBashSchema } from "./minimal-bash.ts";
 export { projectHarnessTools } from "./tool-projection.ts";
+export { FROZEN_TOOL_MANIFESTS, HARNESS_MANIFEST_FORMAT, frozenManifestVersions, frozenToolManifest } from "./frozen-manifests.ts";
+export type { FrozenToolManifest } from "./frozen-manifests.ts";
 export {
 	harnessProfileDescriptorDigest,
+	legacyPlanHarnessProfileRef,
 	minimalHarnessProfileRef,
+	planHarnessProfileRef,
 	resolveHarnessProfile,
 	resolveHarnessProfileId,
+	shellOnlyHarnessProfileRef,
 	standardHarnessProfileRef,
 } from "./resolver.ts";
 export {

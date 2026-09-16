@@ -393,6 +393,14 @@ export class InteractiveSessionController {
     return this.tools.length;
   }
 
+  /**
+   * 当前组合出的工具实例(含 `addTools` 追加的 Session-owned 工具)。
+   * 作为 admission 门禁的对象身份基准;调用方只读,不得改写数组内容。
+   */
+  get composedTools(): readonly AgentTool[] {
+    return this.tools;
+  }
+
   /** 无真实 turn 时回退 harness 基座提示词；调用方据 `source` 字段区分。 */
   get promptInspection(): PromptInspection {
     return this.requestSnapshots.promptInspection ?? this.basePromptInspection;

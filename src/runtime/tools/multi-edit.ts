@@ -2,12 +2,14 @@
  * MultiEdit 工具 —— 单次调用批量做 N 处编辑。
  *
  * 对齐 claude-code-bun docs/tools/multi-edit-tool.mdx:
- *   - 输入 filePath + edits: [{ oldString, newString, replaceAll? }]
+ *   - 输入 filePath + edits: [{ oldText, newText, replaceAll? }]
  *   - 在内存里依次应用 edits,任一处 fail 则整体 abort(不写文件)
  *   - 返回 edits applied 数 + 整体 diff 统计
  *
- * 复用 edit 工具:lenient whitespace / findActualString 占位语义;
- * 若 oldString 含全角/制表符空白差异,按字面匹配。
+ * 字段命名与 `edit` 工具统一为 `oldText`/`newText`;prepareArguments 继续接受
+ * 历史/外部调用习惯(`oldString`/`newString`、`old_string`/`new_string`、
+ * `path`/`file_path` 作为 filePath)。
+ * 匹配按字面量;`oldText` 含全角/制表符空白差异时不放宽。
  */
 
 import { Type } from "typebox";
@@ -22,8 +24,8 @@ export const multiEditSchema = Type.Object({
   filePath: Type.String({ description: "目标文件路径(相对 cwd 或绝对)" }),
   edits: Type.Array(
     Type.Object({
-      oldString: Type.String({ description: "原文片段(必须可重定位)" }),
-      newString: Type.String({ description: "新文片段" }),
+      oldText: Type.String({ description: "原文片段(必须是文件内容子串,精确匹配)" }),
+      newText: Type.String({ description: "替换为新文本" }),
       replaceAll: Type.Optional(
         Type.Boolean({ description: "为 true 则替换所有出现;缺省 false 仅首处" }),
       ),
@@ -43,6 +45,42 @@ export interface MultiEditToolOptions {
   readonly fileSystem?: FileSystem;
 }
 
+/** 归一 filePath 与 edit 字段的历史命名;失败时 throw 交由 agent-loop 转 isError。 */
+function prepareMultiEditArgs(args: unknown): MultiEditInput {
+  if (!args || typeof args !== "object") throw new Error("MultiEdit: invalid arguments");
+  const obj = args as Record<string, unknown>;
+  const filePath = obj["filePath"] ?? obj["path"] ?? obj["file_path"];
+  if (typeof filePath !== "string" || filePath === "") {
+    throw new Error("MultiEdit: filePath 必须是非空字符串");
+  }
+  let rawEdits = obj["edits"];
+  if (typeof rawEdits === "string") {
+    try {
+      rawEdits = JSON.parse(rawEdits);
+    } catch {
+      throw new Error("MultiEdit: edits 字段解析为 JSON 失败");
+    }
+  }
+  if (!Array.isArray(rawEdits) || rawEdits.length === 0) {
+    throw new Error("MultiEdit: edits 必须为非空数组");
+  }
+  const edits = rawEdits.map((entry, index) => {
+    if (!entry || typeof entry !== "object") throw new Error(`MultiEdit: edits[${index}] 不是对象`);
+    const record = entry as Record<string, unknown>;
+    const oldText = record["oldText"] ?? record["oldString"] ?? record["old_string"];
+    const newText = record["newText"] ?? record["newString"] ?? record["new_string"];
+    if (typeof oldText !== "string" || typeof newText !== "string") {
+      throw new Error(`MultiEdit: edits[${index}] 需要 oldText/newText(或 oldString/newString)`);
+    }
+    return {
+      oldText,
+      newText,
+      replaceAll: record["replaceAll"] === true || record["replace_all"] === true,
+    };
+  });
+  return { filePath, edits };
+}
+
 export function createMultiEditTool(cwd: string, options: MultiEditToolOptions = {}): AgentTool<typeof multiEditSchema, MultiEditDetails> {
 	const fileSystem = options.fileSystem ?? localMultiEditFileSystem(cwd);
   return {
@@ -52,10 +90,11 @@ export function createMultiEditTool(cwd: string, options: MultiEditToolOptions =
     parameters: multiEditSchema,
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
+    prepareArguments: prepareMultiEditArgs as unknown as (args: unknown) => MultiEditInput,
     async execute(_tc, params): Promise<{
       content: Array<{ type: "text"; text: string }>;
       details: MultiEditDetails;
-      terminate: false;
+
     }> {
       const target = resolveToCwd(params.filePath, cwd);
       const original = (await fileSystem.readFile(target)).toString("utf8");
@@ -63,28 +102,28 @@ export function createMultiEditTool(cwd: string, options: MultiEditToolOptions =
       let applied = 0;
       let diffBytes = 0;
       for (const e of params.edits ?? []) {
-        if (!e || typeof e.oldString !== "string" || typeof e.newString !== "string") {
-          throw new Error("MultiEdit: edit 必须含 oldString/newString 字符串");
+        if (!e || typeof e.oldText !== "string" || typeof e.newText !== "string") {
+          throw new Error("MultiEdit: edit 必须含 oldText/newText 字符串");
         }
-        if (e.oldString === e.newString) {
+        if (e.oldText === e.newText) {
           continue; // 无效:no-op
         }
         if (e.replaceAll) {
-          if (!cursor.includes(e.oldString)) {
-            throw new Error(`MultiEdit: oldString not found in: ${e.oldString.slice(0, 60)}`);
+          if (!cursor.includes(e.oldText)) {
+            throw new Error(`MultiEdit: oldText not found in: ${e.oldText.slice(0, 60)}`);
           }
           const before = cursor.length;
-          cursor = cursor.split(e.oldString).join(e.newString);
+          cursor = cursor.split(e.oldText).join(e.newText);
           diffBytes += cursor.length - before;
           applied++;
         } else {
-          const idx = cursor.indexOf(e.oldString);
+          const idx = cursor.indexOf(e.oldText);
           if (idx < 0) {
-            throw new Error(`MultiEdit: oldString not found in: ${e.oldString.slice(0, 60)}`);
+            throw new Error(`MultiEdit: oldText not found in: ${e.oldText.slice(0, 60)}`);
           }
-          cursor = cursor.slice(0, idx) + e.newString + cursor.slice(idx + e.oldString.length);
+          cursor = cursor.slice(0, idx) + e.newText + cursor.slice(idx + e.oldText.length);
           applied++;
-          diffBytes += e.newString.length - e.oldString.length;
+          diffBytes += e.newText.length - e.oldText.length;
         }
       }
       if (cursor !== original) {
@@ -94,7 +133,6 @@ export function createMultiEditTool(cwd: string, options: MultiEditToolOptions =
       return {
         content: [{ type: "text", text: `MultiEdit ok: ${applied} edits applied, ${diffBytes}+${diffBytes >= 0 ? "+" : ""}${diffBytes} bytes` }],
         details: { applied, diffBytes },
-        terminate: false,
       };
     },
   };

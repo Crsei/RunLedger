@@ -61,7 +61,7 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
       content: Array<{ type: "text"; text: string }>;
       details: SkillDetails;
       isError?: boolean;
-      terminate: false;
+
     }> {
       const name = params.name;
       if (options.loader !== undefined) {
@@ -71,13 +71,11 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
             content: [{ type: "text", text: `Skill unavailable: ${loaded.message}` }],
             details: { matched: false, code: loaded.code, message: loaded.message },
             isError: true,
-            terminate: false,
           };
         }
         return {
           content: [{ type: "text", text: loaded.body }],
           details: { matched: true, bodyLength: loaded.body.length, ...(loaded.allowedTools === undefined ? {} : { allowedTools: loaded.allowedTools }) },
-          terminate: false,
         };
       }
       const handler = options.handlers?.[name];
@@ -85,7 +83,6 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
         return {
           content: [{ type: "text", text: `Skill not registered: ${name}` }],
           details: { matched: false, message: "skill not registered" },
-          terminate: false,
         };
       }
       const out = await handler(params.args);
@@ -94,7 +91,6 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
           { type: "text", text: typeof out === "string" ? out : JSON.stringify(out ?? "(no result)") },
         ],
         details: { matched: true, bodyLength: typeof out === "string" ? out.length : 0 },
-        terminate: false,
       };
     },
   };

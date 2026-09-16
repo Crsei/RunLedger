@@ -96,13 +96,12 @@ export function errorToolResult(code: string, message = `managed process request
 	content: [{ readonly type: "text"; readonly text: string }];
 	details: { readonly code: string };
 	isError: true;
-	terminate: false;
+
 } {
 	return {
 		content: [{ type: "text", text: message }],
 		details: { code },
 		isError: true,
-		terminate: false,
 	};
 }
 

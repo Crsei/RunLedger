@@ -58,7 +58,12 @@ export interface EditToolOptions {
   operations?: EditOperations;
 }
 
-/** prepareArguments:兼容顶层 oldText/newText、edits 为 JSON 字符串。 */
+/**
+ * prepareArguments:兼容以下形态(对齐 oh-my-pi 的 edit 调用习惯):
+ *   - 顶层 `oldText`/`newText`(以及 omp 的 `old_string`/`new_string`)
+ *   - `edits` 内每项用 `old_string`/`new_string`/`replace_all` 命名
+ *   - `edits` 被编码成 JSON 字符串
+ */
 function prepareEditArgs(args: unknown): EditToolInput {
   if (!args || typeof args !== "object") {
     throw new Error("edit: invalid arguments");
@@ -66,9 +71,10 @@ function prepareEditArgs(args: unknown): EditToolInput {
   const obj = args as Record<string, unknown>;
   let editsRaw = obj["edits"];
 
-  // 顶层 oldText / newText 兼容
-  if (!editsRaw && typeof obj["oldText"] === "string" && typeof obj["newText"] === "string") {
-    editsRaw = [{ oldText: obj["oldText"], newText: obj["newText"] }];
+  // 顶层兼容:oldText/newText 或 omp 的 old_string/new_string。
+  if (!editsRaw) {
+    const top = pickEditStrings(obj);
+    if (top !== undefined) editsRaw = [top];
   }
 
   // edits 可能被 LLM 编码成 JSON 字符串
@@ -87,13 +93,14 @@ function prepareEditArgs(args: unknown): EditToolInput {
   const edits = editsRaw.map((e, i) => {
     if (!e || typeof e !== "object") throw new Error(`edit: edits[${i}] 不是对象`);
     const eo = e as Record<string, unknown>;
-    if (typeof eo["oldText"] !== "string" || typeof eo["newText"] !== "string") {
-      throw new Error(`edit: edits[${i}].oldText/newText 必须是字符串`);
+    const picked = pickEditStrings(eo);
+    if (picked === undefined) {
+      throw new Error(`edit: edits[${i}] 需要 oldText/newText(或 old_string/new_string)`);
     }
     return {
-      oldText: eo["oldText"] as string,
-      newText: eo["newText"] as string,
-      replaceAll: eo["replaceAll"] === true,
+      oldText: picked.oldText,
+      newText: picked.newText,
+      replaceAll: eo["replaceAll"] === true || eo["replace_all"] === true,
       findActualString: eo["findActualString"] === true,
     };
   });
@@ -101,6 +108,13 @@ function prepareEditArgs(args: unknown): EditToolInput {
   const p = obj["path"];
   if (typeof p !== "string" || p === "") throw new Error("edit: path 必须是非空字符串");
   return { path: p, edits };
+}
+
+/** 取 `{oldText,newText}`;同时接受 omp 的 `old_string`/`new_string` 命名。 */
+function pickEditStrings(source: Record<string, unknown>): { oldText: string; newText: string } | undefined {
+  const oldText = source["oldText"] ?? source["old_string"];
+  const newText = source["newText"] ?? source["new_string"];
+  return typeof oldText === "string" && typeof newText === "string" ? { oldText, newText } : undefined;
 }
 
 export function createEditTool(

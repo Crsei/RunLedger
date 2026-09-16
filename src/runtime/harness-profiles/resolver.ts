@@ -37,8 +37,15 @@ const STANDARD_EXECUTION_REF = refFor("standard", 2);
 const MINIMAL_REF = refFor("minimal");
 const SHELL_ONLY_REF = refFor("minimal", 2);
 const PLAN_REF = refFor("plan");
+const PLAN_V2_REF = refFor("plan", 2);
 
+/** 产品当前使用的 plan profile;plan@1 仅为历史 receipt 重放保留。 */
 export function planHarnessProfileRef(): HarnessProfileRef {
+	return PLAN_V2_REF;
+}
+
+/** 历史 plan profile ref(用于读取既有 Session 的 durable ref)。 */
+export function legacyPlanHarnessProfileRef(): HarnessProfileRef {
 	return PLAN_REF;
 }
 

@@ -1,5 +1,5 @@
 /**
- * stdlib 工具集单测 —— 覆盖 read / write / edit / bash / grep / find / ls
+ * stdlib 工具集单测 —— 覆盖 read / write / edit / bash / grep / glob / ls
  * 各工具的关键行为。
  *
  * 设计选择:跨平台测试,工具走真实 fs 与 shell(execution-env 已独立测试)。
@@ -11,11 +11,12 @@ import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
-import { createReadTool } from "../src/runtime/tools/read.ts";import { createWriteTool } from "../src/runtime/tools/write.ts";
+import { createReadTool } from "../src/runtime/tools/read.ts";
+import { createWriteTool } from "../src/runtime/tools/write.ts";
 import { createEditTool } from "../src/runtime/tools/edit.ts";
 import { createBashTool } from "../src/runtime/tools/bash.ts";
 import { createGrepTool } from "../src/runtime/tools/grep.ts";
-import { createFindTool } from "../src/runtime/tools/find.ts";
+import { createGlobTool } from "../src/runtime/tools/glob.ts";
 import { createLsTool } from "../src/runtime/tools/ls.ts";
 import { createStdlibTools, stdlibTools } from "../src/runtime/tools/index.ts";
 
@@ -51,6 +52,54 @@ describe("stdlib tools (cross-platform)", () => {
   it("read: 不存在文件抛错", async () => {
     const tool = createReadTool(dir);
     await expect(tool.execute("tc1", { path: "nope.txt" })).rejects.toThrow();
+  });
+
+  it("read: 内联行选择器切片,并与 offset/limit 报告优先级", async () => {
+    const file = path.join(dir, "sel.txt");
+    await writeFile(file, "line1\nline2\nline3\nline4\nline5\n", "utf-8");
+    const tool = createReadTool(dir);
+
+    const ranged = await tool.execute("tc1", { path: "sel.txt:2-3" });
+    const rangedText = (ranged.content[0] as { text: string }).text;
+    expect(rangedText).toContain("line2");
+    expect(rangedText).toContain("line3");
+    expect(rangedText).not.toContain("line4");
+    expect(ranged.details).toMatchObject({ selector: "2-3", lineCount: 2 });
+
+    const tailed = await tool.execute("tc2", { path: "sel.txt:-2" });
+    const tailedText = (tailed.content[0] as { text: string }).text;
+    expect(tailedText).toContain("line4");
+    expect(tailedText).toContain("line5");
+    expect(tailedText).not.toContain("line3");
+
+    // 选择器带 :raw 时不加行号前缀。
+    const raw = await tool.execute("tc3", { path: "sel.txt:1-2:raw" });
+    expect((raw.content[0] as { text: string }).text).not.toMatch(/^\s+1\t/m);
+
+    // 选择器与 offset/limit 同时给出时选择器优先,并在 details 记录被忽略的参数。
+    const precedence = await tool.execute("tc4", { path: "sel.txt:5", offset: 1, limit: 1 });
+    expect((precedence.content[0] as { text: string }).text).toContain("line5");
+    expect(precedence.details).toMatchObject({ selector: "5", ignoredParams: ["offset", "limit"] });
+  });
+
+  it("read: 多段选择器保留行号以标出省略区间", async () => {
+    const file = path.join(dir, "multi.txt");
+    await writeFile(file, Array.from({ length: 20 }, (_, i) => `row${i + 1}`).join("\n") + "\n", "utf-8");
+    const tool = createReadTool(dir);
+    const r = await tool.execute("tc1", { path: "multi.txt:1-2,10-11" });
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toContain("row1");
+    expect(text).toContain("row10");
+    expect(text).not.toContain("row5");
+    expect(r.details).toMatchObject({ selector: "1-2,10-11", lineCount: 4 });
+  });
+
+  it("read: 未实现的选择器模式报错而不是放宽成整文件读取", async () => {
+    const file = path.join(dir, "unsupported.txt");
+    await writeFile(file, "a\nb\n", "utf-8");
+    const tool = createReadTool(dir);
+    await expect(tool.execute("tc1", { path: "unsupported.txt:conflicts" })).rejects.toThrow(/not supported by this runtime/);
+    await expect(tool.execute("tc2", { path: "unsupported.txt:0" })).rejects.toThrow(/1-indexed/);
   });
 
   it("write: 递归创建目录 + 覆盖已有内容", async () => {
@@ -94,6 +143,19 @@ describe("stdlib tools (cross-platform)", () => {
     // 输出未变化
     const disk = await readFile(file, "utf-8");
     expect(disk).toBe("abc\n");
+  });
+
+  it("edit: prepareArguments 接受 oh-my-pi 命名 old_string/new_string/replace_all", async () => {
+    const file = path.join(dir, "alias.txt");
+    await writeFile(file, "alpha beta alpha\n", "utf-8");
+    const tool = createEditTool(dir);
+    const prepared = tool.prepareArguments!({
+      path: "alias.txt",
+      edits: [{ old_string: "alpha", new_string: "A", replace_all: true }],
+    });
+    expect(prepared).toEqual({ path: "alias.txt", edits: [{ oldText: "alpha", newText: "A", replaceAll: true, findActualString: false }] });
+    await tool.execute("tc1", prepared);
+    expect(await readFile(file, "utf-8")).toBe("A beta A\n");
   });
 
   it("bash: echo 输出 stdout", async () => {
@@ -260,38 +322,86 @@ describe("stdlib tools (cross-platform)", () => {
     expect(result.details).not.toHaveProperty("matchCount");
   });
 
-  it("find: 找 .ts 文件(fallback find -name)", { skip: process.platform === "win32" }, async () => {
-    await writeFile(path.join(dir, "a.ts"), "export const x = 1;", "utf-8");
-    await writeFile(path.join(dir, "b.txt"), "hello", "utf-8");
-    const tool = createFindTool(dir);
-    const r = await tool.execute("tc1", { pattern: "*.ts", path: "." });
-    expect((r.content[0] as { text: string }).text).toContain("a.ts");
-  });
-
-  it("find: fd 不存在时走 find fallback(mock shell)", async () => {
-    let probeTimes = 0;
-    const calls: { cmd: string }[] = [];
+  it("grep: skip 跳过前 N 个命中文件,与 limit 组成翻页", async () => {
+    const first = path.join(dir, "a.ts").replace(/\\/g, "/");
+    const second = path.join(dir, "b.ts").replace(/\\/g, "/");
+    const third = path.join(dir, "c.ts").replace(/\\/g, "/");
     const mockShell = {
       async exec(cmd: string) {
-        calls.push({ cmd });
-        if (cmd === "fd --version" && probeTimes++ === 0) {
-          return { stdout: "", stderr: "fd not found", exitCode: 127 };
-        }
-        if (cmd.startsWith("find")) {
-          return {
-            stdout: `${dir.replace(/\\/g, "/")}/c.ts`,
-            stderr: "",
-            exitCode: 0,
-          };
-        }
-        return { stdout: "", stderr: "", exitCode: 0 };
+        if (cmd === "rg --version") return { stdout: "ripgrep 14", stderr: "", exitCode: 0 };
+        return { stdout: `${first}:1:hit a\n${second}:1:hit b\n${third}:1:hit c\n`, stderr: "", exitCode: 0 };
       },
     };
-    const tool = createFindTool(dir, { shell: mockShell as never });
+    const tool = createGrepTool(dir, { shell: mockShell as never });
+
+    const page2 = await tool.execute("tc1", { pattern: "hit", path: ".", skip: 1 });
+    const text = (page2.content[0] as { text: string }).text;
+    expect(text).toContain("hit b");
+    expect(text).toContain("hit c");
+    expect(text).not.toContain("hit a");
+    expect(page2.details).toMatchObject({ skippedFileCount: 1, resultCount: 2, fileCount: 2 });
+
+    // 不传 skip 时行为与历史一致。
+    const firstPage = await tool.execute("tc2", { pattern: "hit", path: "." });
+    expect((firstPage.content[0] as { text: string }).text).toContain("hit a");
+    expect(firstPage.details).not.toHaveProperty("skippedFileCount");
+  });
+
+  it("glob: 不含 / 的 pattern 在任意深度匹配(承接原 find 语义)", { skip: process.platform === "win32" }, async () => {
+    await mkdir(path.join(dir, "nested"), { recursive: true });
+    await writeFile(path.join(dir, "a.ts"), "export const x = 1;", "utf-8");
+    await writeFile(path.join(dir, "nested", "b.ts"), "export const y = 2;", "utf-8");
+    await writeFile(path.join(dir, "c.txt"), "hello", "utf-8");
+    const tool = createGlobTool(dir);
     const r = await tool.execute("tc1", { pattern: "*.ts", path: "." });
-    expect((r.content[0] as { text: string }).text).toContain("c.ts");
-		expect(r.details).toMatchObject({ resultCount: 1, truncation: { truncated: false, outputLines: 1, totalLines: 1 } });
-    expect(calls.find((c) => c.cmd.startsWith("find"))).toBeDefined();
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toContain("a.ts");
+    expect(text).toContain("b.ts");
+    expect(text).not.toContain("c.txt");
+    expect(r.details).toMatchObject({ matchCount: 2 });
+  });
+
+  it("glob: 分号分隔多个 pattern 并按路径去重", { skip: process.platform === "win32" }, async () => {
+    await writeFile(path.join(dir, "a.ts"), "x", "utf-8");
+    await writeFile(path.join(dir, "b.md"), "y", "utf-8");
+    const tool = createGlobTool(dir);
+    const r = await tool.execute("tc1", { pattern: "*.ts; *.md", path: "." });
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toContain("a.ts");
+    expect(text).toContain("b.md");
+    expect(r.details).toMatchObject({ matchCount: 2 });
+  });
+
+  it("glob: 默认跳过隐藏条目,hidden=true 时包含", { skip: process.platform === "win32" }, async () => {
+    await writeFile(path.join(dir, ".hidden.ts"), "x", "utf-8");
+    await writeFile(path.join(dir, "shown.ts"), "y", "utf-8");
+    const tool = createGlobTool(dir);
+
+    const hiddenOff = await tool.execute("tc1", { pattern: "*.ts", path: "." });
+    expect((hiddenOff.content[0] as { text: string }).text).not.toContain(".hidden.ts");
+    expect(hiddenOff.details).toMatchObject({ skippedHidden: 1 });
+
+    const hiddenOn = await tool.execute("tc2", { pattern: "*.ts", path: ".", hidden: true });
+    expect((hiddenOn.content[0] as { text: string }).text).toContain(".hidden.ts");
+  });
+
+  it("glob: gitignore=true 跳过根 .gitignore 命中的条目", { skip: process.platform === "win32" }, async () => {
+    await writeFile(path.join(dir, ".gitignore"), "ignored/\n*.log\n", "utf-8");
+    await mkdir(path.join(dir, "ignored"), { recursive: true });
+    await writeFile(path.join(dir, "ignored", "deep.ts"), "x", "utf-8");
+    await writeFile(path.join(dir, "debug.log"), "y", "utf-8");
+    await writeFile(path.join(dir, "keep.ts"), "z", "utf-8");
+    const tool = createGlobTool(dir);
+
+    const respecting = await tool.execute("tc1", { pattern: "**/*", path: "." });
+    const respectingText = (respecting.content[0] as { text: string }).text;
+    expect(respectingText).toContain("keep.ts");
+    expect(respectingText).not.toContain("debug.log");
+    expect(respectingText).not.toContain("deep.ts");
+    expect(respecting.details.skippedIgnored).toBeGreaterThan(0);
+
+    const ignoring = await tool.execute("tc2", { pattern: "**/*", path: ".", gitignore: false });
+    expect((ignoring.content[0] as { text: string }).text).toContain("debug.log");
   });
 
   it("ls: 列目录 + 目录条目尾部 '/'", async () => {
@@ -310,7 +420,7 @@ describe("stdlib tools (cross-platform)", () => {
     await expect(tool.execute("tc1", { path: "no-such-dir" })).rejects.toThrow();
   });
 
-  it("createStdlibTools: 注册 13 个工具(8 个内置 + 4 占位 + echo)", () => {
+  it("createStdlibTools: 注册 13 个工具(7 个内置 + todo + 4 占位 + echo)", () => {
     const r = createStdlibTools(dir);
     expect(r.size).toBe(13);
     expect(r.has("read")).toBe(true);
@@ -319,9 +429,11 @@ describe("stdlib tools (cross-platform)", () => {
     expect(r.has("MultiEdit")).toBe(true);
     expect(r.has("bash")).toBe(true);
     expect(r.has("grep")).toBe(true);
-    expect(r.has("find")).toBe(true);
+    // find 已并入 glob;旧调用名由别名表解析,不再单独占一个注册条目。
+    expect(r.has("find")).toBe(false);
     expect(r.has("glob")).toBe(true);
     expect(r.has("ls")).toBe(true);
+    expect(r.has("todo")).toBe(true);
     expect(r.has("WebFetch")).toBe(true);
     expect(r.has("Skill")).toBe(true);
     expect(r.has("NotebookEdit")).toBe(true);

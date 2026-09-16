@@ -35,7 +35,6 @@ export async function finalizeExecutedToolCall(
   let finalDetails: unknown = r.details;
   let finalIsError: boolean = r.isError;
   let finalAddedToolNames: string[] | undefined = r.addedToolNames;
-  let finalTerminate: boolean | undefined = r.terminate;
 
   if (p.tool && config.afterToolCall) {
     try {
@@ -48,7 +47,6 @@ export async function finalizeExecutedToolCall(
         isError: finalIsError,
         details: finalDetails,
         addedToolNames: finalAddedToolNames,
-        terminate: finalTerminate,
       };
       const after = await config.afterToolCall(
         {
@@ -66,7 +64,6 @@ export async function finalizeExecutedToolCall(
         if (after.content !== undefined) finalContent = after.content;
         if (after.details !== undefined) finalDetails = after.details;
         if (after.isError !== undefined) finalIsError = after.isError;
-        if (after.terminate !== undefined) finalTerminate = after.terminate;
       }
     } catch {
       // hook 抛错吞掉,沿用执行结果
@@ -87,7 +84,6 @@ export async function finalizeExecutedToolCall(
     details: finalDetails,
   };
   if (finalAddedToolNames !== undefined) result.addedToolNames = finalAddedToolNames;
-  if (finalTerminate !== undefined) result.terminate = finalTerminate;
 
   const tEnd = Date.now();
   await fire(

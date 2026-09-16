@@ -7,7 +7,7 @@
  *
  * 设计:
  *   - schema 接收 notebook_path + cell_id + cell_type + new_source
- *   - execute 无论输入怎么都返回 not-implemented text + terminate=false
+ *   - execute 无论输入怎么都返回 not-implemented text
  *   - 此处占位是因为 docs/tools 列表完整度对齐需要,LLM 主动调用时见到清晰提示。
  */
 
@@ -44,7 +44,7 @@ export function createNotebookEditTool(): AgentTool<typeof notebookEditSchema, N
     async execute(): Promise<{
       content: Array<{ type: "text"; text: string }>;
       details: NotebookEditDetails;
-      terminate: false;
+
     }> {
       return {
         content: [
@@ -54,7 +54,6 @@ export function createNotebookEditTool(): AgentTool<typeof notebookEditSchema, N
           },
         ],
         details: { notImplemented: true },
-        terminate: false,
       };
     },
   };

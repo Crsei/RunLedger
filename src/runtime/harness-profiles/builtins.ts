@@ -72,11 +72,23 @@ const PLAN_HARNESS_PROFILE = Object.freeze({
 	multiAgent: false,
 } satisfies HarnessProfileDescriptor);
 
+/**
+ * plan@2:allowlist 与 plan@1 相同,但 read/glob 的模型可见 schema 已变化
+ * (read 增加内联行选择器,glob 增加 hidden/gitignore 并支持任意深度匹配)。
+ * 冻结 manifest 与 version 绑定,因此新增 version 而不是改写 plan@1 的摘要 ——
+ * plan@1 继续为已存在 Session 的 receipt 重放服务,新 Session 走 plan@2。
+ */
+const PLAN_V2_HARNESS_PROFILE = Object.freeze({
+	...PLAN_HARNESS_PROFILE,
+	version: 2,
+} satisfies HarnessProfileDescriptor);
+
 const BUILTIN_HARNESS_PROFILES = Object.freeze([
 	STANDARD_HARNESS_PROFILE,
 	MINIMAL_HARNESS_PROFILE,
 	SHELL_ONLY_HARNESS_PROFILE,
 	PLAN_HARNESS_PROFILE,
+	PLAN_V2_HARNESS_PROFILE,
 	STANDARD_EXECUTION_HARNESS_PROFILE,
 ] satisfies readonly HarnessProfileDescriptor[]);
 

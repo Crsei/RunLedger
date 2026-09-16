@@ -1,20 +1,11 @@
 /**
- * Task 系列 —— Task / TaskUpdate / TaskList 共享类型。
+ * 任务/目标投影共享的词汇。
  *
- * 对齐 claude-code-bun docs/tools/task-tool.mdx / task-update-tool.mdx /
- * task-list-tool.mdx 的体系(text-content 任务清单,不再依赖 system reminder)。
- *
- * 与 pi 的区别:不做持久化跨 session 的 SQLite 表,而是把 task / task_update
- * 作为 `custom` 类型 LedgerEntry 写进 JsonlLedger,通过 `findByType("custom")`
- * + `payload.kind` 重放出当前任务状态。
- *
- * 任务语义:
- *   - 状态机:pending ⇄ in_progress → completed;deleted 软删除。
- *   - 同一 taskId 的多次 task_update 形成一个 timeline;TaskList 输出当前快照
- *     (即最后一次 update 的状态;若仅 task 创建无 update,则原 task 状态有效)。
- *   - status "in_progress" 是 soft exclusive —— 若一个任务置为 in_progress,
- *     其它置为 in_progress 的任务会被自动改为 pending(对齐 claude-code-bun
- *     "task tool: only one in_progress at a time")。
+ * 这里只保留 TUI `task-goal` 查询投影(`src/tui/task-goal/types.ts`)读取的
+ * priority / status 取值。历史上的 ledger 型 Task / TaskUpdate / TaskList 工具
+ * (以及它们的 payload / snapshot / replay)已随 `todo` op 模型的接入移除:
+ * 那三个工具从未进入任何生产组合,唯一消费者是被 `todo` 取代的 `TodoWrite`。
+ * 任务表的持久化与重放现在由 `src/runtime/tools/todo.ts` 承担。
  */
 
 /**
@@ -30,77 +21,3 @@ export type TaskPriority = "high" | "medium" | "low";
  * - deleted: 软删除(可读但默认不列入)
  */
 export type TaskStatus = "pending" | "in_progress" | "completed" | "deleted";
-
-/**
- * 创建任务 payload(由 Task 工具写入 ledger 的 custom entry)。
- */
-export interface TaskCreatePayload {
-  kind: "task";
-  taskId: string;
-  content: string;
-  priority: TaskPriority;
-  status: TaskStatus;
-  createdAt: number;
-}
-
-/**
- * 更新任务 payload。
- * - 至少有一个字段(status/content/priority)非空。
- * - updatedAt 由 TaskUpdate 工具填。
- */
-export interface TaskUpdatePayload {
-  kind: "task_update";
-  taskId: string;
-  status?: TaskStatus;
-  content?: string;
-  priority?: TaskPriority;
-  updatedAt: number;
-}
-
-/**
- * TaskList payload(只读,不写 ledger;仅作为 schema 标记)。
- */
-export interface TaskListPayload {
-  kind: "task_list";
-  /** 过滤 status;不设 → 返回非 deleted 的全部 */
-  status?: TaskStatus;
-  /** 按 priority 过滤 */
-  priority?: TaskPriority;
-}
-
-export type TaskPayload = TaskCreatePayload | TaskUpdatePayload | TaskListPayload;
-
-/**
- * 重放出来的最新快照。
- */
-export interface TaskSnapshot {
-  taskId: string;
-  content: string;
-  priority: TaskPriority;
-  status: TaskStatus;
-  createdAt: number;
-  updatedAt: number;
-  /** 最后一条 update entry.id(便于审计) */
-  lastEntryId: string;
-}
-
-/**
- * 校验 payload.kind 是否为 task / task_update,助手函数。
- */
-export function isTaskCreatePayload(p: unknown): p is TaskCreatePayload {
-  return (
-    typeof p === "object" &&
-    p !== null &&
-    (p as { kind?: unknown }).kind === "task" &&
-    typeof (p as TaskCreatePayload).taskId === "string"
-  );
-}
-
-export function isTaskUpdatePayload(p: unknown): p is TaskUpdatePayload {
-  return (
-    typeof p === "object" &&
-    p !== null &&
-    (p as { kind?: unknown }).kind === "task_update" &&
-    typeof (p as TaskUpdatePayload).taskId === "string"
-  );
-}
