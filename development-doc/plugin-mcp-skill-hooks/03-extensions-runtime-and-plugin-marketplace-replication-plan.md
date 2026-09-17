@@ -16,6 +16,7 @@
 > 修订记录:2026-09-17 P5 catalog/settings 收口。marketplace catalog 按 Claude 兼容顺序读取且“第一个存在的候选即权威”;plugin settings 的类型/边界校验与 user→workspace 收窄(secret 仅 user 层)。
 > 修订记录:2026-09-17 P5 分发管理收口。marketplace cache/fetcher/manager(add/remove/list/refresh/install/pendingUpdates/autoUpdatePlan)与 doctor 落地;`notify` 无可见出口时降级为 off。
 > 修订记录:2026-09-17 P5 分发面接线收口。`extension-composition.ts` 装配 session 私有分发栈并把 §8 的 `plugin.*`/`marketplace.*` 操作加入 operation manifest。
+> 修订记录:2026-09-17 P6 CLI 分发词表收口。`control-commands.ts` 增加 `plugin distribution|doctor|install|uninstall|link|upgrade` 与 `marketplace discover|add|remove|update|upgrade`(含逐动词参数校验与 `--scope`),分发 mutation 的 revision 来源改为分发账本视图;真实 CLI 端到端跑通 add → install → distribution/list → doctor。
 > 修订记录:2026-09-17 P5 host 装配收口。`extension-composition.ts` 装配 supervisor/准入/事件桥/动作处理器,并在 `domain.ts` 的 `extensions.start()` 之后用既有 `controller.addTools` 追加准入工具;扩展工具 handler 留在 host 进程内,经 `tool:<runtimeName>` 请求名调用;host 上报自身 API 版本(不再回显 owner 期望值)。
 > 修订记录:2026-09-17 P5 host 资格判定收口。新增 `host-activation.ts`:从分发账本选出声明了 entrypoint 的包,并用既有 TrustStore 逐个判定 enabled/trusted/entrypoint/digest 四条 gate,把缺失、stale、revoked 分别给出可解释 code;`plugin.distribution.list` 现在附带 `hostEligibility`。
 > 修订记录:2026-09-17 P5 声明式回灌收口。新增 `discovery-bridge.ts`:把账本记录的当前版本目录投影为既有 `PluginManager` 的发现根,使**已安装的声明式包**立即进入既有 enable/trust/skill/hook/MCP 四层,不再需要第二套信任或启用语义。
@@ -329,7 +330,7 @@ Session Owner(每 owned Session)
 | `src/extensions/manager.ts` / `snapshot.ts` | registry generation 与 host generation 绑定;失败回退 last-known-good |
 | `src/runtime/session-runtime/extension-composition.ts` | 装配 supervisor/bridge/admission;operation manifest 增量(P5 已装配分发栈、`plugin.*`/`marketplace.*` 操作与 **host 装配**;`plugin.config.*` 与 `extension.host.inspect` 待做) |
 | `src/runtime/harness-profiles/types.ts` | 不新增字段;确认扩展运行时映射到既有 `extensions.*` 门控 |
-| `src/cli/control-commands.ts` | plugin 动作扩展(install/uninstall/link/upgrade/doctor/features/config/marketplace/discover) |
+| `src/cli/control-commands.ts` | plugin 动作扩展(P6 已加 `distribution`/`doctor`/`install`/`uninstall`/`link`/`upgrade` 与 `marketplace discover|add|remove|update|upgrade`;`features`/`config` 与 TUI 确认边界待做) |
 | `src/cli/{args,main}.ts` | 新子命令与 source 解析;`--network` 等价授权衔接 |
 | `src/tui/interactive/extension-workflow.ts` + modal | 安装/升级/配置/信任的确认边界 |
 | `src/storage/settings-manager.ts` | 新增 extensions 相关 settings 键(user 授权、workspace 收窄) |
@@ -400,10 +401,13 @@ Session Owner(每 owned Session)
 - 实现取舍:git/url 源经**受治 managed process** 执行 clone/fetch(D7):network policy 由该会话的 ExecutionEnv 决定、默认拒绝,被拒绝时返回 `governed_process_rejected` 而不是静默回退本地猜测路径;`doctor` 在没有 trust 桥时给出 `trust.not_checked` 而不是把“查不到”谎报成“未信任”。
 - 证据:`tests/extensions/distribution.test.ts` 20 用例、`tests/extensions/marketplace-catalog.test.ts` 9 用例、`tests/extensions/marketplace-manager.test.ts` 9 用例(均用真实临时目录,无网络);合计 57 文件 / 368 用例通过。
 
-### P6 — CLI/TUI 与 Marketplace
+### P6 — CLI/TUI 与 Marketplace——**进行中(CLI 词表已交付)**
 
 - RED:`--json` 输出与退出码用例;`notify` 模式必须产生可见信号(D10)。
 - DoD:`marketplace add|remove|update|list`、`discover`、`upgrade`、`autoUpdate` 接线;TUI 安装/升级/信任确认边界;运行中 mutation 的 pending 语义与 `01` §10 一致。
+- 已完成(CLI 词表与真实闭环):`control-commands.ts` 的 `plugin` 动作集扩展到 `distribution|doctor|install|uninstall|link|upgrade`,`marketplace` 成为独立 group(`discover|add|remove|update|upgrade`);每个动词有独立参数校验,`--scope` 只接受 user/workspace;分发 mutation 的 revision 查询走 `plugin.distribution.list` / `marketplace.discover`(不再借用声明式 `plugin.list`)。退出码:成功 0、失败 1、用法错误 2。控制命令沿用既有 JSON-only 输出约定(不新增 `--json` 开关)。
+- 真实 CLI 闭环(隔离 `RUNLEDGER_DIR`、`npm run build:typescript` 后):`marketplace add` → `marketplace discover` → `plugin install alpha@local`(拿到 version/digest/installPath receipt)→ `plugin distribution`(显示 `enabled:false` 与 `hostEligibility:"no-entrypoints"`)→ `plugin list`(**声明式回灌生效**:已安装包以 `activation:"disabled"`、`trust:"untrusted"` 出现)→ `plugin doctor`(账本一致 + `trust.not_checked`)。六个动词全部 exit 0。
+- 未完成:TUI 安装/升级/信任确认边界、`autoUpdate` 的 TUI/CLI 可见信号接线收敛到统一出口、`notify` 模式的端到端验证(`pendingUpdates` 已可查询,但还没有 TUI 通知落点)、`plugin features|config`。
 
 ### P7 — 加固与真实 smoke
 
@@ -537,7 +541,7 @@ git diff --check
 | P3 事件桥 | **done** | `src/extensions/events/**`;319 用例通过(含真实子进程的 PreToolUse 重写重新授权与 `SessionEnd` 并行证据);`tsc -p tsconfig.json`/`tsconfig.tests.json`、`check:current-format`、`check:runtime-boundaries`、`check:package-boundaries` 通过 |
 | P4 运行时动作 | **done**(动作层) | `src/extensions/actions/**`;330 用例通过(含真实子进程动作往返与回执);actor port 的 Session 接线待 P5/P6;`tsc`(src/tests)、`check:current-format`、`test:inventory` 通过 |
 | P5 分发:安装/scope/激活 | **done**(actor 命令面除外) | 安装内核、activation 门禁、catalog/settings、cache/fetcher/manager、doctor、分发面接线、受治 git materialize、声明式回灌、host 资格判定与 host 装配/工具准入调用点均已交付(70 用例);actor port 的真实 Session 命令面、`plugin.config.*`、`extension.host.inspect` 待做 |
-| P6 CLI/TUI 与 Marketplace | planned | — |
+| P6 CLI/TUI 与 Marketplace | **partial** | CLI 词表与真实闭环已交付(6 个动词 exit 0,见 §15.2);TUI 确认边界、autoUpdate 可见信号、`plugin features|config` 待做 |
 | P7 加固与真实 smoke | planned | — |
 
 ### 15.2 实施记录
@@ -561,6 +565,7 @@ git diff --check
 - 2026-09-17 P5 声明式回灌:分发与声明式是**两种 manifest 形状**——分发包的权威 manifest 是 `package.json#runledger`(D12,决定版本与 capability),`.runledger-plugin/plugin.json` 只是既有 PluginManager 的发现容器。回灌只投影发现根,不复制 enable/trust:实测安装后的包在 `plugin.list` 里可见但仍是 `disabled` + `untrusted`,`skillContributions` 为空,直到用户显式 trust+enable。验证:`npx vitest run tests/extensions/discovery-bridge.test.ts` 4 用例通过;`npx vitest run tests/runtime/session-runtime/extension-distribution-domain.test.ts tests/extensions/ tests/runtime-contracts/` 60 文件 385 用例通过;`check:current-format`、`test:inventory`、`tsc`(src 与 tests)通过。
 - 2026-09-17 P5 host 资格判定:候选来自**账本 + 安装内容**,不是目录扫描——所以“装了但没写进账本”的目录不会被误判为可运行;声明了 entrypoint 但 `package.json` 读不出/不合法时给出 diagnostic 而不是静默跳过。信任复核复用既有 `TrustStore.evaluate`,identity 含 packageId+version 且绑定安装内容 digest,因此内容变化会让旧 receipt 变 stale(D8);缺失(`untrusted`)、stale、revoked 三种状态分别有 code 与可读原因。验证:`npx vitest run tests/extensions/host-activation.test.ts` 7 用例(含真实 TrustStore 的 grant/revoke/内容篡改)通过;`npx vitest run tests/runtime/session-runtime/extension-distribution-domain.test.ts tests/extensions/ tests/runtime-contracts/` 61 文件 392 用例通过;全量 `npm run check` **exit 0**(706 consumers / 0 diagnostics)。
 - 2026-09-17 P5 host 装配:host 启动失败**不抛错**——`createSessionExtensionComposition.start()` 把它记为 `extension.host.start_failed` 审计并保持空工具集,`shutdown` 先停 host 再关 MCP/hooks(有顺序断言)。扩展工具经既有 Session-owned 通道进入 Agent 面,因此不必改动构造期的工具数组语义。构建产物需与源码同步:`tests/extensions/host/host-process.test.ts` 在 `dist/` 存在时会优先跑 dist 入口,本轮因此执行了 `npm run build:typescript` 并确认 41 个 host 用例(含真实子进程)通过;真实 CLI 亦在隔离 `RUNLEDGER_DIR` 下验证 `runledger --help` exit 0。验证:`npx vitest run tests/extensions/ tests/runtime-contracts/ tests/runtime/session-runtime/extension-distribution-domain.test.ts` 62 文件 400 用例通过;全量 `npm run check` **exit 0**(707 consumers / 0 diagnostics)。
+- 2026-09-17 P6 CLI 分发词表:每个动词独立校验(`install/upgrade` 要 install spec、`link` 要 id+path、`marketplace add` 要三个参数),`--scope` 非法值在解析期就被拒;分发 mutation 的 expected revision 来自**分发账本视图**而不是声明式快照,避免两个账本共用一个 revision 来源。真实 CLI 端到端(构建后的 `dist`、隔离 `RUNLEDGER_DIR`)六个动词全部 exit 0,并且 `plugin list` 证明声明式回灌确实生效(安装后可见但 `disabled` + `untrusted`)。验证:`npx vitest run tests/cli/control-commands.test.ts` 13 用例(`tests/cli/control-command-execution.test.ts` + `main.test.ts` + `args.test.ts` 共 70 用例通过);真实 CLI 见上。
 - **既有缺陷(与本计划无关,单独记录)**:`tests/runtime/session-runtime/extensions-domain.test.ts` 的「real embedded production path owns an isolated extension snapshot」在当前运行环境下失败——它断言 `snapshot.descriptors` 为空,但兼容 skill provider 会从运行者的 OS 用户目录发现真实 skill。已在**干净的 HEAD worktree**上复现(补上并发专项的未跟踪文件后同样失败),确认不是本计划改动引入。
 - **本阶段验证阻塞(历史记录,已解除)**:共享工作树 `rollback/before-composer-shape` 同时存在另一专项(P15 Web 可观测性)的未提交改动,该改动删除了 `src/contracts/web/` 但 `src/contracts/index.ts` 与 `src/web/**` 仍 import 它,导致 `tests/cli/**` 因 `ERR_MODULE_NOT_FOUND` 失败(P15 随后自行收敛,`tsc -p tsconfig.json` 已恢复 0 错误)。全量 `npm run check` 目前在 `check:consumers` 的 `check-typecheck-coverage` 失败:8 条 `overlapping_package_consumer` 指向 P15 新增的 `packages/collab-web/**` 被 `tsconfig.json` 与 `tsconfig.contracts.json` 重复覆盖,与本计划无关。`tests/extensions/**` 与 `tests/runtime-contracts/**` 全部通过。另有既有缺陷(与本计划无关,单独记录、未顺带修):`tests/glob.test.ts`「`*.ts` 单段不递归」在 `2b046ef` 上即失败,glob 工具对单段模式仍返回 `src/x.ts`。本阶段的 `npm run check`/`npm test` 全量门禁因此在共享工作树恢复一致前无法作为通过证据。
 - 2026-09-17 P1 收口:host 协议 JSONL 编解码(半包/字节上限/深度/版本/generation/未知 kind 全部分开失败);注册表校验(重复名拒绝、白名单订阅、上限、identity digest 与 pid/generation/到达顺序无关);扩展侧 API 的注册期/运行期分离(`ExtensionRuntimeNotInitializedError`);owner 侧 client 的握手、事件请求/回执、动作帧应答与 fail-closed 协议违规处理;channel 只经既有 governed managed process port 创建进程;supervisor 的 generation 生命周期、idle 边界与 last-known-good 回退。验证:`npx vitest run tests/extensions/host/` 38 passed(其中 4 例走真实 Node 子进程:握手后回收、工厂抛错只 failed 该 generation、裸 `setInterval` 抛错后 owner/session 存活并可恢复、真实注册表投影);`tsc --noEmit -p tsconfig.json` 与 `-p tsconfig.tests.json` 通过;`npm run check:current-format`、`npm run check:runtime-boundaries` 通过。行为影响:新增模块尚未接入任何 composition root,生产路径行为不变。

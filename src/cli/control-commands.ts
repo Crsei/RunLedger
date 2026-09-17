@@ -12,6 +12,7 @@ export type ControlGroup =
 	| "security"
 	| "worktree"
 	| "plugin"
+	| "marketplace"
 	| "skill"
 	| "hook"
 	| "mcp"
@@ -51,6 +52,7 @@ const GROUPS: ReadonlySet<string> = new Set<ControlGroup>([
 	"security",
 	"worktree",
 	"plugin",
+	"marketplace",
 	"skill",
 	"hook",
 	"mcp",
@@ -66,6 +68,7 @@ const DEFAULT_ACTIONS: Readonly<Record<ControlGroup, string>> = {
 	security: "inspect",
 	worktree: "list",
 	plugin: "list",
+	marketplace: "discover",
 	skill: "list",
 	hook: "list",
 	mcp: "list",
@@ -80,7 +83,8 @@ const DEFAULT_ACTIONS: Readonly<Record<ControlGroup, string>> = {
 const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	security: new Set(["inspect"]),
 	worktree: new Set(["list", "inspect", "create", "resume", "release"]),
-	plugin: new Set(["list", "inspect", "reload", "enable", "disable", "trust", "untrust"]),
+	plugin: new Set(["list", "inspect", "reload", "enable", "disable", "trust", "untrust", "distribution", "doctor", "install", "uninstall", "link", "upgrade"]),
+	marketplace: new Set(["discover", "add", "remove", "update", "upgrade"]),
 	skill: new Set(["list", "provider", "trust", "untrust"]),
 	hook: new Set(["list"]),
 	mcp: new Set(["list", "inspect", "doctor", "restart"]),
@@ -95,6 +99,9 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 const MUTATIONS = new Set([
 	"worktree.create", "worktree.resume", "worktree.release",
 	"plugin.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust",
+	// P6 分发动词：安装/卸载/链接/升级只落盘与记账,不授予启用或信任(D7)。
+	"plugin.install", "plugin.uninstall", "plugin.link", "plugin.upgrade",
+	"marketplace.add", "marketplace.remove", "marketplace.update", "marketplace.upgrade",
 	"skill.trust", "skill.untrust",
 	"mcp.restart",
 	"plan.enter", "plan.reenter", "plan.exit", "plan.activate", "plan.write", "plan.approve", "plan.reject", "plan.changes_requested", "plan.request_approval", "plan.cancel", "plan.settle_exit", "plan.export", "plan.handoff",
@@ -112,8 +119,26 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	const args = positional.slice(group === "remember" && positional[1] !== "propose" ? 1 : 2);
 	const key = `${group}.${rawAction}`;
 	if (group === "dump" && args.length > 0) return { ok: false, error: "Usage: runledger dump [request|system|assembled|base]" };
-	if ((group === "plugin" && ["enable", "disable", "trust", "untrust"].includes(rawAction)) && args.length < 1) {
+	if ((group === "plugin" && ["enable", "disable", "trust", "untrust", "uninstall"].includes(rawAction)) && args.length < 1) {
 		return { ok: false, error: `${rawAction} requires a plugin id` };
+	}
+	if (group === "plugin" && (rawAction === "install" || rawAction === "upgrade") && args.length < 1) {
+		return { ok: false, error: `${rawAction} requires an install spec (name, name@marketplace, name[features])` };
+	}
+	if (group === "plugin" && rawAction === "link" && args.length < 2) {
+		return { ok: false, error: "link requires a plugin id and a local path" };
+	}
+	if (group === "marketplace") {
+		if (rawAction === "add" && args.length < 3) return { ok: false, error: "marketplace add requires a name, source type and source uri" };
+		if ((rawAction === "remove" || rawAction === "update" || rawAction === "upgrade") && args.length < 1) {
+			return { ok: false, error: `marketplace ${rawAction} requires a marketplace name` };
+		}
+	}
+	if (["plugin.install", "plugin.upgrade", "plugin.uninstall", "plugin.link", "marketplace.add"].includes(`${group}.${rawAction}`)) {
+		const scope = args.find((arg) => arg.startsWith("--scope="));
+		if (scope !== undefined && scope !== "--scope=user" && scope !== "--scope=workspace") {
+			return { ok: false, error: "scope must be user or workspace" };
+		}
 	}
 	if (group === "skill" && (rawAction === "trust" || rawAction === "untrust") && args.length < 1) {
 		return { ok: false, error: `${rawAction} requires a skill id` };
@@ -159,7 +184,29 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 		case "plugin.disable":
 		case "plugin.trust":
 		case "plugin.untrust":
+		case "plugin.uninstall":
 			body.pluginId = command.args[0];
+			break;
+		case "plugin.install":
+		case "plugin.upgrade":
+			body.spec = command.args.filter((arg) => !arg.startsWith("--")).join(" ");
+			break;
+		case "plugin.link":
+			body.pluginId = command.args[0];
+			body.localPath = command.args[1];
+			break;
+		case "marketplace.add":
+			body.name = command.args[0];
+			body.sourceType = command.args[1];
+			body.sourceUri = command.args[2];
+			break;
+		case "marketplace.remove":
+		case "marketplace.update":
+			body.name = command.args[0];
+			break;
+		case "marketplace.upgrade":
+			// `marketplace.upgrade [name]`:省略名字表示对全部已注册 marketplace 生效。
+			if (command.args[0] !== undefined) body.marketplace = command.args[0];
 			break;
 		case "skill.trust":
 		case "skill.untrust":
@@ -246,6 +293,9 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 	}
 	return {
 		operation: key === "security.inspect" ? "session.security.inspect"
+			: key === "plugin.distribution" ? "plugin.distribution.list"
+			: key === "plugin.doctor" ? "plugin.doctor"
+			: key === "marketplace.discover" ? "marketplace.discover"
 			: command.group === "dump" ? "session.request.inspect"
 			: key === "compact.list" ? "compaction.list"
 			: key === "plugin.reload" ? "extension.reload"
@@ -261,7 +311,9 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 export function controlCommandQueryOperation(command: ControlCommand): string | undefined {
 	if (!command.mutation) return undefined;
 	if (command.group === "worktree") return "worktree.inspect";
-	if (command.group === "plugin") return "plugin.list";
+	// 分发 mutation 的 revision 来源是分发账本视图,而不是声明式快照。
+	if (command.group === "plugin") return command.action === "list" ? "plugin.list" : "plugin.distribution.list";
+	if (command.group === "marketplace") return "marketplace.discover";
 	if (command.group === "skill") return "skill.list";
 	if (command.group === "mcp") return "mcp.list";
 	if (command.group === "plan") return "plan.inspect";
@@ -306,6 +358,10 @@ export function controlCommandHelp(): string {
 		"  runledger security inspect",
 		"  runledger worktree list|inspect|create|resume|release confirm",
 		"  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]",
+		"  runledger plugin distribution   plugin doctor",
+		"  runledger plugin install <spec>|upgrade <spec>|uninstall <plugin-id>|link <plugin-id> <path> [--scope user|workspace]",
+		"    install/upgrade only write to the package store; enable and trust stay separate decisions.",
+		"  runledger marketplace discover|add <name> <github|git|url|local> <uri>|remove <name>|update <name>|upgrade [name]",
 		"  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>",
 		"    Standard Sessions currently support user-scoped provider policy; workspace scope is unavailable.",
 		"  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",
