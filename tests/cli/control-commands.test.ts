@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	controlCommandBody,
+	controlCommandHelp,
 	controlCommandRequest,
 	controlCommandQueryOperation,
 	parseControlCommand,
@@ -156,5 +157,74 @@ describe("skill control commands", () => {
 		expect(trust?.ok && controlCommandRequest(trust.command)).toEqual({ operation: "skill.trust", body: { skillId: "skill:user:abc:review" }, mutation: true });
 		expect(controlCommandQueryOperation({ group: "skill", action: "trust", args: ["x"], mutation: true })).toBe("skill.list");
 		expect(controlCommandQueryOperation({ group: "skill", action: "provider", args: ["list"], mutation: false })).toBeUndefined();
+	});
+});
+
+describe("Host control command distribution vocabulary", () => {
+	it("maps plugin distribution actions to the P5 operations", () => {
+		const cases: readonly (readonly [readonly string[], string, boolean])[] = [
+			[["plugin", "distribution"], "plugin.distribution.list", false],
+			[["plugin", "doctor"], "plugin.doctor", false],
+			[["marketplace"], "marketplace.discover", false],
+			[["marketplace", "discover"], "marketplace.discover", false],
+			[["plugin", "install", "alpha@local"], "plugin.install", true],
+			[["plugin", "upgrade", "alpha@local"], "plugin.upgrade", true],
+			[["plugin", "uninstall", "alpha@local"], "plugin.uninstall", true],
+			[["plugin", "link", "dev", "/tmp/dev"], "plugin.link", true],
+			[["marketplace", "add", "local", "local", "/tmp/mkt"], "marketplace.add", true],
+			[["marketplace", "remove", "local"], "marketplace.remove", true],
+			[["marketplace", "update", "local"], "marketplace.update", true],
+			[["marketplace", "upgrade", "local"], "marketplace.upgrade", true],
+		];
+		for (const [words, operation, mutation] of cases) {
+			const parsed = parseControlCommand(words as readonly string[]);
+			expect(parsed?.ok, words.join(" ")).toBe(true);
+			if (parsed === undefined || !parsed.ok) continue;
+			expect(parsed.command.mutation, words.join(" ")).toBe(mutation);
+			expect(controlCommandRequest(parsed.command).operation, words.join(" ")).toBe(operation);
+		}
+	});
+
+	it("builds bounded bodies and rejects raw positional text", () => {
+		const install = parseControlCommand(["plugin", "install", "alpha@local", "--scope=workspace"]);
+		expect(install?.ok).toBe(true);
+		if (install !== undefined && install.ok) {
+			expect(controlCommandRequest(install.command).body).toEqual({ spec: "alpha@local" });
+		}
+		const link = parseControlCommand(["plugin", "link", "dev", "/tmp/dev"]);
+		if (link !== undefined && link.ok) expect(controlCommandRequest(link.command).body).toEqual({ pluginId: "dev", localPath: "/tmp/dev" });
+		const add = parseControlCommand(["marketplace", "add", "local", "local", "/tmp/mkt"]);
+		if (add !== undefined && add.ok) {
+			expect(controlCommandRequest(add.command).body).toEqual({ name: "local", sourceType: "local", sourceUri: "/tmp/mkt" });
+		}
+		const upgrade = parseControlCommand(["marketplace", "upgrade"]);
+		if (upgrade !== undefined && upgrade.ok) expect(controlCommandRequest(upgrade.command).body).toEqual({});
+	});
+
+	it("requires the documented arguments and a valid scope", () => {
+		expect(parseControlCommand(["plugin", "install"])).toMatchObject({ ok: false, error: /install spec/i });
+		expect(parseControlCommand(["plugin", "link", "dev"])).toMatchObject({ ok: false, error: /local path/i });
+		expect(parseControlCommand(["plugin", "uninstall"])).toMatchObject({ ok: false, error: /plugin id/i });
+		expect(parseControlCommand(["marketplace", "add", "local"])).toMatchObject({ ok: false, error: /name, source type and source uri/i });
+		expect(parseControlCommand(["marketplace", "remove"])).toMatchObject({ ok: false, error: /marketplace name/i });
+		expect(parseControlCommand(["plugin", "install", "alpha", "--scope=root"])).toMatchObject({ ok: false, error: /scope must be user or workspace/i });
+		expect(parseControlCommand(["marketplace", "bogus"])).toMatchObject({ ok: false, error: /unsupported marketplace action/i });
+	});
+
+	it("takes the mutation revision from the distribution ledger, not the declarative snapshot", () => {
+		const install = parseControlCommand(["plugin", "install", "alpha@local"]);
+		if (install !== undefined && install.ok) expect(controlCommandQueryOperation(install.command)).toBe("plugin.distribution.list");
+		const remove = parseControlCommand(["marketplace", "remove", "local"]);
+		if (remove !== undefined && remove.ok) expect(controlCommandQueryOperation(remove.command)).toBe("marketplace.discover");
+		// 声明式读仍旧走 plugin.list，避免把两种账本混成一个 revision 来源。
+		const list = parseControlCommand(["plugin", "list"]);
+		if (list !== undefined && list.ok) expect(controlCommandQueryOperation(list.command)).toBeUndefined();
+	});
+
+	it("documents the distribution and marketplace verbs in the help text", () => {
+		const help = controlCommandHelp();
+		expect(help).toContain("runledger plugin install");
+		expect(help).toContain("runledger marketplace discover");
+		expect(help).toContain("enable and trust stay separate decisions");
 	});
 });
