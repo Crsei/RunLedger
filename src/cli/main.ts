@@ -1,6 +1,7 @@
 import { readRequestDump, requestDumpErrorMessage } from "../runtime/request-dump-reader.ts";
 import type { RequestDumpView } from "../runtime/model-request-snapshots.ts";
 import type { RuntimeSelectionOverrides } from "../runtime/interactive-session-controller.ts";
+import type { LoopResetHandoff } from "../runtime/loop/handoff.ts";
 import { createKimiCodeDeviceIdProvider } from "../storage/kimi-device-id.ts";
 /**
  * RunLedger CLI 主入口(R7:Session Owner path)。
@@ -274,6 +275,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     });
   };
   const selectionOverridesBySession = new Map<string, RuntimeSelectionOverrides>();
+  const loopHandoffsBySession = new Map<string, LoopResetHandoff>();
   const retainedTransitionSources = new Set<string>();
   const ownedRuntimeRegistry = new Map<string, EmbeddedSessionRuntimeResult>();
   const openView = async (targetSessionId: string): Promise<CliSessionView> => {
@@ -410,6 +412,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 	  ? {}
 	  : await gitWorkspaceDisplayFacts(effectiveCwd, worktreeGit);
     const activeInteractive = new InteractiveMode({
+      loopHandoff: loopHandoffsBySession.get(view.sessionId),
       controller: view.controller,
       workspaceCapability: workspaceCapabilityLabel(),
       workspaceDisplayAbsolutePath: workspaceDisplayAbsolutePathForView({ effectiveCwd }),
@@ -433,6 +436,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 	  harnessToolNames: view.harnessToolNames,
 	  permissionProfile: view.permissionProfile,
     });
+    loopHandoffsBySession.delete(view.sessionId);
     view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
     const onSigint = (): void => {
       if (view.controller.inFlight) view.controller.interrupt();
@@ -447,6 +451,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       if (intent.kind === "quit") exitUsage = activeInteractive.getUsageSnapshot();
       if (intent.kind === "switch") retainedTransitionSources.add(view.sessionId);
       if (intent.kind === "switch" && intent.action === "new") {
+        if (intent.loopHandoff !== undefined) loopHandoffsBySession.set(intent.target.sessionId, intent.loopHandoff);
         const selection = view.controller.currentSelection;
         const overrides: RuntimeSelectionOverrides = {
           ...(selection.provider === undefined ? {} : { provider: selection.provider }),

@@ -41,7 +41,7 @@ export function slashPopupFilterToken(filter: string): string {
 }
 
 export class SlashCommandPopup {
-  private readonly commands: readonly RegisteredSlashCommand[];
+  private commands: readonly RegisteredSlashCommand[];
   private readonly maxVisible: number;
   private readonly theme: SelectListTheme;
   private filterText = "";
@@ -57,6 +57,14 @@ export class SlashCommandPopup {
   }
 
   invalidate(): void {}
+
+  setCommands(commands: readonly RegisteredSlashCommand[]): void {
+    const selected = this.selectedName();
+    this.commands = commands;
+    this.recompute(this.filterText);
+    const index = this.rows.findIndex(row => row.name === selected);
+    if (index >= 0) this.selectedIndex = index;
+  }
 
   /** 编辑器文本/光标变化时调用;过滤串变化则重置选中。 */
   setFilter(filter: string): void {

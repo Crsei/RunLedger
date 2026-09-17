@@ -1,6 +1,6 @@
 # oh-my-pi `/loop` 与 Goal Mode 适配实施计划
 
-> 状态:**实施中：P0.5 与 P0–P6 主体已实现并提交（`12d0552`），尚未完成全部行为与验收**。已交付证据见 §13；2026-09-17 复核的未实现项、修复顺序与验收清单统一见 §14。旧阶段记录中的未提交/未构建状态仅代表当时快照。
+> 状态:**实施中：P0.5 与 P0–P6 主体已提交（`12d0552`）；§14 R1–R4 已提交（本次提交），R5 完整门禁仍未通过**。首轮、持久暂停、client reset 与动态描述的实现和 fresh 证据见 §14；§13 保留历史快照，不代表当前完整验收。
 > 基线日期:2026-09-16;RunLedger 基线为当前工作树(`git status` 为准)。
 > 参考基线:oh-my-pi `packages/coding-agent`(本机 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/oh-my-pi`),行号以该工作树为准。
 > 适用范围:`src/runtime/{modes,session-runtime,agent-loop,protocol,contracts,usage,tools}`、`src/security/{integration,permission}`、`src/storage/{settings-manager,session-store}`、`src/tui/**`、`src/cli/**` 与对应 tests。
@@ -556,9 +556,9 @@ SQLite 侧确认无迁移:`schema.ts:66/:179` 的 `event_type TEXT NOT NULL` 无
 2. **D10 — loop condition 的执行路径**：**已裁定 (a)，已接线**。`src/runtime/loop/condition.ts` 保留三段判定语义；`domain.ts` 的 `createLoopConditionExecutor` 已把端口接到 Session 的 governed `ExecutionEnv.shell`，包含超时与取消处理。判定、执行测试与证据见 §13，不再登记为待 workspace 接通。
 3. **D7 — `UserAgentMessage.origin`**：**已接受**。`origin` 为必填字段；owner 注入的 goal 续跑与 loop 迭代以 `origin:"runtime"` 提交，TUI 以 `[runtime]` 标记呈现，不触发自动标题。
 4. **D8 — `goal.continuationDelaySeconds` 默认 30s**：保持 30s；owner 侧可配置（1–3600s），不再是 omp 的 TUI 800ms 固定延迟。
-5. **loop `reset` 动作**：**保留**（D2）。当前 runtime 只回 `loop_reset_requires_client`，client 换新 Session 的执行闭环尚未实现，见 §14 R3。
+5. **loop `reset` 动作**：**保留**（D2）。§14 R3 已补 `/loop N --reset <prompt>`：Owner 扣减预算并发信号，driver 一次性领取后经既有 Session 创建/切换路径交接。无 reset client 支持仍返回 `loop_reset_requires_client`。
 6. **`goal` 是否允许在 `plan@1` profile 使用**：**不允许**。goal 工具、`goal.*` operation 与 `session.goal` capability 只在 standard 组合出现；`minimal`/`plan` 的冻结 allowlist 不含 goal，测试固化该边界。
-7. **D14 第 2 项的实现形态**：按上述裁定在 `commandsForContext` 注入动态描述，保持 `description: string`。当前仅有静态描述与 unavailable 提示，workflow 的 `/goal` 无参输出不能代替命令列表内的动态描述；仍未落实，见 §14 R4。
+7. **D14 第 2 项的实现形态**：已按裁定在 `commandsForContext` 注入 Owner 查询投影，保持 `description: string`。命令菜单与补全共用状态/用量/预算描述，查询失败清空旧值，partial 显示下界，见 §14 R4。
 
 ## 12. 附:未采纳的 omp 实现细节
 
@@ -673,52 +673,69 @@ SQLite 侧确认无迁移:`schema.ts:66/:179` 的 `event_type TEXT NOT NULL` 无
 
 提交：`12d0552`（仅本计划改动；工作树中既有的 Web 可观测性工作按显式路径排除，混合文件用过滤补丁只暂存 `origin` 相关 hunk）。
 
-## 14. 未实现部分与收尾验收（2026-09-17 复核）
+### 2026-09-17 — 复核后的 R1–R4 补充实施（未提交）
 
-本节是后续工作清单，不表示以下行为已修复。P0–P6 主体存在不等于各阶段 DoD 全部满足；实施仍按 §0.3 分成可独立验收的变更，不修改既有 Web 工作或扩大 sandbox 范围。
+goal 首轮、run-budget 持久暂停、driver client reset 和动态命令描述已补入工作树。新证据包括单条 goal 的首轮/自动标题、3 个 Session 的有界 reset、真实压缩，以及 169 文件 / 1037 项 Runtime 测试。完整 `npm test` 仍失败，条件取消/超时存在子进程清理延迟，不能关闭 R5；当前实现与证据边界统一见下节。
 
-### R1：`/goal set` 启动首轮（未实现；P6 / D14）
+## 14. 复核后实施与收尾验收（2026-09-17）
 
-现状：`src/tui/interactive/goal-loop-workflow.ts` 的 `set` 分支只调用 `goal.set` 后提示成功；`finish()` 只刷新投影与通知，没有将 objective 交给正常 prompt 提交入口。§13 的 TTY 证据另发了 `start working on the objective`，不能据此关闭「单条 `/goal set` 即开始执行」的门禁。
+本节更新工作树中的补充实现与证据。P0–P6 主体存在不等于全部 DoD 满足；未提交、未通过及未覆盖项目分别列明。本次保留既有 Web 改动；`main.ts` 和 `runtime-server.ts` 中只增加 handoff 搬运和 goal/loop 通知路由，不修改其既有 Web 接线；没有修改 sandbox 或进程隔离实现。
 
-- [ ] 创建目标成功后，经既有 `echoPrompt`/正常用户提交入口启动首轮；设置失败时不得发 prompt，首轮标记 `origin:"user"`，后续 Owner 续跑才是 `runtime`。
-- [ ] 不让 `goal.set` domain 或模型侧 `goal({op:"create"})` 顺带再发一个用户轮；client 负责用户入口，Owner 继续拥有后续调度。
-- [ ] 回归覆盖成功恰好提交一次、revision 冲突不提交、提交前变 busy/失去 driver 的可读失败；目标已写入但首轮未启动时明确告知状态，不能假报已运行。
-- [ ] Built CLI/TTY 只输入 `/goal set <objective>`，无需补一条普通消息，即观察到首轮、自动续跑和完成结算；同时核对 origin、标题触发与审计事件。
+### R1：`/goal set` 启动首轮（已实现；P6 / D14）
 
-### R2：run budget 终止后持久化 `paused`（未实现；P3 / D9）
+`InputController.submitPrompt` 是键盘与 workflow 的同一正文提交入口；`echoPrompt` 的受限选项保留 Session 身份与 idle 检查，objective 以 `/` 开头也不会再次作为命令解释。§13 曾另发普通消息的历史证据由本节单条命令的 fresh TTY 证据补充。
 
-现状：`goal-continuation-controller.ts` 的 `terminationReason` 分支仅写 `goal.continuation_suppressed` 并取消定时器；`goal-domain.ts` 的 `recordSuppression` 不改变 canonical 状态或 revision，因此目标仍可能显示为 `active`。
+- [x] 创建成功才经正常用户入口发首轮；domain 与模型侧 create 不提交额外用户轮。
+- [x] 5 项入口回归覆盖成功一次、斜杠正文、冲突、busy、Session 变化和 driver 拒绝；分别报告“目标已保存”与“首轮未启动”。
+- [x] Built CLI/TTY 单条 `/goal set Verify the first goal turn` 触发首轮、2 次 Owner 续跑，再由用户结算完成；请求与 durable goal 事件已核对。
+- [x] 独立 `autoTitle:true` TTY 验收：只发 `/goal set`，写出 `session.title_changed`（`source:auto`、`trigger:first-user-message`）；ledger 首轮为 `origin:user`、续跑为 `origin:runtime`。证据 `title/report.json`，日志 `/tmp/plan17-cli-title.log`。
 
-- [ ] 在 goal runtime 窄端口增加受 Owner 治理的暂停动作，复用 domain 写队列、owner fence、revision 与既有 pause 转移；记录实际终止原因。
-- [ ] 与在途 token/活跃时长记账按同一权威写序列收敛；若用户已 pause/drop/complete 或替换目标，不得用旧 run 的终止覆盖新状态。
-- [ ] 暂停写入失败时仍禁止续跑并报告失败，不能仅靠 TUI 改徽标；重复终止通知不能重复推进 revision。
-- [ ] 回归覆盖已有 run budget 终止原因、并发记账、重复通知、状态冲突和重启；DoD 为转移事件可重放、恢复后为 `paused`，显式 resume 前不自动继续。
+### R2：run budget 终止后持久化 `paused`（已实现；P3 / D9）
 
-### R3：loop reset 的 client 换 Session 闭环（未实现；P4/P6 / D2）
+终止事件通过 `pauseAfterRunBudget` 进入 goal domain 的既有串行写队列、Attempt 与 owner fence。run 绑定最后一次控制 revision（不受用量与续跑计数影响），旧 run 不覆盖用户控制转移或 replacement。另修复 continuation 事件 decoder 未接受自身事件名导致恢复失败的问题。
 
-现状：`loop-controller.ts` 对 `action:"reset"` 返回 `loop_reset_requires_client`；错误码是能力缺口提示，不是已实现的新 Session 交接。当前 `/loop` 工作流没有消费该结果并执行换 Session。
+- [x] 正常 pause 转移记录 `run_budget:<terminationReason>`，与在途记账串行收敛；控制 revision 变化使旧请求失效。
+- [x] 写失败仍阻断调度，并经 driver 临时通知报告失败；不伪造 canonical paused。
+- [x] 生产 embedded Owner 测试覆盖 5 种终止原因、并发记账、重复终止、replacement、pause/resume、drop、真实暂停事件及重启恢复。失败注入覆盖通知与续跑抑制。
+- [x] goal domain 提交后发只读变化通知，客户端重新查询投影；通知本身不写状态、不推进 durable cursor。
 
-- [ ] 提供可达的 reset 动作入口（补齐 `/loop` 参数与 usage），让当前 driver client 经既有新建/切换 Session 流程处理 runtime 信号；Owner 不自主创建 Session。
-- [ ] 明确传递原 prompt、剩余次数/截止时间和动作，消费迭代预算恰好一次；通过 command/query 重新建立新 Owner 的 loop，不把 canonical 状态或 store writer 移到 client。
-- [ ] 多客户端只能由 driver 消费一次；无 client/headless 不支持该动作时给出明确失败，不静默退化为 prompt。换 Session、driver claim 或首轮提交失败时停止并保留两端可关联的审计证据。
-- [ ] 在隔离 home 验证原 Session 收口、新 Session 为空会话后接收原 prompt、总迭代预算不重置，以及重复信号/断连/失败路径。
+### R3：loop reset 的 client 换 Session 闭环（已实现；P4/P6 / D2）
 
-### R4：命令列表中的动态 goal 描述（未实现；P6 / D14）
+新增 `--reset` / `--compact` 动作入口。Owner 在每轮结束后消耗一次迭代预算；reset 信号仅交给 driver，`loop.claim_reset` 只领取一次，随后复用 catalog CAS、`session.create` 与 switch intent。CLI 搬运 `LoopResetHandoff`，新 Owner 以剩余次数或原绝对 deadline 恢复 loop，不在 client 安排计时器或写 store。
 
-现状：`registry.ts` 中 `/goal` 的 description 是固定文案，`commandsForContext` 只增加 unavailable 提示；尚未使用已裁定的动态值注入。
+- [x] `loop.reset_requested/claimed/finished/received/cancelled` 已登记 closed event catalog；两端通过 handoffId/sourceSessionId/targetSessionId 关联。审计失败不得提交新轮或发 reset 信号。
+- [x] `--reset` 无 client 支持明确拒绝；重复 claim、停止/driver 更换、过期 deadline、创建/完成交接/目标提交失败均不继续。目标 Owner 不自行创建 Session。
+- [x] 隔离 home、构建 CLI/TTY `/loop 2 --reset Verify reset budget`：3 个 Session、3 条提交审计、2 次 handoff；每个模型请求只有新 Session 的 1 条 user 消息。
+- [x] 双真实 TCP attachment 测试：仅 driver 收到 reset，observer claim 被拒绝，driver 重复 claim 被拒绝。其他故障路径使用 Owner 窄端口及 TUI workflow fixture 验证，不冒充外部 provider 证据。
 
-- [ ] 将 Owner 查询得到的 goal 投影作为命令上下文输入，在 `commandsForContext` 生成状态/预算描述，保持 `description: string`，纯投影逻辑不直接查询 store。
-- [ ] 状态或 Session 改变后刷新；查询不可用时显示 unavailable/unknown，禁止复用上一 Session 的状态。
-- [ ] 回归覆盖 inactive、active、paused、budget_limited、complete、partial 用量及切换会话；partial 必须显示下界语义。补 TTY 自动补全列表验证。
+### R4：命令列表中的动态 goal 描述（已实现；P6 / D14）
 
-### R5：收尾门禁与证据（待执行）
+命令注册表只消费投影，不直接读取 store；菜单打开、补全打开、goal 变化和初次附着时查询 Owner。异步结果带 Session/generation 保护，查询失败清空旧值；补全更新保留当前选择。
+
+- [x] 保持 `description:string`，显示状态、tokens/budget 与 partial 的 `≥` / observed lower bound；未知与能力不可用分开表达。
+- [x] 覆盖 inactive/active/paused/budget_limited/complete、partial、Session 切换时旧查询晚到和失败清空；TTY 补全捕获 `complete · 0 tokens`。
+
+### R5：收尾门禁与证据（执行中，未通过全部门禁）
 
 建议顺序：R2（运行时状态正确性）→ R1（首轮入口）→ R3（跨 Session 交接）→ R4（呈现）→ 本节验收。各项保持独立变更，修改热点按 §6.3 串行。
 
-- [ ] 上述代码变更后运行 `npm run check`、受影响测试桶、`npm test`、`npm run build`，补构建后 CLI/TTY 证据。全仓既有失败须独立记录原因与影响，不能用定向测试代替全仓通过。
+- [x] 已执行 `npm run check`、Runtime 桶、两次 `npm test`、`npm run build` 与构建后 CLI/TTY 验证；结果分列如下。
+- [ ] 完整测试门禁：`npm test` 未通过，不能用定向测试或 Runtime 桶代替。
 - [ ] 补 loop compact、Esc/停止、busy 延迟、条件超时/取消在生产组合中的证据；未复核的门禁标为 pending，不推断为已实现或未实现。
-- [ ] 区分本地确定性 HTTP provider、真实外部 provider、人工键盘/中文 IME 与跨平台验收；后几项没有对应 fresh 证据前保持 pending。
-- [ ] 完成后统一更新本计划顶部、§11/§13/§14、计划 README 与总索引；历史快照保留日期，不再作为当前状态使用。
+- [x] 区分本地确定性 HTTP provider、真实外部 provider、人工键盘/中文 IME 与跨平台验收；后几项没有对应 fresh 证据，保持 pending。
+- [x] 统一更新本计划顶部、§11/§13/§14、计划 README 与总索引；历史快照保留日期。
 
-本次只读代码复核已重新运行 12 个测试文件、72 项通过（goal reducer/prompt/domain/cache/continuation、loop limit/condition/controller、契约 consumer、工具准入、TUI 命令及 todo 持久化）。核心 69 项日志 `/tmp/plan17-readonly-recheck.log`，工具准入另跑 3 项通过；这不是 R1–R4 的验收，也不代表当前工作树完整 check/test/build 或外部模型验证已重跑。本次补充仅修改文档，验证为链接检查、规则一致性审阅与 `git diff --check`。
+历史只读复核：12 个测试文件、72 项通过，日志 `/tmp/plan17-readonly-recheck.log`。该记录不是本次 R1–R4 的验收。
+
+本次 fresh 证据与缺口：
+
+- `npm run check` 通过，完整日志 `/tmp/plan17-check-result.log`；`npm run build` 通过，日志 `/tmp/plan17-build-delivery.log`；全局 `runledger` 已核对链接到本仓库 `bin/runledger.js`，实际加载 dist。`git diff --check` 通过。
+- `npm run test:runtime` 通过，169 文件 / 1037 项（按各 chunk 日志汇总），日志 `/tmp/plan17-runtime-bucket.log`。使用隔离测试 home，没有操作真实用户数据。
+- 定向组合 14 文件 / 133 项通过（`/tmp/plan17-affected-final.log`）；补充契约/动态投影 4 文件 / 24 项通过（`/tmp/plan17-contract-final.log`）；后续 stale wait、审计失败、compact 失败计数与补全测试 4 文件 / 29 项通过（`/tmp/plan17-last-regressions.log`）；双客户端生产测试所在文件 10 项通过（`/tmp/plan17-multiclient.log`）。这些集合重叠，不相加作为独立测试总数。
+- 单条 goal、跨 Session reset 和命令补全的真实 CLI/TTY 验收 `PLAN17_FOLLOWUP_CLI_PASS`，证据 `/tmp/runledger-plan17-followup-3lh1f5/retry/report.json` 与同目录 pane 文件；脚本 `/tmp/runledger-plan17-followup-3lh1f5/run.sh`、`assert.mjs`。模型是本地确定性 HTTP fixture，没有真实外部 provider 凭据。
+- `npm test` 两次均在 fast 首块出现 Vitest `[vitest-worker]: Timeout calling "onTaskUpdate"`，80 文件 / 577 项断言通过但有 1 个 unhandled error，因此 runner 正确退出失败；不能报告完整测试通过。日志 `/tmp/plan17-full-test.log`、`/tmp/plan17-full-test-retry.log`。未修改 runner 绕过错误。
+- 扩大 TUI 测试发现 `derives footer plan progress from the live safe timeline when taskGoal is not wired` 失败；在独立 HEAD `0b2c501` 工作树只跑同一用例也失败（`/tmp/plan17-baseline-footer.log`）。未顺带改动该既有断言/行为。
+- compact fresh 验收发现此前向 compaction domain 传 catalog revision 导致 `domain_revision_conflict`；已改为查询 `compaction.list` 后使用该 domain revision，并把提交审计放在成功压缩之后。修正 fixture 摘要格式后，`PLAN17_COMPACT_CLI_PASS`：种入一个完整 turn、`retainRecentTokens:1`、`/loop 1 --compact`，真实 `compaction.completed`、2 次 loop 提交、正常预算停止。日志 `/tmp/plan17-cli-compact.log`，证据 `/tmp/runledger-plan17-followup-3lh1f5/compact/report.json`。
+- 条件运行中 `/loop stop` 已持久化 `user_requested` 且没有下一轮；但 `sleep 70` 子进程使 CLI 退出再等待 61 秒。60 秒条件 deadline 最终写出 `condition_error`、没有下一轮，但从 iteration settled 到 stopped 实测 71061 ms。证据 `/tmp/runledger-plan17-followup-3lh1f5/edge2/report.json`、timeout pane 与 `/tmp/plan17-cli-edge2.log`。该组合脚本因更早的 compact fixture 不合法整体失败，取消/超时两部分已单独核对，不将组合脚本写为 PASS。
+- 上述清理延迟只读定位到既有 `session-local-leaves.ts` 对直接 child 发 kill、等待 stdio close 的行为；涉及既有 launch-plan/进程隔离调用链，本次不扩展修复。调度停止不等于子进程及时清理。Esc 绑定、生产 busy 延迟与取消/超时清理的完整验收仍 pending；busy 等待后 stop 不得晚提交已有窄端口回归。Ctrl+C interrupt 现在同时停止 Owner loop，避免中断后自行重跑。
+- 外部 provider、人工键盘/中文 IME、macOS/Windows 均 pending。完整门禁失败，按根 `AGENTS.md` §7 不自动提交、不推送；保留本次和既有 Web 工作树改动。

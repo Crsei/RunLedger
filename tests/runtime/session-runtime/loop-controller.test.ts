@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createEmbeddedSessionRuntime } from "../../../src/cli/embedded-session-runtime.ts";
 import { SessionInteractiveController } from "../../../src/cli/session-interactive-controller.ts";
 import { claimDriver, fetchDomainSnapshot } from "../../../src/cli/main.ts";
@@ -18,6 +18,7 @@ import { createLoopTestHarness } from "./loop-test-harness.ts";
 import { existsSync } from "node:fs";
 import type { SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { evaluateLoopCondition, type LoopConditionVerdict } from "../../../src/runtime/loop/condition.ts";
+import type { SessionLoopController } from "../../../src/runtime/session-runtime/loop-controller.ts";
 
 const noPromptTestSecurity = [{
 	source: "cli" as const,
@@ -58,10 +59,38 @@ async function openLoopSession(seed: string) {
 		db.close();
 		rmSync(root, { recursive: true, force: true });
 	};
-	return { sessionId, store, client, cleanup };
+	return { sessionId, store, client, cleanup, embedded,
+		attach: () => createEmbeddedSessionRuntime({ sessionId, store, ownerStore, domain: { cwd: root, layout, settings: { autoTitle: false }, models, securitySources: noPromptTestSecurity } }),
+	};
 }
 
 describe("SessionRuntime loop surface", () => {
+	it("delivers reset only to the driver and fences an observer's claim", async () => {
+		const h = await openLoopSession("reset-driver");
+		const attached = await h.attach();
+		const observer = new SessionInteractiveController(attached.handle, await fetchDomainSnapshot(attached));
+		try {
+			const runtime = h.embedded.runtime as unknown as { domain: SessionDomainPort; loop: SessionLoopController };
+			vi.spyOn(runtime.domain.controller, "prompt").mockResolvedValue(undefined);
+			const driverSignals: string[] = [];
+			const observerSignals: string[] = [];
+			h.client.subscribeLoopReset(id => driverSignals.push(id));
+			observer.subscribeLoopReset(id => observerSignals.push(id));
+			const context = { correlationId: "reset-driver", effectId: "reset-driver", expectedRevision: 0 };
+			const started = await h.client.commandSessionDomain("loop.start", { prompt: "work", action: "reset", clientReset: true, limit: { kind: "iterations", iterations: 1 } }, context);
+			expect(started.ok).toBe(true);
+			runtime.loop.handleDomainAgentEvent({ type: "agent_end", timestamp: 1, stopReason: "stop" });
+			await expect.poll(() => driverSignals.length).toBe(1);
+			expect(observerSignals).toHaveLength(0);
+			const handoffId = driverSignals[0]!;
+			expect((await observer.commandSessionDomain("loop.claim_reset", { handoffId }, context)).ok).toBe(false);
+			expect((await h.client.commandSessionDomain("loop.claim_reset", { handoffId }, context)).ok).toBe(true);
+			expect((await h.client.commandSessionDomain("loop.claim_reset", { handoffId }, context)).ok).toBe(false);
+		} finally {
+			observer.dispose(); await attached.handle.close(); await h.cleanup();
+		}
+	});
+
 	it("advertises loop operations and inspects an idle loop", async () => {
 		const { client, cleanup } = await openLoopSession("inspect");
 		try {
@@ -215,7 +244,7 @@ describe("SessionLoopController iteration audit", () => {
 	it("surfaces why an iteration could not start instead of stopping silently", async () => {
 		const harness = createLoopTestHarness({ promptFailure: new Error("No model selected. Use /provider or /model.") });
 		const started = await harness.controller.start({ prompt: "iterate", action: "prompt", limit: { kind: "iterations", iterations: 3 } });
-		expect(started).toEqual({ ok: true });
+		expect(started).toEqual({ ok: false, code: "loop_start_failed" });
 		// 静默停止会让「loop 看起来在跑」变成误导：必须把原因投递出去并记录停止原因。
 		expect(harness.controller.inspect()).toEqual({ running: false });
 		expect(harness.stopReasons).toEqual(["prompt_failed"]);

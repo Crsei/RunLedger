@@ -49,27 +49,37 @@ export class InputController {
 			return;
 		}
 
+		void this.submitPrompt(text);
+	}
+
+	/** 键盘与 workflow 共用用户消息入口；workflow 可要求仍在原 Session 且空闲。 */
+	public async submitPrompt(text: string, options: { readonly expectedSessionId?: string; readonly requireIdle?: boolean } = {}): Promise<boolean> {
+		if (text.length === 0) return false;
+		this.port.clearIdleRecapStatus();
+		if ((options.expectedSessionId !== undefined && this.port.getSessionId() !== options.expectedSessionId)
+			|| (options.requireIdle === true && this.port.inFlight())) {
+			this.port.showNotice("Session changed or became busy; the prompt was not submitted.", "error");
+			return false;
+		}
 		if (this.port.hostConnectionState !== "ready") {
 			this.port.showNotice(this.port.hostConnectionState === "reconnecting" ? "host_reconnecting" : `host_${this.port.hostConnectionState}`, "error");
-			return;
+			return false;
 		}
 		this.port.setStreaming(true);
 		this.port.setStopReason(undefined);
 		this.port.uiRequestRender();
-		const prompt = this.port.controller
-			? this.port.controller.prompt(text, this.port.inFlight() ? "followUp" : undefined)
-			: this.port.inFlight()
-				? Promise.resolve(this.port.agent!.followUp(text))
-				: this.port.agent!.prompt(text).then(() => undefined);
-		void prompt.then(
-			() => {
-				// 最终状态由 agent_end 路径写入。
-			},
-			(err: unknown) => {
-				this.port.setStreaming(false);
-				this.port.showNotice(String(err), "error");
-			},
-		);
+		try {
+			await (this.port.controller
+				? this.port.controller.prompt(text, this.port.inFlight() ? "followUp" : undefined)
+				: this.port.inFlight()
+					? Promise.resolve(this.port.agent!.followUp(text))
+					: this.port.agent!.prompt(text).then(() => undefined));
+			return true;
+		} catch (err: unknown) {
+			this.port.setStreaming(false);
+			this.port.showNotice(String(err), "error");
+			return false;
+		}
 	}
 
 	public handleFollowUpSubmit(text: string): void {
@@ -220,13 +230,22 @@ export class InputController {
 
 	private createSlashPopup(): SlashCommandPopup {
 		const popup = new SlashCommandPopup({
-			commands: commandsForContext({ supportsOperation: (operation) => this.port.controller?.supports?.(operation) === true }),
+			commands: commandsForContext({ ...this.port.goalCommandContext?.(), supportsOperation: (operation) => this.port.controller?.supports?.(operation) === true }),
 			theme: this.selectListTheme(),
 		});
 		this.slashPopup = popup;
+		void this.port.refreshGoalProjection?.().then(() => {
+			if (this.slashPopup !== popup) return;
+			this.refreshSlashCommands();
+			this.port.uiRequestRender();
+		});
 		this.slashOverlayHandle = this.port.ui.showOverlay(popup, { anchor: "bottom-left", nonCapturing: true });
 		this.port.uiRequestRender();
 		return popup;
+	}
+
+	public refreshSlashCommands(): void {
+		this.slashPopup?.setCommands(commandsForContext({ ...this.port.goalCommandContext?.(), supportsOperation: (operation) => this.port.controller?.supports?.(operation) === true }));
 	}
 
 	public hideSlashPopup(): void {

@@ -14,12 +14,52 @@ import { SessionPickerModal, buildSessionPickerItems, formatRelativeTime } from 
 import { WELCOME_SESSION_SLOTS } from "../components/welcome.ts";
 import { isSessionCatalogResult, isSessionTitleResult, type SessionCatalogResult, type SessionTransitionResult } from "../sessions/types.ts";
 import type { InteractiveModePorts } from "./types.ts";
+import { commandSessionController } from "../adapters/session-domain.ts";
+import { isLoopResetHandoff, type LoopResetHandoff } from "../../runtime/loop/handoff.ts";
 
 export class SessionWorkflow {
 	private readonly port: InteractiveModePorts;
+	private resetPending = false;
 
 	public constructor(port: InteractiveModePorts) {
 		this.port = port;
+	}
+
+	/** 仅 driver 的一次性 claim 成功后才允许创建 Session。 */
+	public async resetLoopSession(handoffId: string): Promise<void> {
+		if (this.resetPending) return;
+		this.resetPending = true;
+		const sourceSessionId = this.port.getSessionId();
+		const command = (operation: string, payload: Record<string, unknown>) => commandSessionController(this.port.controller, operation, payload, { correlationId: `corr-${this.port.nextCorrelationId()}`, effectId: `effect-${this.port.nextEffectId()}`, expectedRevision: 0 });
+		let claimed = false;
+		try {
+			const result = await command("loop.claim_reset", { handoffId });
+			if (!result.ok || !isLoopResetHandoff(result.value.handoff)) return;
+			claimed = true;
+			if (this.rejectSessionTransition() || sourceSessionId !== this.port.getSessionId()) return;
+			const catalog = await this.loadSessionCatalog();
+			if (catalog === undefined) return;
+			const transition = await this.runSessionTransition("session.create", { expectedRevision: catalog.revision });
+			if (transition === undefined) return;
+			const finished = await command("loop.finish_reset", { handoffId, targetSessionId: transition.targetSessionId });
+			if (!finished.ok) throw new Error(finished.code);
+			claimed = false;
+			await this.port.requestExit({ kind: "switch", action: "new", target: { sessionId: transition.targetSessionId }, loopHandoff: result.value.handoff });
+		} catch (error) {
+			this.port.showNotice(`Loop reset stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+		} finally {
+			if (claimed) await command("loop.finish_reset", { handoffId }).catch(() => undefined);
+			this.resetPending = false;
+		}
+	}
+
+	public async continueResetLoop(handoff: LoopResetHandoff): Promise<void> {
+		try {
+			const result = await commandSessionController(this.port.controller, "loop.start", { prompt: handoff.prompt, action: "reset", clientReset: true, handoff, ...(handoff.condition === undefined ? {} : { condition: handoff.condition }) }, { correlationId: `corr-${this.port.nextCorrelationId()}`, effectId: `effect-${this.port.nextEffectId()}`, expectedRevision: 0 });
+			if (!result.ok) this.port.showNotice(`Loop handoff ${handoff.handoffId} from ${handoff.sourceSessionId} stopped: ${result.code}`, "error");
+		} catch (error) {
+			this.port.showNotice(`Loop handoff ${handoff.handoffId} stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+		}
 	}
 
 	/** 不修改既有 profile；所有入口复用 catalog CAS 与 session.create。 */

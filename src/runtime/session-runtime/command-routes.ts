@@ -57,6 +57,7 @@ export interface SessionCommandPort {
 
 /** loop 的协议面：与资源域同构，使既有 domain_query/domain_command 派发链可直接复用。 */
 export interface SessionLoopOperationsPort {
+	stop?(reasonCode: string): void;
 	readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
 	query(operation: string, payload: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string }): Promise<SessionDomainResult>;
 	mutate(operation: string, payload: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number }): Promise<SessionDomainResult>;

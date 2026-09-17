@@ -10,11 +10,10 @@
  */
 
 import { commandSessionController, querySessionController } from "../adapters/session-domain.ts";
-import { parseLoopArgs } from "../../runtime/loop/limit.ts";
+import { parseLoopArgs, LOOP_USAGE } from "../../runtime/loop/limit.ts";
 import type { InteractiveModePorts } from "./types.ts";
 
 const GOAL_USAGE = "Usage: /goal [set <objective> | pause | resume | complete | reject | drop | set-budget <tokens>]";
-const LOOP_USAGE = "Usage: /loop [count|duration] [--while|--until '<command>'] [prompt]  ·  /loop stop";
 
 export class GoalLoopWorkflow {
 	private readonly port: InteractiveModePorts;
@@ -25,7 +24,7 @@ export class GoalLoopWorkflow {
 
 	/** 观察面的窄投影：footer 徽标与 timeline 生命周期行共用同一次 inspect。 */
 	public async inspectGoalBadge(): Promise<{
-		readonly badge: { readonly status: string; readonly tokensUsed: number; readonly accountingCompleteness: "complete" | "partial"; readonly continuations: number };
+		readonly badge: { readonly status: string; readonly tokensUsed: number; readonly tokenBudget?: number; readonly accountingCompleteness: "complete" | "partial"; readonly continuations: number };
 		readonly lifecycle?: "pending" | "running" | "succeeded" | "failed" | "cancelled";
 		readonly goalId?: string;
 	} | undefined> {
@@ -38,6 +37,7 @@ export class GoalLoopWorkflow {
 		const state = result.value.state as {
 			readonly goalId?: string;
 			readonly status: string;
+			readonly budget?: { readonly tokenBudget?: number };
 			readonly usage: { readonly tokensUsed: number; readonly accountingCompleteness: "complete" | "partial" };
 			readonly continuations: number;
 		} | undefined;
@@ -46,6 +46,7 @@ export class GoalLoopWorkflow {
 			badge: {
 				status: state.status,
 				tokensUsed: state.usage.tokensUsed,
+				...(state.budget?.tokenBudget === undefined ? {} : { tokenBudget: state.budget.tokenBudget }),
 				accountingCompleteness: state.usage.accountingCompleteness,
 				continuations: state.continuations,
 			},
@@ -57,6 +58,7 @@ export class GoalLoopWorkflow {
 	/** `/goal`：无参数时展示当前目标；带参数时按显式动作变更。 */
 	public async runGoal(arg: string): Promise<void> {
 		const port = this.port;
+		const sessionId = port.getSessionId();
 		if (port.controller?.supports?.("goal.inspect") !== true) {
 			port.showNotice("/goal requires a standard session with goal mode enabled.", "error");
 			return;
@@ -90,7 +92,15 @@ export class GoalLoopWorkflow {
 			case "set": {
 				const objective = parts.slice(1).join(" ").trim();
 				if (objective.length === 0) { port.showNotice(GOAL_USAGE, "error"); return; }
-				await this.finish("goal.set", { objective, setBy: "user" }, request(), "Goal created.");
+				const created = await this.finish("goal.set", { objective, setBy: "user" }, request(), "Goal created.");
+				if (!created) return;
+				// 目标文本是正文，即使以 / 开头也不能被重新解释成 slash 命令。
+				try {
+					const submitted = await port.echoPrompt(objective, { expectedSessionId: sessionId, requireIdle: true });
+					if (submitted === false) port.showNotice("Goal saved, but its first turn did not start. Submit a prompt when this Session is ready.", "error");
+				} catch {
+					port.showNotice("Goal saved, but its first turn did not start. Submit a prompt when this Session is ready.", "error");
+				}
 				return;
 			}
 			case "pause":
@@ -167,7 +177,8 @@ export class GoalLoopWorkflow {
 		}
 		const result = await commandSessionController(port.controller, "loop.start", {
 			prompt: parsed.prompt,
-			action: "prompt",
+			action: parsed.action ?? "prompt",
+			clientReset: port.controller.subscribeLoopReset !== undefined,
 			...(parsed.limit === undefined ? {} : { limit: parsed.limit }),
 			...(parsed.condition === undefined ? {} : { condition: parsed.condition }),
 		}, { correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}`, expectedRevision: 0 });
@@ -189,14 +200,15 @@ export class GoalLoopWorkflow {
 		return state?.revision;
 	}
 
-	private async finish(operation: string, body: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number }, message: string): Promise<void> {
+	private async finish(operation: string, body: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number }, message: string): Promise<boolean> {
 		const result = await commandSessionController(this.port.controller, operation, body, context);
 		if (!result.ok) {
 			this.port.showNotice(goalFailureMessage(operation, result.code), "error");
-			return;
+			return false;
 		}
 		this.port.noteGoalChanged?.();
 		this.port.showNotice(message, "note");
+		return true;
 	}
 }
 

@@ -63,6 +63,10 @@ describe("Goal mode public contract", () => {
 		expect(validateRuntimeEvent(goalEvent("goal.continuation_requested", "goal")).ok).toBe(true);
 		expect(validateRuntimeEvent(goalEvent("loop.started", "session")).ok).toBe(true);
 		expect(validateRuntimeEvent(goalEvent("loop.stopped", "session")).ok).toBe(true);
+		for (const type of GOAL_EVENT_TYPES.filter(type => type.startsWith("loop.reset_"))) {
+			expect(validateRuntimeEvent(goalEvent(type, "session")).ok).toBe(true);
+			expect(RUNTIME_EVENT_PAYLOAD_REQUIREMENTS[type]).toContain("metadataDigest");
+		}
 		expect(validateRuntimeEvent(goalEvent("loop.started", "goal")).ok).toBe(false);
 	});
 

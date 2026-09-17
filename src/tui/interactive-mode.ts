@@ -65,6 +65,7 @@ import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { UsageSnapshot } from "../runtime/usage/index.ts";
 import { projectInteractivePresentation } from "./presentation/projectors.ts";
 import { commandsForContext, isCommandAvailable, unavailableCommandMessage, type RegisteredSlashCommand } from "./commands/registry.ts";
+import type { LoopResetHandoff } from "../runtime/loop/handoff.ts";
 import { SlashCommandPopup } from "./components/slash-command-popup.ts";
 import type { Component, InputListenerResult, OverlayOptions } from "./primitives.ts";
 import { matchesKey } from "./primitives.ts";
@@ -123,6 +124,7 @@ export interface HideThinkingSettingsPort {
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
+  readonly loopHandoff?: LoopResetHandoff;
   /** 新 CLI 使用统一 controller;agent 仅保留 demo 兼容。 */
   controller?: InteractiveSessionControllerPort;
   agent?: Agent;
@@ -184,7 +186,7 @@ export interface ModelPickerModel {
 
 export type InteractiveExitIntent =
   | { readonly kind: "quit" }
-  | { readonly kind: "switch"; readonly action: "new" | "resume" | "fork"; readonly target: SessionSwitchTarget };
+  | { readonly kind: "switch"; readonly action: "new" | "resume" | "fork"; readonly target: SessionSwitchTarget; readonly loopHandoff?: LoopResetHandoff };
 
 export type HostConnectionUiState = "ready" | "reconnecting" | "stopped" | "build_mismatch" | "recovery_required";
 
@@ -219,6 +221,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly refs: ContainerRefs = {} as ContainerRefs;
   private unsubscribe?: () => void;
   private unsubscribeWarnings?: () => void;
+  private unsubscribeLoopReset?: () => void;
+  private unsubscribeGoalChanged?: () => void;
+  private readonly loopHandoff: LoopResetHandoff | undefined;
   private unsubscribeSessionTitle?: () => void;
   private unsubscribeIdleRecap?: () => void;
   private idleRecapRequestId: string | undefined;
@@ -287,6 +292,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
    */
   private goalFooter: FooterSnapshot["goal"] | undefined;
   private goalFooterRefresh: Promise<void> | undefined;
+  private goalProjectionGeneration = 0;
+  private goalTokenBudget: number | undefined;
   /** 最近一次已投递的 goal timeline 状态，避免同一状态重复渲染行。 */
   private goalTimelineStatus: "pending" | "running" | "succeeded" | "failed" | "cancelled" | undefined;
   private readonly agentWorkflow: AgentWorkflow;
@@ -300,6 +307,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly port: InteractiveModePorts;
 
   constructor(opts: InteractiveModeOptions) {
+    this.loopHandoff = opts.loopHandoff;
     if (!opts.controller && !opts.agent) {
       throw new Error("InteractiveMode requires controller or agent");
     }
@@ -530,7 +538,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
       setStreaming: (value) => { this.streaming.setStreaming(value); },
       setStopReason: (value) => { this.streaming.setStopReason(value); },
       dispatchCommand: (command, arg) => this.dispatchCommand(command as RegisteredSlashCommand, arg),
-      echoPrompt: (text) => this.echoPrompt(text),
+      echoPrompt: (text, options) => this.echoPrompt(text, options),
+      noteGoalChanged: () => this.noteGoalChanged(),
+      goalCommandContext: () => ({ ...(this.goalFooter === undefined ? {} : { goal: { ...this.goalFooter, ...(this.goalTokenBudget === undefined ? {} : { tokenBudget: this.goalTokenBudget }) } }) }),
+      refreshGoalProjection: () => this.refreshGoalFooter(),
     };
   }
 
@@ -845,6 +856,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** 启动 TUI;Promise 在 quit() 完成终端清理后 resolve。 */
   async run(): Promise<InteractiveExitIntent> {
     if (this.quitting) return this.exitPromise;
+    void this.refreshGoalFooter();
     this.unsubscribe = this.controller
       ? this.controller.subscribe((ev) => { this.eventController.handleAgentEvent(ev); if (ev.type === "agent_end") this.refreshGoalFooter(); })
       : this.agent?.subscribe((ev) => { this.eventController.handleAgentEvent(ev); if (ev.type === "agent_end") this.refreshGoalFooter(); });
@@ -853,6 +865,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeWarnings = this.controller?.subscribeWarnings?.((warning) => {
       if (!this.quitting) this.showNotice(warning, "error");
     });
+    this.unsubscribeLoopReset = this.controller?.subscribeLoopReset?.((handoffId) => {
+      if (!this.quitting) void this.sessionWorkflow.resetLoopSession(handoffId);
+    });
+    this.unsubscribeGoalChanged = this.controller?.subscribeGoalChanged?.(() => this.noteGoalChanged());
     this.unsubscribeIdleRecap = this.controller?.subscribeIdleRecap?.((event) => {
       if (event.cleared === true) {
         if (event.requestId !== this.idleRecapRequestId) return;
@@ -879,11 +895,16 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.ui.requestRender();
       // 启动即按当前主题(+已缓存的 OSC 11)下发一次输入区外观。
       this.refreshEditorAppearance();
+      if (this.loopHandoff !== undefined) void this.sessionWorkflow.continueResetLoop(this.loopHandoff);
     } catch (error) {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
       this.unsubscribeWarnings?.();
       this.unsubscribeWarnings = undefined;
+      this.unsubscribeLoopReset?.();
+      this.unsubscribeLoopReset = undefined;
+      this.unsubscribeGoalChanged?.();
+      this.unsubscribeGoalChanged = undefined;
       this.unsubscribeSessionTitle?.();
       this.unsubscribeSessionTitle = undefined;
       this.unsubscribePermissionProfile?.();
@@ -1016,6 +1037,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribePermissionProfile = undefined;
     this.unsubscribeWarnings?.();
     this.unsubscribeWarnings = undefined;
+    this.unsubscribeLoopReset?.();
+    this.unsubscribeLoopReset = undefined;
+    this.unsubscribeGoalChanged?.();
+    this.unsubscribeGoalChanged = undefined;
     this.unsubscribeIdleRecap?.();
     this.unsubscribeIdleRecap = undefined;
     this.unsubscribeStore?.();
@@ -1044,7 +1069,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * 实现:把 Editor onSubmit 流转过来即可——等价于"程序模拟一键回车提交"。
    * 不调 agent.prompt 直绕，保证 handleSubmit 先投影 canonical user Timeline row。
    */
-  echoPrompt(text: string): void {
+  echoPrompt(text: string, options?: { readonly expectedSessionId?: string; readonly requireIdle?: boolean }): void | Promise<boolean> {
+    if (options !== undefined) return this.inputController.submitPrompt(text, options);
     this.inputController.handleSubmit(text);
   }
 
@@ -1064,7 +1090,16 @@ export class InteractiveMode implements FooterSnapshotProvider {
    */
   public openSlashCommands(): void {
     this.inputController.hideSlashPopup();
-    const entries = commandsForContext({ supportsOperation: this.authAdapter.supports });
+    this.showSlashCommands();
+    const overlay = this.ui.getOverlay();
+    void this.refreshGoalFooter().then(() => {
+      if (this.ui.getOverlay() === overlay) this.showSlashCommands();
+    });
+  }
+
+  private showSlashCommands(): void {
+    if (this.quitting) return;
+    const entries = commandsForContext({ supportsOperation: this.authAdapter.supports, ...(this.goalFooter === undefined ? {} : { goal: { ...this.goalFooter, ...(this.goalTokenBudget === undefined ? {} : { tokenBudget: this.goalTokenBudget }) } }) });
     const view = new SelectionView({
       title: "/commands",
       items: entries.map((entry) => ({
@@ -1442,14 +1477,21 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** FooterSnapshotProvider：一帧只组装一次不可变参数快照。 */
   /**
    * 刷新 goal 徽标缓存。owner 侧自动续跑不会触发客户端命令，因此这里在
-   * `agent_end` 之后拉一次 `goal.inspect`；查询失败只保持旧值，不影响渲染。
+   * `agent_end` 之后拉一次 `goal.inspect`；查询失败清除旧投影。
    * 查询经 workflow 的 typed adapter，InteractiveMode 不直接调用 controller（B8）。
    */
-  private refreshGoalFooter(): void {
-    if (this.goalFooterRefresh !== undefined) return;
+  private refreshGoalFooter(): Promise<void> {
+    if (this.goalFooterRefresh !== undefined) return this.goalFooterRefresh;
+    const generation = ++this.goalProjectionGeneration;
+    const sessionId = this.getSessionId();
     this.goalFooterRefresh = (async () => {
       try {
         const observed = await this.goalLoopWorkflow.inspectGoalBadge();
+        if (generation !== this.goalProjectionGeneration || sessionId !== this.getSessionId()) return;
+        this.goalFooter = observed?.badge;
+        this.goalTokenBudget = observed?.badge.tokenBudget;
+        this.inputController.refreshSlashCommands();
+        this.ui.requestRender();
         if (observed === undefined) return;
         this.goalFooter = observed.badge;
         // canonical 状态变化才投递 timeline 行：状态来自 owner 的 goal.inspect，
@@ -1466,11 +1508,17 @@ export class InteractiveMode implements FooterSnapshotProvider {
         }
         this.ui.requestRender();
       } catch {
-        // 徽标是只读投影：查询失败不阻断 TUI，也不清空已知状态。
+        if (generation === this.goalProjectionGeneration) {
+          this.goalFooter = undefined;
+          this.goalTokenBudget = undefined;
+          this.inputController.refreshSlashCommands();
+          this.ui.requestRender();
+        }
       } finally {
-        this.goalFooterRefresh = undefined;
+        if (generation === this.goalProjectionGeneration) this.goalFooterRefresh = undefined;
       }
     })();
+    return this.goalFooterRefresh;
   }
 
   /** `/goal` 与 `/loop` 工作流变更状态后由端口回调；下一次渲染即反映新状态。 */

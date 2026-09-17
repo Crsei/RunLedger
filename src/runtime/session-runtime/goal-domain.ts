@@ -63,6 +63,8 @@ interface GoalAuditPayload {
 
 interface LoadedGoal {
 	state: GoalModeState;
+	/** 排除记账与续跑计数的最后一次控制转移，阻止旧 run 暂停新目标。 */
+	controlRevision: number;
 	readonly requests: Map<string, { readonly digest: RuntimeDigest; readonly result: SessionDomainResult }>;
 }
 
@@ -79,6 +81,7 @@ export interface SessionGoalDomainOptions {
 export class SessionGoalDomain implements SessionResourceDomainPort {
 	public readonly operationManifest = MANIFEST;
 	private readonly options: SessionGoalDomainOptions;
+	private readonly changeListeners = new Set<() => void>();
 	/** 已校验的 canonical 状态；只有自身 commit 成功后才替换，稳态下不重放事件。 */
 	#cache: LoadedGoal | undefined;
 	#continuationTurn = false;
@@ -96,6 +99,32 @@ export class SessionGoalDomain implements SessionResourceDomainPort {
 	public inspect(): SessionGoalInspection {
 		const loaded = this.load();
 		return { repositoryId: this.options.repositoryId, state: loaded.state };
+	}
+
+	public controlRevision(): number {
+		return this.load().controlRevision;
+	}
+
+	public subscribeChanged(listener: () => void): () => void {
+		this.changeListeners.add(listener);
+		return () => this.changeListeners.delete(listener);
+	}
+
+	/** 与记账共用写队列；控制状态已经改变时，旧 run 的终止只作废、不覆盖。 */
+	public async pauseAfterRunBudget(controlRevision: number, reason: string, runId: string): Promise<boolean> {
+		try {
+			return await this.enqueueWrite(async () => {
+				const loaded = this.load();
+				if (loaded.controlRevision !== controlRevision || loaded.state.status !== "active") return true;
+				const request = `goal-run-budget-${runId}-${controlRevision}`;
+				const result = await this.commit("goal.pause", { reason: `run_budget:${reason}` }, {
+					correlationId: request, effectId: request, expectedRevision: loaded.state.revision,
+				}, loaded);
+				return result.ok;
+			});
+		} catch {
+			return false;
+		}
 	}
 
 	/**
@@ -250,7 +279,10 @@ export class SessionGoalDomain implements SessionResourceDomainPort {
 				receipt: { attemptId: begun.attemptId, commandId: begun.commandId, outcome: "committed" },
 			};
 			requests.set(requestId, { digest: requestDigest, result });
-			this.#cache = { state, requests };
+			this.#cache = { state, requests, controlRevision: isControlOperation(operation) ? state.revision : loaded.controlRevision };
+			for (const listener of this.changeListeners) {
+				try { listener(); } catch { /* 观察失败不能改变已提交结果。 */ }
+			}
 			const settled = port.settleAttempt(begun.attemptId, "committed", runtimeDigest({ operation, requestId }));
 			return settled.ok ? result : failure(operation, settled.code);
 		} catch (error) {
@@ -344,7 +376,7 @@ export class SessionGoalDomain implements SessionResourceDomainPort {
 			sourceHead: { streamId: fence.sessionId, sequence: 0, eventHash: runtimeDigest("runledger-empty-runtime-stream") },
 			updatedAt: new Date(catalog.createdAtMs).toISOString(),
 		});
-		const loaded: LoadedGoal = { state, requests: new Map() };
+		const loaded: LoadedGoal = { state, requests: new Map(), controlRevision: 0 };
 		for (let index = 0; index < parsed.length; index += 1) {
 			const payload = parsed[index]!;
 			const event = goalEvents[index]!;
@@ -360,6 +392,7 @@ export class SessionGoalDomain implements SessionResourceDomainPort {
 				eventHash: { algorithm: "sha256", digest: event.currentEventHash as RuntimeDigest["digest"] },
 			});
 			loaded.state = state;
+			if (isControlOperation(payload.operation)) loaded.controlRevision = state.revision;
 			const inspection: SessionGoalInspection = { repositoryId: this.options.repositoryId, state };
 			loaded.requests.set(payload.requestId, {
 				digest: payload.requestDigest,
@@ -371,6 +404,10 @@ export class SessionGoalDomain implements SessionResourceDomainPort {
 		}
 		return loaded;
 	}
+}
+
+function isControlOperation(operation: string): boolean {
+	return operation !== "goal.account_usage" && operation !== "goal.continuation_requested";
 }
 
 /** 事件类型按转移结果决定：预算耗尽与续跑记账在 catalog 里是独立类型。 */
@@ -441,7 +478,7 @@ function decode(event: SessionEventRecord, sessionId: string): GoalEventPayload 
 	const value: unknown = JSON.parse(event.payloadJson);
 	if (!record(value)
 		|| !keysAllowed(value, ["schema", "sessionId", "policyCeilingDigest", "requestId", "operation", "requestDigest", "commandId", "attemptId", "commands"])
-		|| typeof value.operation !== "string" || !(OPERATIONS as readonly string[]).includes(value.operation as typeof OPERATIONS[number])
+		|| typeof value.operation !== "string" || (!(OPERATIONS as readonly string[]).includes(value.operation) && value.operation !== "goal.continuation_requested")
 		|| value.schema !== SCHEMA || value.sessionId !== sessionId
 		|| !isRuntimeDigest(value.policyCeilingDigest) || !isRuntimeDigest(value.requestDigest)
 		|| typeof value.requestId !== "string" || !/^[a-f0-9]{64}$/u.test(value.requestId)

@@ -17,6 +17,7 @@ import type { CommandDescriptor, CommandPolicy } from "./types.ts";
 
 /** 命令上下文门控;Session 能力来自当前连接的协商结果。 */
 export interface SlashCommandContext {
+  readonly goal?: { readonly status: string; readonly tokensUsed: number; readonly tokenBudget?: number; readonly accountingCompleteness: "complete" | "partial" };
   /** 是否展示 debug 命令(/commands 弹窗默认隐藏;直接输入仍可解析)。 */
   readonly showDebugCommands?: boolean;
   /** 动态命令按注册顺序插入 `/model` 之后。 */
@@ -309,7 +310,7 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       policy: IDLE_ONLY_POLICY,
       requiredOperation: "loop.start",
       supportsInlineArgs: true,
-      usage: "[count|duration] [--while|--until '<command>'] [prompt]  ·  /loop stop",
+      usage: "[count|duration] [--reset|--compact] [--while|--until '<command>'] [prompt]  ·  /loop stop",
       argumentSchema: [schema("args", "Optional limit, condition and prompt, or 'stop'", false)],
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/loop is available when the current turn is idle.",
@@ -388,9 +389,13 @@ export function isCommandVisibleForContext(entry: RegisteredSlashCommand, contex
 
 /** 展示可见命令;debug 命令默认隐藏(直接输入仍可解析,对照 codex is_visible)。 */
 export function commandsForContext(context: SlashCommandContext = {}): readonly RegisteredSlashCommand[] {
-  const projectAvailability = (entry: RegisteredSlashCommand): RegisteredSlashCommand => context.supportsOperation === undefined || isCommandAvailable(entry, context.supportsOperation)
-    ? entry
-    : { ...entry, description: `${entry.description} · Unavailable in this session` };
+  const projectAvailability = (entry: RegisteredSlashCommand): RegisteredSlashCommand => {
+    if (context.supportsOperation !== undefined && !isCommandAvailable(entry, context.supportsOperation)) return { ...entry, description: `${entry.description} · Unavailable in this session` };
+    if (entry.canonicalName !== "goal") return entry;
+    const goal = context.goal;
+    const detail = goal === undefined ? "unknown" : goal.status === "inactive" ? "inactive · no goal" : `${goal.status} · ${goal.accountingCompleteness === "partial" ? "≥" : ""}${goal.tokensUsed}${goal.tokenBudget === undefined ? "" : `/${goal.tokenBudget}`} tokens${goal.accountingCompleteness === "partial" ? " (observed lower bound)" : ""}`;
+    return { ...entry, description: `${entry.description} · ${detail}` };
+  };
   const builtins = builtinCommandDescriptors().filter((entry) => isCommandVisibleForContext(entry, context)).map(projectAvailability);
   const dynamic = (context.dynamicCommands ?? []).filter((entry) => isCommandVisibleForContext(entry, context)).map(projectAvailability);
   if (dynamic.length === 0) return builtins;

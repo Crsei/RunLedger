@@ -31,6 +31,11 @@ export const GOAL_EVENT_TYPES = [
 	"loop.iteration_submitted",
 	"loop.iteration_settled",
 	"loop.stopped",
+	"loop.reset_requested",
+	"loop.reset_claimed",
+	"loop.reset_finished",
+	"loop.reset_received",
+	"loop.reset_cancelled",
 ] as const;
 
 export function goalModeContractFixture(): {

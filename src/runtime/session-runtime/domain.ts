@@ -570,7 +570,10 @@ export async function assembleSessionDomain(
 		...(loopSettings.enabled ? { loopConditionExecutor: createLoopConditionExecutor(executionEnv, options.cwd, LOOP_CONDITION_TIMEOUT_MS) } : {}),
 		...(goalSettings.enabled ? {
 			goalRuntime: {
+				subscribeChanged: (listener) => goalDomain.subscribeChanged(listener),
 				inspect: () => goalDomain.inspect(),
+				controlRevision: () => goalDomain.controlRevision(),
+				pauseAfterRunBudget: (revision, reason, runId) => goalDomain.pauseAfterRunBudget(revision, reason, runId),
 				accountUsage: (delta) => goalDomain.accountUsage(delta),
 				recordContinuation: () => goalDomain.recordContinuation(),
 				recordSuppression: (reasonCode) => goalDomain.recordSuppression(reasonCode),

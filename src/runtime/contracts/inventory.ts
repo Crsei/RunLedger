@@ -387,10 +387,10 @@ export const CONTRACT_INVENTORY = [
 		id: "loop",
 		// loop 不进入 canonical reducer：它是用户发起的批处理节奏，重启后不得自动续跑。
 		owner: "development-doc/plan/17-omp-loop-goal-mode-adaptation-plan.md",
-		modules: ["src/runtime/loop/limit.ts", "src/runtime/loop/condition.ts"],
+		modules: ["src/runtime/loop/limit.ts", "src/runtime/loop/condition.ts", "src/runtime/loop/handoff.ts"],
 		types: ["LoopLimit", "LoopLimitUnit", "LoopCondition"],
 		schemas: [],
-		events: ["loop.started", "loop.iteration_submitted", "loop.iteration_settled", "loop.stopped"],
+		events: ["loop.started", "loop.iteration_submitted", "loop.iteration_settled", "loop.stopped", "loop.reset_requested", "loop.reset_claimed", "loop.reset_finished", "loop.reset_received", "loop.reset_cancelled"],
 		ports: [],
 		fixtures: ["tests/runtime/loop/limit.test.ts"],
 		persistence: ["ephemeral"],

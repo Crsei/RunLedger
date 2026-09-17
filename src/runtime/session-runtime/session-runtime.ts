@@ -191,6 +191,7 @@ export class SessionRuntime implements SessionController {
 	private readonly commandHandler: SessionCommandHandler;
 	private readonly queryHandler: SessionQueryHandler;
 	private trajectoryListener: (() => void) | undefined;
+	private goalListener: (() => void) | undefined;
 
 	public constructor(options: SessionRuntimeOptions) {
 		this.sessionId = options.sessionId;
@@ -272,6 +273,7 @@ export class SessionRuntime implements SessionController {
 			loop: this.loop,
 			onDomainListenersDisposed: () => {
 				this.trajectoryListener?.();
+				this.goalListener?.();
 				this.domainListener?.();
 				this.domainTitleListener?.();
 				this.domainCompactionListener?.();
@@ -324,6 +326,7 @@ export class SessionRuntime implements SessionController {
 		options.humanInputWaitPortRef?.bind(this);
 		options.runBudgetUsageRef?.bind(this);
 		if (this.domain !== undefined) {
+			this.goalListener = this.domain.goalRuntime?.subscribeChanged?.(() => this.emit({ eventType: "session.goal_changed", payload: { ownerGeneration: this.fence.generation } }));
 			this.trajectoryListener = this.domain.trajectory?.subscribe(() => this.emit({ eventType: "trajectory.changed", payload: { ownerGeneration: this.fence.generation } }));
 			// R7:领域 AgentEvent 以 owner-fenced durable event 落库并广播,
 			// 恢复时从权威流重建(checkpoint 可删)。
@@ -452,7 +455,7 @@ export class SessionRuntime implements SessionController {
 	 * loop 审计事件：loop 状态本身是 ephemeral（不进 canonical reducer），但每次
 	 * 迭代必须落 owner-fenced durable event，否则自主迭代不可审计（D3/D15）。
 	 */
-	private appendLoopAudit(eventType: string, payload: LoopAuditPayload): void {
+	private appendLoopAudit(eventType: string, payload: LoopAuditPayload): boolean {
 		try {
 			const tail = this.store.latestEventHead(this.sessionId);
 			this.store.appendEvent(this.fence, {
@@ -463,16 +466,21 @@ export class SessionRuntime implements SessionController {
 				createdAtMs: Date.now(),
 				expectedPreviousEventHash: tail.hash,
 			});
+			return true;
 		} catch {
-			// 审计写入失败不阻断迭代；owner fence 失效由 heartbeat/写失败自停。
+			return false;
 		}
 	}
 
 	/** `loop.mode = compact`：走既有 compaction domain 的独占路径，不自行压缩上下文。 */
 	private async runCompaction(): Promise<void> {
 		const resources = this.domain?.resources;
-		if (resources?.mutate === undefined) return;
-		await resources.mutate("compact.run", {}, { correlationId: `loop-compact-${Date.now().toString(36)}`, effectId: "loop-compact", expectedRevision: this.store.catalogRevision() });
+		if (resources?.mutate === undefined) throw new Error("Loop compaction unavailable");
+		const correlationId = `loop-compact-${Date.now().toString(36)}`;
+		const inspected = await resources.query("compaction.list", {}, { correlationId, effectId: "loop-compact-inspect" });
+		if (!inspected.ok) throw new Error(`Compaction inspection failed: ${inspected.code}`);
+		const result = await resources.mutate("compact.run", {}, { correlationId, effectId: "loop-compact", expectedRevision: inspected.domainRevision });
+		if (!result.ok) throw new Error(`Loop compaction failed: ${result.code}`);
 	}
 
 	public snapshot(): SessionSnapshot {

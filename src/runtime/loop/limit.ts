@@ -23,7 +23,7 @@ const TIME_UNITS_MS: Record<string, number> = {
 };
 
 export const LOOP_USAGE =
-	"Usage: /loop [count|duration] [--while|--until '<command>'] [prompt]. Examples: /loop 10, /loop 10m, /loop 20 --until 'bun test' fix the failing tests.";
+	"Usage: /loop [count|duration] [--reset|--compact] [--while|--until '<command>'] [prompt]. Examples: /loop 10, /loop 10m, /loop 20 --until 'bun test' fix the failing tests.";
 
 /** `--while` 在命令成功时继续；`--until` 在命令失败时继续。 */
 const CONDITION_FLAGS: Record<string, boolean> = { "--while": false, "--until": true };
@@ -35,6 +35,7 @@ export interface LoopConditionConfig {
 }
 
 export interface ParsedLoopArgs {
+	readonly action?: "reset" | "compact";
 	readonly limit?: LoopLimitConfig;
 	readonly condition?: LoopConditionConfig;
 	readonly prompt?: string;
@@ -57,6 +58,7 @@ export function parseLoopArgs(args: string): ParsedLoopArgs | string {
 	return {
 		...(limitResult.limit === undefined ? {} : { limit: limitResult.limit }),
 		...(conditionResult.condition === undefined ? {} : { condition: conditionResult.condition }),
+		...(conditionResult.action === undefined ? {} : { action: conditionResult.action }),
 		...(conditionResult.rest.length === 0 ? {} : { prompt: conditionResult.rest }),
 	};
 }
@@ -129,11 +131,18 @@ function takeLoopLimit(input: string): { readonly limit?: LoopLimitConfig; reado
 	return LOOP_USAGE;
 }
 
-function takeLoopCondition(input: string): { readonly condition?: LoopConditionConfig; readonly rest: string } | string {
+function takeLoopCondition(input: string): { readonly condition?: LoopConditionConfig; readonly action?: "reset" | "compact"; readonly rest: string } | string {
 	let rest = input.trim();
+	let action: "reset" | "compact" | undefined;
 	let condition: LoopConditionConfig | undefined;
 	while (rest.startsWith("--")) {
 		const name = /^(--[a-z][a-z-]*)(?=[\s=]|$)/u.exec(rest)?.[1];
+		if (name === "--reset" || name === "--compact") {
+			if (action !== undefined || rest[name.length] === "=") return LOOP_USAGE;
+			action = name === "--reset" ? "reset" : "compact";
+			rest = rest.slice(name.length).trim();
+			continue;
+		}
 		const until = name === undefined ? undefined : CONDITION_FLAGS[name];
 		if (name === undefined || until === undefined) {
 			return `Unknown /loop flag ${name ?? rest.split(/\s+/, 1)[0]}. ${LOOP_USAGE}`;
@@ -149,7 +158,7 @@ function takeLoopCondition(input: string): { readonly condition?: LoopConditionC
 		condition = { command: value.value.trim(), until };
 		rest = value.rest;
 	}
-	return { ...(condition === undefined ? {} : { condition }), rest };
+	return { ...(condition === undefined ? {} : { condition }), ...(action === undefined ? {} : { action }), rest };
 }
 
 function makeIterations(amountText: string): LoopLimitConfig | string {

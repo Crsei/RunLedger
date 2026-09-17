@@ -12,6 +12,8 @@
  */
 
 import type { OwnerFence } from "../session-owner/types.ts";
+import { randomUUID } from "node:crypto";
+import { isLoopResetHandoff, type LoopResetHandoff } from "../loop/handoff.ts";
 import type { SessionDomainPort, SessionRuntimeState } from "./session-runtime.ts";
 import type { SessionControllerEvent, SessionRuntimeServer } from "../session-server/runtime-server.ts";
 import type { RecoveryBarrier } from "./recovery-barrier.ts";
@@ -37,6 +39,9 @@ export interface LoopAuditPayload {
 	readonly iteration: number;
 	readonly action: LoopIterationAction;
 	readonly reasonCode?: string;
+	readonly handoffId?: string;
+	readonly sourceSessionId?: string;
+	readonly targetSessionId?: string;
 }
 
 export interface SessionLoopPort {
@@ -48,7 +53,7 @@ export interface SessionLoopPort {
 	readonly state: () => SessionRuntimeState;
 	readonly emit: (event: SessionControllerEvent) => void;
 	/** durable 审计写入；由 composition 注入 store.appendEvent。 */
-	readonly appendAudit: (eventType: string, payload: LoopAuditPayload) => void;
+	readonly appendAudit: (eventType: string, payload: LoopAuditPayload) => boolean | void;
 	/** `compact` 动作的宿主；缺省时该动作不可用。 */
 	readonly compact?: () => Promise<void>;
 	readonly settings: EffectiveLoopSettings;
@@ -58,6 +63,8 @@ export interface SessionLoopPort {
 }
 
 export interface StartLoopInput {
+	readonly clientReset?: boolean;
+	readonly handoff?: LoopResetHandoff;
 	readonly prompt: string;
 	readonly limit?: LoopLimitConfig;
 	readonly action: LoopIterationAction;
@@ -71,6 +78,7 @@ export type LoopRejectCode =
 	| "loop_condition_disabled"
 	| "loop_reset_requires_client"
 	| "loop_reset_unsupported"
+	| "loop_start_failed"
 	| "session_busy";
 
 export interface LoopStateView {
@@ -85,6 +93,8 @@ export interface LoopStateView {
 export const LOOP_OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object.freeze([
 	Object.freeze({ operation: "loop.start", capability: "session.loop", access: "mutate" as const }),
 	Object.freeze({ operation: "loop.stop", capability: "session.loop", access: "mutate" as const }),
+	Object.freeze({ operation: "loop.claim_reset", capability: "session.loop", access: "mutate" as const }),
+	Object.freeze({ operation: "loop.finish_reset", capability: "session.loop", access: "mutate" as const }),
 	Object.freeze({ operation: "loop.inspect", capability: "session.loop", access: "read" as const }),
 ]);
 
@@ -100,6 +110,7 @@ export class SessionLoopController {
 	private disposed = false;
 	private generation = 0;
 	private pendingCondition: AbortController | undefined;
+	private reset: { readonly handoff: LoopResetHandoff; claimed: boolean } | undefined;
 
 	public constructor(port: SessionLoopPort) {
 		this.port = port;
@@ -129,6 +140,21 @@ export class SessionLoopController {
 
 	public async mutate(operation: string, payload: Record<string, unknown>, context: SessionDomainMutationContext): Promise<SessionDomainResult> {
 		void context;
+		if (operation === "loop.claim_reset" || operation === "loop.finish_reset") {
+			const reset = this.reset;
+			if (reset === undefined || payload.handoffId !== reset.handoff.handoffId) return loopFailure(operation, "loop_reset_expired");
+			if (operation === "loop.claim_reset") {
+				if (reset.claimed) return loopFailure(operation, "loop_reset_already_claimed");
+				if (!this.auditReset("loop.reset_claimed", reset.handoff)) { this.stop("audit_failed"); return loopFailure(operation, "loop_audit_failed"); }
+				reset.claimed = true;
+				return { ok: true, status: "ok", operation, domainRevision: 0, value: { handoff: reset.handoff } };
+			}
+			if (!reset.claimed) return loopFailure(operation, "loop_reset_not_claimed");
+			if (!this.auditReset("loop.reset_finished", reset.handoff, typeof payload.targetSessionId === "string" ? payload.targetSessionId : undefined)) { this.stop("audit_failed"); return loopFailure(operation, "loop_audit_failed"); }
+			this.reset = undefined;
+			this.stop(typeof payload.targetSessionId === "string" ? "reset_handoff" : "reset_failed");
+			return { ok: true, status: "ok", operation, domainRevision: 0, value: {} };
+		}
 		if (operation === "loop.stop") {
 			if (this.loop === undefined) return loopFailure(operation, "loop_not_running");
 			const reasonCode = typeof payload.reasonCode === "string" && payload.reasonCode.length > 0 ? payload.reasonCode : "user_requested";
@@ -137,10 +163,13 @@ export class SessionLoopController {
 		}
 		if (operation !== "loop.start") return loopFailure(operation, "operation_unavailable", "unavailable");
 		const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
+		if (payload.handoff !== undefined && !isLoopResetHandoff(payload.handoff)) return loopFailure(operation, "loop_handoff_invalid");
 		const action = payload.action === "compact" || payload.action === "reset" || payload.action === "prompt" ? payload.action : "prompt";
 		const started = await this.start({
 			prompt,
 			action,
+			clientReset: payload.clientReset === true,
+			...(isLoopResetHandoff(payload.handoff) ? { handoff: payload.handoff } : {}),
 			...(isLoopLimitConfig(payload.limit) ? { limit: payload.limit } : {}),
 			...(isLoopConditionConfig(payload.condition) ? { condition: payload.condition } : {}),
 		});
@@ -157,18 +186,22 @@ export class SessionLoopController {
 		if (input.condition !== undefined && !this.port.settings.conditionEnabled) return { ok: false, code: "loop_condition_disabled" };
 		if (input.condition !== undefined && this.port.executeCondition === undefined) return { ok: false, code: "loop_condition_disabled" };
 		// reset 只能由 client 执行（换新 session），runtime 只回信号。
-		if (input.action === "reset") return { ok: false, code: "loop_reset_requires_client" };
+		if (input.action === "reset" && input.clientReset !== true) return { ok: false, code: "loop_reset_requires_client" };
 		if (input.action === "compact" && this.port.compact === undefined) return { ok: false, code: "loop_reset_unsupported" };
 		if (this.busy()) return { ok: false, code: "session_busy" };
-		const limit = createLoopLimitRuntime(input.limit, this.port.settings.maxIterations);
+		const limit = input.handoff?.limit ?? createLoopLimitRuntime(input.limit, this.port.settings.maxIterations);
+		if (input.handoff !== undefined && (input.action !== "reset" || input.prompt !== input.handoff.prompt || (limit.kind === "duration" && isLoopLimitExhausted(limit)))) return { ok: false, code: "loop_reset_unsupported" };
 		this.loop = { prompt: input.prompt, action: input.action, limit, ...(input.condition === undefined ? {} : { condition: input.condition }) };
-		this.iteration = 0;
+		this.iteration = input.handoff?.iteration ?? 0;
+		if (input.handoff !== undefined && !this.auditReset("loop.reset_received", input.handoff, this.port.sessionId)) { this.stop("audit_failed"); return { ok: false, code: "loop_reset_unsupported" }; }
 		await this.submit("initial");
-		return { ok: true };
+		return this.loop === undefined ? { ok: false, code: "loop_start_failed" } : { ok: true };
 	}
 
 	public stop(reasonCode: string): void {
 		if (this.loop === undefined) return;
+		if (this.reset !== undefined) this.auditReset("loop.reset_cancelled", this.reset.handoff);
+		this.reset = undefined;
 		this.pendingCondition?.abort();
 		this.pendingCondition = undefined;
 		this.cancelPending();
@@ -183,7 +216,7 @@ export class SessionLoopController {
 	}
 
 	public handleDomainAgentEvent(event: AgentEvent): void {
-		if (this.loop === undefined) return;
+		if (this.loop === undefined || this.reset !== undefined) return;
 		if (event.type !== "agent_end") {
 			if (event.type === "agent_start") this.cancelPending();
 			return;
@@ -205,7 +238,7 @@ export class SessionLoopController {
 	}
 
 	public handleDriverStateChange(): void {
-		if (this.loop !== undefined && this.port.server.driverConnectionId?.() === undefined) this.stop("driver_detached");
+		if (this.loop !== undefined) this.stop(this.port.server.driverConnectionId?.() === undefined ? "driver_detached" : "driver_changed");
 		this.cancelPending();
 	}
 
@@ -230,15 +263,21 @@ export class SessionLoopController {
 		return (controller?.getSteeringMessages().length ?? 0) > 0 || (controller?.getFollowUpMessages().length ?? 0) > 0;
 	}
 
+	private ownerReady(): boolean {
+		return this.port.state() === "ready" && this.port.server.driverConnectionId?.() !== undefined && this.port.barrier.currentState !== "open";
+	}
+
 	private async iterate(generation: number, settled: boolean): Promise<void> {
 		const state = this.loop;
 		if (this.disposed || generation !== this.generation || state === undefined) return;
-		this.port.appendAudit("loop.iteration_settled", {
+		if (!this.ownerReady()) { this.stop("owner_not_ready"); return; }
+		const settledAudit = this.port.appendAudit("loop.iteration_settled", {
 			limit: describeLoopLimitRuntime(state.limit),
 			iteration: this.iteration,
 			action: state.action,
 			...(settled ? {} : { reasonCode: "iteration_unspecified" }),
 		});
+		if (settledAudit === false) { this.stop("audit_failed"); return; }
 		if (isLoopLimitExhausted(state.limit)) {
 			this.stop("iteration_limit_reached");
 			return;
@@ -257,13 +296,29 @@ export class SessionLoopController {
 				return;
 			}
 		}
+		if (this.disposed || generation !== this.generation || this.loop !== state) return;
 		const consumed = consumeLoopLimitIteration(state.limit);
 		if (consumed === undefined) {
 			this.stop("iteration_limit_reached");
 			return;
 		}
 		this.loop = { ...state, limit: consumed };
+		if (state.action === "reset") {
+			await this.port.domain?.controller.waitForIdle?.();
+			if (this.disposed || generation !== this.generation || this.loop === undefined) return;
+			if (this.busy() || !this.ownerReady()) { this.stop("reset_not_ready"); return; }
+			if (consumed.kind === "duration" && isLoopLimitExhausted(consumed)) { this.stop("iteration_limit_reached"); return; }
+			const handoff: LoopResetHandoff = { handoffId: randomUUID(), sourceSessionId: this.port.sessionId, prompt: state.prompt, action: "reset", limit: consumed, iteration: this.iteration, ...(state.condition === undefined ? {} : { condition: state.condition }) };
+			this.reset = { handoff, claimed: false };
+			if (!this.auditReset("loop.reset_requested", handoff)) { this.stop("audit_failed"); return; }
+			this.port.emit({ eventType: "session.loop_reset", payload: { handoffId: handoff.handoffId } });
+			return;
+		}
 		await this.submit("iteration");
+	}
+
+	private auditReset(eventType: string, handoff: LoopResetHandoff, targetSessionId?: string): boolean {
+		return this.port.appendAudit(eventType, { limit: describeLoopLimitRuntime(handoff.limit), iteration: handoff.iteration, action: "reset", handoffId: handoff.handoffId, sourceSessionId: handoff.sourceSessionId, ...(targetSessionId === undefined ? {} : { targetSessionId }) }) !== false;
 	}
 
 	private async evaluateCondition(condition: LoopConditionConfig): Promise<LoopConditionVerdict> {
@@ -285,6 +340,7 @@ export class SessionLoopController {
 	private async submit(phase: "initial" | "iteration"): Promise<void> {
 		const state = this.loop;
 		if (state === undefined) return;
+		const generation = this.generation;
 		// 必须保留接收者：controller.prompt 读取实例状态，解构后会丢 this。
 		const controller = this.port.domain?.controller;
 		if (controller?.prompt === undefined) {
@@ -303,15 +359,24 @@ export class SessionLoopController {
 		// agent_end 在 agent.inFlight 仍为 true 时派发；此刻直接 prompt 会被当成 steering
 		// 入队，而当前 run 已过 dequeue 点，消息将无人消费 → loop 停摆。
 		await controller.waitForIdle?.();
+		if (this.disposed || generation !== this.generation || this.loop !== state) return;
+		if (this.port.state() !== "ready" || this.port.server.driverConnectionId?.() === undefined || this.busy()) { this.stop("owner_not_ready"); return; }
+		if (phase === "iteration" && state.action === "compact") {
+			try { await this.port.compact?.(); }
+			catch (error) {
+				this.port.emit({ eventType: "session.loop_notice", payload: { message: `Loop compaction failed: ${error instanceof Error ? error.message : String(error)}` } });
+				this.stop("compact_failed"); return;
+			}
+			if (this.disposed || generation !== this.generation || this.loop !== state) return;
+			if (this.busy() || !this.ownerReady()) { this.stop("owner_not_ready"); return; }
+		}
 		this.iteration += 1;
-		this.port.appendAudit("loop.iteration_submitted", {
+		const audited = this.port.appendAudit("loop.iteration_submitted", {
 			limit: describeLoopLimitRuntime(state.limit),
 			iteration: this.iteration,
 			action: state.action,
 		});
-		if (phase === "iteration" && state.action === "compact") {
-			await this.port.compact?.();
-		}
+		if (audited === false) { this.stop("audit_failed"); return; }
 		this.port.emit({ eventType: "turn.started", payload: { promptText: state.prompt.slice(0, 512), origin: "runtime" } });
 		try {
 			await controller.prompt(state.prompt, undefined, "runtime");

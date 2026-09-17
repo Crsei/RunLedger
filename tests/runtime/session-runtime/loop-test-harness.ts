@@ -21,20 +21,22 @@ export interface LoopTestHarness {
 	emitAgentEnd(terminationReason?: Extract<AgentEvent, { type: "agent_end" }>["terminationReason"]): void;
 	/** 模拟 driver claim 期间 recovery barrier 打开。 */
 	openBarrier(): void;
+	detachDriver(): void;
 	/** 等 controller 内部的 setTimeout(0) 结算。 */
 	settle(): Promise<void>;
 }
 
-export function createLoopTestHarness(options: { readonly promptFailure?: Error } = {}): LoopTestHarness {
+export function createLoopTestHarness(options: { readonly promptFailure?: Error; readonly waitForIdle?: () => Promise<void>; readonly failAudit?: string; readonly compact?: () => Promise<void> } = {}): LoopTestHarness {
 	const submissions: string[] = [];
 	const audits: Array<{ readonly eventType: string; readonly payload: LoopAuditPayload }> = [];
 	const stopReasons: string[] = [];
 	const events: SessionControllerEvent[] = [];
+	let driverAttached = true;
 	const fence: OwnerFence = { sessionId: createRuntimeId("session", "loop-harness"), runtimeId: createRuntimeId("runtime", "loop-harness"), generation: 1 };
 	const domain = {
 		controller: {
 			// controller 侧必须提供 waitForIdle：注入新轮前要等上一轮 run 真正结束。
-			waitForIdle: async () => undefined,
+			waitForIdle: options.waitForIdle ?? (async () => undefined),
 			prompt: async (text: string) => {
 				if (options.promptFailure !== undefined) throw options.promptFailure;
 				submissions.push(text);
@@ -58,14 +60,17 @@ export function createLoopTestHarness(options: { readonly promptFailure?: Error 
 		sessionId: fence.sessionId,
 		fence,
 		barrier,
-		server: { driverConnectionId: () => createRuntimeId("connection", "loop-harness") } as unknown as SessionRuntimeServer,
+		server: { driverConnectionId: () => driverAttached ? createRuntimeId("connection", "loop-harness") : undefined } as unknown as SessionRuntimeServer,
 		state: () => "ready" as SessionRuntimeState,
 		emit: (event) => { events.push(event); },
 		appendAudit: (eventType, payload) => {
+			if (options.failAudit === eventType) return false;
 			audits.push({ eventType, payload });
 			if (eventType === "loop.stopped" && payload.reasonCode !== undefined) stopReasons.push(payload.reasonCode);
+			return true;
 		},
 		settings: { enabled: true, maxIterations: 50, conditionEnabled: false },
+		...(options.compact === undefined ? {} : { compact: options.compact }),
 	});
 	return {
 		controller,
@@ -82,6 +87,7 @@ export function createLoopTestHarness(options: { readonly promptFailure?: Error 
 			} as AgentEvent);
 		},
 		openBarrier: () => { barrierState.open = true; },
+		detachDriver: () => { driverAttached = false; controller.handleDriverStateChange(); },
 		settle: async () => {
 			await new Promise<void>((resolve) => { setTimeout(resolve, 5); });
 		},

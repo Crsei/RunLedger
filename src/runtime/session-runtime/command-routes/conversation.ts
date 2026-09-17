@@ -30,6 +30,7 @@ export function createConversationCommandRoutes(port: SessionCommandPort): Pick<
 		},
 		interrupt: async () => {
 			port.invalidateIdleRecap();
+			port.loop?.stop?.("interrupted");
 			port.domain?.controller.interrupt();
 			port.emit({ eventType: "turn.interrupted", payload: {} });
 			return { ok: true, kind: "interrupt", result: {} };

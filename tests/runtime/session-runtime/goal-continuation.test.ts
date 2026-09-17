@@ -140,6 +140,8 @@ describe("SessionGoalContinuationController idle detection", () => {
 			goal: {
 				inspect: () => ({ repositoryId: createRuntimeId("repository", "goal-continuation"), state: goalState }),
 				accountUsage: async () => true,
+				controlRevision: () => 1,
+				pauseAfterRunBudget: async () => true,
 				recordContinuation: async () => true,
 				recordSuppression: (reason) => { suppressions.push(reason); return true; },
 				markContinuationTurn: () => undefined,

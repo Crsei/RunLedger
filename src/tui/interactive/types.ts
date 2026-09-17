@@ -29,6 +29,7 @@ import type { InteractiveSessionAdapter } from "../adapters/interactive-session.
 import type { InteractiveExitIntent } from "../interactive-mode.ts";
 import type { RequestDump } from "../../runtime/model-request-snapshots.ts";
 import type { PermissionsOpenCallbacks } from "../permissions/workflow.ts";
+import type { SlashCommandContext } from "../commands/registry.ts";
 
 /** 原始正文与说明分开；文件写入不增加标题、不清洗、不追加换行。 */
 export interface PromptDumpDocument extends RequestDump {
@@ -105,6 +106,8 @@ export interface InteractiveModePorts {
 	showNotice(text: string, kind?: "note" | "error"): void;
 	/** goal/loop 状态变更后通知 footer 徽标刷新；缺省时徽标保持旧值。 */
 	noteGoalChanged?(): void;
+	goalCommandContext?(): SlashCommandContext;
+	refreshGoalProjection?(): Promise<void>;
 	showOverlayModal(component: Component, options?: OverlayOptions, kind?: Exclude<TuiOverlayState["state"], "closed">): void;
 	/** Session 权限页;调用方在 `onCancel`/`onUnavailable` 时恢复被挂起的输入。 */
 	readonly openPermissions?: (callbacks?: PermissionsOpenCallbacks) => void;
@@ -131,7 +134,7 @@ export interface InteractiveModePorts {
 	setStopReason(value: string | undefined): void;
 	dispatchCommand(command: unknown, arg: string): void;
 	/** 供 workflow 注入一条 user turn（与键盘回车同源，不绕过 handleSubmit）。 */
-	echoPrompt(text: string): void;
+	echoPrompt(text: string, options?: { readonly expectedSessionId?: string; readonly requireIdle?: boolean }): void | Promise<boolean>;
 }
 
 export type { InteractiveExitIntent };

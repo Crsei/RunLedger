@@ -40,6 +40,11 @@ export const RUNTIME_EVENT_TYPES = [
 	"loop.iteration_submitted",
 	"loop.iteration_settled",
 	"loop.stopped",
+	"loop.reset_requested",
+	"loop.reset_claimed",
+	"loop.reset_finished",
+	"loop.reset_received",
+	"loop.reset_cancelled",
 	"task.created",
 	"task.definition_revised",
 	"task.transitioned",
@@ -419,6 +424,11 @@ export const EVENT_METADATA_REQUIRED_ACTIONS = [
 	// 用量记账与 loop 迭代结算以 metadata digest 表达，不复制原始用量报告或输出正文。
 	"usage_accounted",
 	"iteration_settled",
+	"reset_requested",
+	"reset_claimed",
+	"reset_finished",
+	"reset_received",
+	"reset_cancelled",
 ] as const;
 
 export type RuntimeEventSubjectKind =

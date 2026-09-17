@@ -143,6 +143,8 @@ export interface InteractiveSessionControllerPort {
   subscribe(listener: AgentEventSink): () => void;
 	/** 客户端异步命令失败复用 warnings 投影，不进入 AgentEvent/replay。 */
 	readonly subscribeWarnings?: (listener: (warning: string) => void) => () => void;
+	readonly subscribeLoopReset?: (listener: (handoffId: string) => void) => () => void;
+	readonly subscribeGoalChanged?: (listener: () => void) => () => void;
 	/** Optional durable title-event subscription; absent on legacy/local controllers. */
 	readonly subscribeSessionTitleChanged?: (listener: SessionTitleChangedSink) => () => void;
 	readonly subscribePermissionProfile?: (listener: (profile: string) => void) => () => void;

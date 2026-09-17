@@ -81,6 +81,8 @@ const allowedControllerCalls = [
   "controller.subscribeSessionTitleChanged",
   "controller.subscribeIdleRecap",
   "controller.subscribeWarnings",
+  "controller.subscribeLoopReset",
+  "controller.subscribeGoalChanged",
   "controller.subscribePermissionProfile",
   "controller.notifyEditorActivity",
   "controller.prompt",

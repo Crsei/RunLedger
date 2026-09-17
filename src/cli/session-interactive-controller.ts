@@ -59,6 +59,8 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	private readonly trajectoryListeners = new Set<() => void>();
 	public readonly trajectory: TrajectoryClientPort;
 	private readonly warningListeners = new Set<(warning: string) => void>();
+	private readonly loopResetListeners = new Set<(handoffId: string) => void>();
+	private readonly goalChangedListeners = new Set<() => void>();
 	private readonly titleListeners = new Set<SessionTitleChangedSink>();
 	private readonly permissionListeners = new Set<(profile: string) => void>();
 	private permissionProfile: string;
@@ -160,6 +162,16 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	public subscribeWarnings(listener: (warning: string) => void): () => void {
 		this.warningListeners.add(listener);
 		return () => this.warningListeners.delete(listener);
+	}
+
+	public subscribeLoopReset(listener: (handoffId: string) => void): () => void {
+		this.loopResetListeners.add(listener);
+		return () => this.loopResetListeners.delete(listener);
+	}
+
+	public subscribeGoalChanged(listener: () => void): () => void {
+		this.goalChangedListeners.add(listener);
+		return () => this.goalChangedListeners.delete(listener);
 	}
 
 	public subscribeIdleRecap(listener: SessionIdleRecapSink): () => void {
@@ -379,6 +391,8 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.listeners.clear();
 		this.trajectoryListeners.clear();
 		this.warningListeners.clear();
+		this.loopResetListeners.clear();
+		this.goalChangedListeners.clear();
 		this.titleListeners.clear();
 		this.permissionListeners.clear();
 		this.idleRecapListeners.clear();
@@ -432,6 +446,23 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 			return;
 		}
 		if (frame.kind !== "subscription_event") return;
+		if (frame.body.eventType === "session.goal_changed") {
+			for (const listener of this.goalChangedListeners) listener();
+			return;
+		}
+		if (frame.body.eventType === "session.loop_reset") {
+			const event = frame.body.payload;
+			if (isRecord(event) && typeof event.handoffId === "string") for (const listener of this.loopResetListeners) listener(event.handoffId);
+			return;
+		}
+		if (frame.body.eventType === "session.goal_notice" || frame.body.eventType === "session.loop_notice") {
+			const event = frame.body.payload;
+			if (isRecord(event) && typeof event.message === "string") {
+				this.warningState.push(event.message);
+				for (const listener of this.warningListeners) listener(event.message);
+			}
+			return;
+		}
 		if (frame.body.eventType === "trajectory.changed") {
 			const payload = frame.body.payload as Record<string, unknown> | undefined;
 			if (payload?.ownerGeneration === this.sessionGeneration) for (const listener of this.trajectoryListeners) listener();

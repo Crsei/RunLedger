@@ -21,7 +21,10 @@ import type { EffectiveGoalSettings } from "../../storage/settings-manager.ts";
  * controller 不持有具体 domain 类，只依赖它需要的动作，便于单测给假实现。
  */
 export interface SessionGoalRuntimePort {
+	readonly subscribeChanged?: (listener: () => void) => () => void;
 	readonly inspect: () => SessionGoalInspection;
+	readonly controlRevision: () => number;
+	readonly pauseAfterRunBudget: (controlRevision: number, reason: string, runId: string) => Promise<boolean>;
 	readonly accountUsage: (delta: GoalUsageDelta) => Promise<boolean>;
 	readonly recordContinuation: () => Promise<boolean>;
 	readonly recordSuppression: (reasonCode: string) => boolean;
@@ -134,6 +137,9 @@ export class SessionGoalContinuationController {
 	private runHadToolCalls = false;
 	private currentRunIsContinuation = false;
 	private generation = 0;
+	private runControlRevision: number | undefined;
+	private budgetStoppedRevision: number | undefined;
+	private runSequence = 0;
 
 	public constructor(port: SessionGoalContinuationPort) {
 		this.port = port;
@@ -141,6 +147,8 @@ export class SessionGoalContinuationController {
 
 	public handleDomainAgentEvent(event: AgentEvent): void {
 		if (event.type === "agent_start") {
+			this.runSequence += 1;
+			this.runControlRevision = this.port.goal?.inspect().state.status === "active" ? this.port.goal.controlRevision() : undefined;
 			// 空转判定是「本轮 run 有没有产生过工具调用」，不是「最后一个 turn 有没有」：
 			// 只调工具的 run 末轮通常没有工具调用，按 turn 重置会误判为空转。
 			this.runHadToolCalls = false;
@@ -153,6 +161,10 @@ export class SessionGoalContinuationController {
 			return;
 		}
 		if (event.type === "tool_execution_end") {
+			// 允许首轮内新建目标；已有目标被替换时仍保留旧 run 的绑定。
+			if (this.runControlRevision === undefined && this.port.goal?.inspect().state.status === "active") {
+				this.runControlRevision = this.port.goal.controlRevision();
+			}
 			this.runHadToolCalls = true;
 			this.cancelPending();
 			return;
@@ -171,6 +183,11 @@ export class SessionGoalContinuationController {
 			// run budget 终止后不再续跑，也不会凭续跑绕过预算（D9）。
 			this.port.goal?.recordSuppression("run_budget_terminated");
 			this.cancelPending();
+			const revision = this.runControlRevision;
+			if (revision !== undefined) {
+				this.budgetStoppedRevision = revision;
+				void this.pauseAfterBudget(revision, event.terminationReason!, event.runId ?? `run-${this.runSequence}`);
+			}
 			return;
 		}
 		this.cancelPending();
@@ -220,7 +237,7 @@ export class SessionGoalContinuationController {
 			loopRunning: this.port.loopRunning(),
 			state: this.port.goal?.inspect().state,
 			idle: !(snapshot?.inFlight ?? true),
-			runBudgetTerminated: false,
+			runBudgetTerminated: this.budgetStoppedRevision !== undefined && this.budgetStoppedRevision === this.port.goal?.controlRevision(),
 			lastRunHadToolCalls: this.lastRunHadToolCalls,
 			editorEmpty: this.editorEmpty,
 			queuesEmpty: this.queuesEmpty(),
@@ -264,6 +281,15 @@ export class SessionGoalContinuationController {
 	private queuesEmpty(): boolean {
 		return (this.port.domain?.controller.getSteeringMessages().length ?? 0) === 0
 			&& (this.port.domain?.controller.getFollowUpMessages().length ?? 0) === 0;
+	}
+
+	private async pauseAfterBudget(revision: number, reason: string, runId: string): Promise<void> {
+		const paused = await this.port.goal?.pauseAfterRunBudget(revision, reason, runId).catch(() => false);
+		if (paused !== true) {
+			this.port.emit({ eventType: "session.goal_notice", payload: {
+				message: `Goal auto-continuation stopped (${reason}), but saving the paused state failed. Pause the goal explicitly before resuming.`,
+			} });
+		}
 	}
 
 	private async accountActiveTime(event: AgentEvent): Promise<void> {
