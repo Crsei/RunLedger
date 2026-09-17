@@ -49,6 +49,8 @@ import type { ProcessToolClient } from "./process-tool-support.ts";
 import { withBuiltinCapabilityClaims } from "./capabilities.ts";
 import { createWebSearchFetch } from "../../websource/transport.ts";
 import { createRequestPermissionsTool, type RequestPermissionsPort } from "../../security/tools/request-permissions.ts";
+import { createAskTool } from "./ask.ts";
+import type { AskPort } from "../session-runtime/ask-reverse-request.ts";
 
 export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
@@ -60,6 +62,11 @@ export interface StdlibToolsOptions {
 	readonly skillLoader?: import("./skill.ts").SkillLoader;
 	/** Host-governed permission request port；P6 接入完整 approval UX。 */
 	readonly permissionRequester?: RequestPermissionsPort;
+	/**
+	 * 用户提问端口（reverse-request）；缺省不注册 `ask`，使未接线的组合
+	 * 不会暴露一个必然失败的工具。
+	 */
+	readonly askPort?: AskPort;
 	/** todo 工具的持久化 sink;未注入时 todo 只在进程内维护状态。 */
 	readonly ledger?: import("../ledger/types.ts").LedgerSink;
 	/**
@@ -120,6 +127,7 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
 	register(createTodoTool(options.ledger === undefined ? {} : { ledger: options.ledger }));
 	register(createNotebookEditTool());
 	if (options.permissionRequester !== undefined) register(createRequestPermissionsTool(options.permissionRequester));
+	if (options.askPort !== undefined) register(createAskTool(options.askPort));
 	register(echoTool);
 	if (options.managedProcess) {
 		const processClient = options.managedProcess;
@@ -230,4 +238,7 @@ export type { WebSearchCredentialPort, WebSearchSettings };
 export type { TodoToolOptions };
 export { createProcessOutputTool, createProcessWaitTool, createWriteStdinTool, createProcessStopTool, createProcessResizeTool };
 export { createRequestPermissionsTool } from "../../security/tools/request-permissions.ts";
+export { createAskTool, askSchema } from "./ask.ts";
+export type { AskToolDetails } from "./ask.ts";
+export type { AskAnswers, AskPort, AskQuestion } from "../session-runtime/ask-reverse-request.ts";
 export { echoTool };

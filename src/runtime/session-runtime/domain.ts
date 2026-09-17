@@ -10,6 +10,7 @@ import type { LoopConditionExecution } from "../loop/condition.ts";
 const LOOP_CONDITION_TIMEOUT_MS = 60_000;
 import { resolveGoalSettings, resolveLoopSettings, type EffectiveGoalSettings, type EffectiveLoopSettings } from "../../storage/settings-manager.ts";
 import { createWebSearchCredentials } from "../../storage/web-search-credentials.ts";
+import type { AskPort } from "./ask-reverse-request.ts";
 import { toWebSearchSettings } from "../../storage/web-search-settings.ts";
 import { buildStandardExecutionPrompt } from "./standard-system-prompt.ts";
 import { assertAssembledPromptBase } from "../harness-profiles/composition.ts";
@@ -125,6 +126,8 @@ export interface SessionDomainCompositionOptions {
 	readonly multiAgent?: SessionMultiAgentPolicySources;
 	/** Host-controlled child provider seam; it must preserve the governed prepare spec. */
 	readonly multiAgentChildRuntimeProvider?: ChildRuntimeProviderPort;
+	/** 用户提问端口（`ask` 工具）。缺省时不注册该工具。 */
+	readonly askPort?: AskPort;
 }
 
 /** 在 SessionRuntime 内装配真实 InteractiveSessionController(单一 Session 域)。 */
@@ -256,7 +259,7 @@ export async function assembleSessionDomain(
 		...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions, {
 			credentials: createWebSearchCredentials({ layout: options.layout }),
 			...(options.settings.webSearch === undefined ? {} : { settings: toWebSearchSettings(options.settings.webSearch) }),
-		}),
+		}, options.askPort),
 		...planTools.tools,
 		...(goalSettings.enabled ? goalTools.tools : []),
 	];
@@ -733,6 +736,7 @@ export function productionSessionTools(
 	permissionRequester?: StdlibToolsOptions["permissionRequester"],
 	lspOptions?: LspToolOptions,
 	webSearch?: StdlibToolsOptions["webSearch"],
+	askPort?: StdlibToolsOptions["askPort"],
 ): AgentTool[] {
 	const excluded = new Set(["NotebookEdit", "echo"]);
 	excluded.add("Skill");
@@ -742,6 +746,7 @@ export function productionSessionTools(
 		...(managedProcess === undefined ? {} : { managedProcess }),
 		...(permissionRequester === undefined ? {} : { permissionRequester }),
 		...(webSearch === undefined ? {} : { webSearch }),
+		...(askPort === undefined ? {} : { askPort }),
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));

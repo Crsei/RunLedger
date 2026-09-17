@@ -29,11 +29,11 @@ parity/02 §8 的结论是：RunLedger 当前**不需要** omp 的呈现层，�
 | 阶段 | 内容 | 依赖决策 | 状态 |
 |---|---|---|---|
 | **A1** | `read` 的类型分派层 + sqlite 分支 + archive 分支 | 无（archive 解码器纯 TS） | **已实现**（证据见 §5.1） |
-| **A2** | `ask` 工具 + 通用反向请求 kind | 无新外部依赖 | planned |
-| **B1** | `checkpoint` / `rewind` 语义 | **需裁定**：同会话 rewind 需新 store 能力（§3 B1） | 待裁定 |
-| **B2** | `ast_grep` / `ast_edit` | **被 Plan 16 裁定 4 冻结**，需重新裁定 native crate（§3 B2） | 待裁定 |
-| **B3** | `read` 的 PDF 分支 / markit 文档转换 | **需裁定** native PDF 依赖（§3 B3） | 待裁定 |
-| **C** | 工具呈现层（schema 预算 / 按需加载） | 无，但**必须等 A/B 落地后按实测压力**设计 | planned |
+| **A2** | `ask` 工具 + 通用反向请求 kind | 无新外部依赖 | **已实现**（证据见 §5.2） |
+| **B1** | `checkpoint` / `rewind` 语义 | 已裁定：**复用现有 fork 语义**（新会话） | planned |
+| **B2** | `ast_grep` / `ast_edit` | 已裁定：**不做**（保持 Plan 16 裁定 4） | 不做 |
+| **B3** | `read` 的 PDF 分支 / markit 文档转换 | 已裁定：**不做** | 不做 |
+| **C** | 工具呈现层（schema 预算 / 按需加载） | **实测未达触发条件**（见 §5.3），暂不实施 | 评估完成 |
 
 **范围外**：`eval`（模型侧代码执行内核，parity/00 §6 明确不移植）、`internal-urls`（同上）、`edit` 多模式 hashline（Plan 16 裁定 4）。
 
@@ -143,7 +143,7 @@ read.ts execute()
 
 ## 3. 需要裁定的三项（B 阶段）
 
-### B1 `checkpoint` / `rewind` 的语义
+### B1 `checkpoint` / `rewind` 的语义（已裁定：复用 fork 语义）
 
 **上游事实**：`checkpoint`/`rewind` 是 `sessionManager.branchWithSummary` —— **session 树分支**，不是 git 快照、也不是文件回滚。
 
@@ -151,11 +151,11 @@ read.ts execute()
 
 **缺口（若要做真 rewind）**：① store 层 head 回退/重放截断能力（或改语义为 fork+切换）；② `session.*` 域操作（带 catalog/head CAS + attempt 收口）；③ controller 的**运行中**状态重物化入口（现在只有构造期一次性 replay）；④ TUI/web 入口与回执。
 
-**待裁定**：
-- (a) 以**现有 fork 语义**交付 `rewind`（工具名 `rewind`，内部即 `fork --at`），**不**新增同会话回退能力 —— 成本低、无新 store 能力，但对用户语义是「开新会话」；
-- (b) 引入同会话 rewind（需上述四项，**与 append-only 事件溯源原则冲突**，风险最高）；
-- (c) 不做。
-`checkpoint` 工具本身在上游只是「给当前边界打标记 + 写 summary」，RL 已有 checkpoint 边界白名单与 cache，**但它是 cache 不是 authority**（`restoreCheckpointReplay` 只做 tail 续接）；能否把「用户可见的 checkpoint 标记」建成一等对象需要先答 (a)/(b)。
+**裁定（2026-09-18）：选 (a)** —— 以现有 fork 语义交付，**不**新增同会话回退能力。
+
+**已确认的下一步**：以 `src/runtime/loop/handoff.ts` 的 `LoopResetHandoff` 为模板，让 `rewind` 工具/命令产出「请求切到 fork 后的新会话」的意图，client 侧收到后执行 `session.fork`（`throughSequence`）并切换会话。runtime 不自行新建会话（那会越过 driver admission 改变会话身份），与 loop reset 同款分层。
+
+**尚未实现**，因为 `checkpoint` 工具本身还缺一个前置：上游的 `checkpoint` 是「给当前边界打标记 + 写 summary」，而 RL 的 checkpoint 是**纯前进加速 cache**（`restoreCheckpointReplay` 只做 tail 续接，边界白名单在 `session-owner/types.ts`），用户可见的「标记」还不是一等对象。要做需要先把「会话内的命名检查点」建成 durable 记录，再让 rewind 引用它。
 
 ### B2 `ast_grep` / `ast_edit`
 
@@ -258,3 +258,46 @@ rg -n "splitDeferredTools" src/api/
 rg -n "reverse_request_unhandled|pollIntervalMs" src/runtime/session-server/client-transport.ts src/runtime/session-runtime/approval-reverse-request.ts
 rg -n "isStableForkBoundary" src/storage/session-store/fork-projector.ts
 ```
+
+---
+
+## 5.2 A2 落地结果（2026-09-18）
+
+| 交付物 | 说明 |
+|---|---|
+| `src/runtime/session-runtime/ask-reverse-request.ts` | 新文件。`ask_prompt` 帧的编解码 + `AskPort` + `createReverseRequestAskPort`。复用 credential 通道的同一个 `ReverseRequestSender`，**每次调用只投递一帧**：`reverse_request_unhandled` → 立即抛（不重试），`aborted` → cancelled，答案不匹配 → invalid_response。`timeoutMs` 只是投递上限（缺省 `null` = 无 deadline，由 abort/断线释放），**从不当作重试周期** |
+| `src/runtime/tools/ask.ts` | 新文件。TypeBox schema（1–4 问、每问 1–8 选项）+ 答案摘要渲染。**无 port 时硬失败**（throw）而不是返回「已询问」 |
+| `src/runtime/tools/capabilities.ts` | `ask` 归入只读 tier（与 `read`/`grep`/`glob`/`ls` 同 claim 桶）——它是纯交互、无文件/进程/网络副作用 |
+| `src/runtime/tools/index.ts` | `StdlibToolsOptions.askPort` + 条件注册（与 `web_search`/`request_permissions` 同款三态写法） |
+| `src/cli/embedded-session-runtime.ts` + `src/runtime/session-runtime/domain.ts` | **生产接线**：在 owner claim 后构造 `createReverseRequestAskPort({ sender: server, connectionId: () => server.driverConnectionId() })`，经 `SessionDomainCompositionOptions.askPort` → `productionSessionTools` → 注册 |
+| `src/tui/interactive/approval-workflow.ts` | `handleSessionReverseRequest` 新增 `ask_prompt` 分支（复用 `SelectorModal`；多选时重建 modal 保留光标） |
+| `tests/runtime/tools/ask.test.ts`(12) + `tests/tui/ask-reverse-request.test.ts`(6) | 18 项 |
+
+### 子实现者未接线，由我补上（值得记录）
+
+`AskTool` 交付时**只提供了 `askPort` 选项，没有构造它**——`grep createReverseRequestAskPort` 在生产零命中，意味着 `ask` 在任何真实会话里都不会注册。这正是 Plan 16 §1.1 记载的「已声明但实际不存在」那类缺陷（`TodoWrite`/`Task*` 当年同样如此）。我按 approval 通道的既有分层补了生产接线，并用真实 CLI 的 durable `harness.composed` receipt 验证：`standard@2` 的工具表从 27 → **28**，`ask` 在列。
+
+### 验证证据
+
+- `npx vitest run tests/runtime/tools/ask.test.ts tests/tui/ask-reverse-request.test.ts tests/stdlib-tools.test.ts tests/security/plan-mode-tool-admission.test.ts` → 56 项全绿；ask 两文件 **68ms**（证明无重试等待）。
+- `npm run check` 全链 0 错（**730** consumers / 0 diagnostics）。
+- `npm run build` 通过；真实 CLI 隔离 `RUNLEDGER_DIR` 下 `ask` 出现在组合表中。
+
+---
+
+## 5.3 Stage C 触发条件评估（结论：暂不实施）
+
+parity/02 §8 的触发条件是「工具数接近 provider 的 schema 预算」。**实测（2026-09-18）**：
+
+| 度量 | 值 |
+|---|---|
+| `createStdlibTools` 工具数 / 序列化 schema 字节 | 14 个 / 8,447 B（≈2,112–2,347 tokens）|
+| `productionSessionTools` | 11 个 / 7,402 B（≈1,851 tokens）|
+| **真实 standard@2 完整表（27 个工具，含 plan/goal/Skill/mcp_*）** | **≈4,543 tokens** |
+| 占 200k 上下文 | **≈2.27%** |
+
+度量方式：对每个工具取 `JSON.stringify({name, description, parameters}).length` 求和，再用 bytes/4 与 bytes/3.6 给出 token 区间（中英混排的上/下界）。
+
+**结论**：工具 schema 只占上下文的 ~2.3%，离任何 provider 的预算上限都很远。A1/A2 之后表只增 1 个工具（`ask`）。因此**呈现层（`ToolLoadMode` / `xd://` 等价物）当前没有收益**，不实施；parity/02 §8 的判断经实测成立。
+
+**重新评估的触发条件**（写入本计划，供后续引用）：真实 standard 表的 schema 超过上下文窗口的 ~15%，或 provider 明确报 schema 长度错误时，再启动 Stage C；设计输入已备（见 §4）。

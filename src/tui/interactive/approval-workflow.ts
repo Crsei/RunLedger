@@ -11,6 +11,7 @@ import { AuthInputModal } from "../components/auth-input-modal.ts";
 import { makeSelectListTheme } from "../theme/factories.ts";
 import { approvalChoices, approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "../approval.ts";
 import { decodeAuthEvent, decodeAuthPrompt } from "../../runtime/session-runtime/credential-reverse-request.ts";
+import { ASK_REVERSE_REQUEST_KIND, decodeAskRequest, type AskQuestion } from "../../runtime/session-runtime/ask-reverse-request.ts";
 import type { AuthEvent, AuthPrompt } from "../../auth/types.ts";
 import type { SessionFrameEnvelope } from "../../runtime/session-server/protocol.ts";
 import type { InteractiveModePorts } from "./types.ts";
@@ -23,10 +24,15 @@ export interface HostReverseFrame {
 	readonly body: Record<string, unknown>;
 }
 
+/** 多选问题的「提交所选」哨兵值;选项标签里不会出现(重复标签已被解码拒绝)。 */
+const ASK_SUBMIT_VALUE = "__ask_submit__";
+
 export class ApprovalWorkflow {
 	private readonly port: InteractiveModePorts;
 	/** 活跃 permission view(approval 测试读取);busy 拒绝依赖它。 */
 	activePermissionView: PermissionRequestView | undefined;
+	/** 活跃 ask 提问:同一时刻只允许一个提问序列占据 overlay。 */
+	private activeAsk = false;
 
 	public constructor(port: InteractiveModePorts) {
 		this.port = port;
@@ -49,6 +55,7 @@ export class ApprovalWorkflow {
 		if (requestKind === "credential_prompt" || requestKind === "credential_event") {
 			return this.handleCredentialReverseRequest(frame, signal);
 		}
+		if (requestKind === ASK_REVERSE_REQUEST_KIND) return this.handleAskReverseRequest(frame, signal);
 		return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
 	}
 
@@ -181,6 +188,100 @@ export class ApprovalWorkflow {
 			return Promise.resolve({});
 		}
 		return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+	}
+
+	/**
+	 * Session 协议 ask reverse-request:模型侧的提问(ASK_REVERSE_REQUEST_KIND)投递到
+	 * 这里,逐个问题用 SelectorModal 渲染并把选择经 reverse_response.answers 送回;
+	 * 多选问题的 modal 在每次勾选后重建,标签前缀 [x]/[ ] 并附「提交所选」项。
+	 * 用户取消(Esc/Ctrl+C)或 reverse-request 中止 → { ok:false, code:"aborted" }。
+	 */
+	public handleAskReverseRequest(frame: SessionFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
+		const questions = decodeAskRequest(frame.body.body);
+		if (questions === undefined) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+		if (signal.aborted) return Promise.resolve({ ok: false, code: "aborted" });
+		if (this.activeAsk || this.activePermissionView !== undefined) return Promise.resolve({ ok: false, code: "ask_busy" });
+		this.activeAsk = true;
+		const port = this.port;
+		return new Promise<Record<string, unknown>>((resolve) => {
+			let settled = false;
+			const finish = (body: Record<string, unknown>): void => {
+				if (settled) return;
+				settled = true;
+				this.activeAsk = false;
+				signal.removeEventListener("abort", onAbort);
+				if (port.ui.hasOverlay()) port.closeOverlay();
+				port.uiRequestRender();
+				resolve(body);
+			};
+			const onAbort = (): void => finish({ ok: false, code: "aborted" });
+			signal.addEventListener("abort", onAbort, { once: true });
+			void (async (): Promise<void> => {
+				const answers: Record<string, readonly string[]> = {};
+				for (const question of questions) {
+					const picked = await this.promptAskQuestion(question, signal);
+					if (settled) return;
+					if (picked === undefined) {
+						finish({ ok: false, code: "aborted" });
+						return;
+					}
+					answers[question.id] = picked;
+				}
+				finish({ ok: true, answers });
+			})();
+		});
+	}
+
+	/** 渲染单个问题;resolve `undefined` 表示用户取消或提问被中止。 */
+	private promptAskQuestion(question: AskQuestion, signal: AbortSignal): Promise<readonly string[] | undefined> {
+		const port = this.port;
+		const multi = question.multi === true;
+		const labels = question.options.map((option) => option.label);
+		const selected = new Set<string>();
+		return new Promise<readonly string[] | undefined>((resolve) => {
+			let settled = false;
+			const finish = (value: readonly string[] | undefined): void => {
+				if (settled) return;
+				settled = true;
+				signal.removeEventListener("abort", onAbort);
+				resolve(value);
+			};
+			const onAbort = (): void => finish(undefined);
+			signal.addEventListener("abort", onAbort, { once: true });
+			const open = (cursor: number): void => {
+				if (settled) return;
+				const items = question.options.map((option) => ({
+					value: option.label,
+					label: multi ? `${selected.has(option.label) ? "[x]" : "[ ]"} ${option.label}` : option.label,
+					...(option.description === undefined ? {} : { description: option.description }),
+				}));
+				if (multi) items.push({ value: ASK_SUBMIT_VALUE, label: `✔ 提交所选（已选 ${selected.size}）` });
+				if (port.ui.hasOverlay()) port.closeOverlay();
+				port.showOverlayModal(new SelectorModal({
+					theme: port.theme,
+					selectListTheme: makeSelectListTheme(port.theme),
+					title: question.header === undefined ? question.question : `${question.header}: ${question.question}`,
+					items,
+					initialSelectedIndex: cursor,
+					onSelect: (item) => {
+						if (!multi) {
+							finish([item.value]);
+							return;
+						}
+						if (item.value === ASK_SUBMIT_VALUE) {
+							finish(labels.filter((label) => selected.has(label)));
+							return;
+						}
+						if (selected.has(item.value)) selected.delete(item.value);
+						else selected.add(item.value);
+						open(labels.indexOf(item.value));
+					},
+					onCancel: () => finish(undefined),
+				}), { anchor: "bottom-left" });
+				port.uiRequestRender();
+			};
+			open(0);
+		});
 	}
 
 	/** facade 暴露:有活跃 approval view 时返回 true(供 Ctrl+C/退出路由判断)。 */

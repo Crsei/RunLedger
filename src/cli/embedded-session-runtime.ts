@@ -24,6 +24,7 @@ import { SessionRuntime, type SessionDomainPort } from "../runtime/session-runti
 import { assembleSessionDomain, type SessionDomainCompositionOptions } from "../runtime/session-runtime/domain.ts";
 import { LateBoundAttemptPort } from "../runtime/session-runtime/attempt-gateway.ts";
 import { createSessionApprovalPorts, LateBoundHumanInputWaitPort } from "../runtime/session-runtime/approval-reverse-request.ts";
+import { createReverseRequestAskPort } from "../runtime/session-runtime/ask-reverse-request.ts";
 import { restoreSession } from "../runtime/session-runtime/restore.ts";
 import { LateBoundAgentRunBudgetUsage } from "../runtime/session-runtime/run-timing.ts";
 import { SessionClient, type OwnedSessionHandle } from "./session-client.ts";
@@ -220,12 +221,23 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 			driverConnectionId: () => server.driverConnectionId(),
 			humanInputWait: humanInputWaitPort,
 		});
+	// `ask` 走与 approval 同一条 reverse-request 通道（同一个 sender 与 driver
+	// 连接解析）。无 reverseRequestHandler 的客户端（如 headless）会在投递时收到
+	// `reverse_request_unhandled`，端口据此**立即**失败而不是重试——工具因此不会
+	// 把「没人看到的问题」当成已问过。
+	const askPort = options.domain === undefined
+		? undefined
+		: createReverseRequestAskPort({
+			sender: server,
+			connectionId: () => server.driverConnectionId(),
+		});
 	const domainOptions = options.domain === undefined
 		? undefined
 		: {
 				...options.domain,
 				...(workspace === undefined ? {} : { cwd: workspace.effectiveCwd }),
 				...(approvalPorts === undefined ? {} : { approvalPorts }),
+				...(askPort === undefined ? {} : { askPort }),
 			};
 	let domain: SessionDomainPort | undefined;
 	try {

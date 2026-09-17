@@ -27,6 +27,8 @@ export interface SelectorModalProps {
   items: SelectItem[];
   maxVisible?: number;
   layout?: SelectListLayoutOptions;
+  /** 初始光标位置;多选场景在每次切换后重建 modal 时保持光标不跳回首行。 */
+  initialSelectedIndex?: number;
   onSelect?: (item: SelectItem) => void;
   onCancel?: () => void;
 }
@@ -48,6 +50,7 @@ export class SelectorModal implements Component {
     );
     this.list.onSelect = props.onSelect;
     this.list.onCancel = props.onCancel;
+    if (props.initialSelectedIndex !== undefined) this.list.setSelectedIndex(props.initialSelectedIndex);
     // Box 是 Container:paddingX=1 paddingY=0;SelectList 通过 addChild 嵌入。
     void props.theme;
     this.box = new Box(1, 0);
