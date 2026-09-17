@@ -9,6 +9,13 @@ import { createSkillRegistry } from "../../extensions/skills/registry.ts";
 import { resolveSkillsPolicy } from "../../extensions/skills/policy.ts";
 import { loadProjectSettings, saveProjectSettings } from "../../storage/settings-manager.ts";
 import { NodeExtensionStorage } from "../../storage/extensions/extension-storage.ts";
+import { NodeExtensionDistributionStorage } from "../../storage/extensions/distribution-storage.ts";
+import { ExtensionDistributionRegistry, resolveExtensionDistributionPaths } from "../../extensions/plugins/marketplace/registry.ts";
+import { ExtensionInstaller, type ExtensionSourceMaterializer } from "../../extensions/plugins/installer.ts";
+import { MarketplaceFetcher } from "../../extensions/plugins/marketplace/fetcher.ts";
+import { resolveExtensionCachePaths } from "../../extensions/plugins/marketplace/cache.ts";
+import { MarketplaceManager } from "../../extensions/plugins/marketplace/manager.ts";
+import { runExtensionDoctor } from "../../extensions/plugins/doctor.ts";
 import { TrustStore } from "../../extensions/trust/trust-store.ts";
 import { sourceKey } from "../../extensions/paths.ts";
 import type { ExtensionSource, ExtensionSourceRoot } from "../../extensions/types.ts";
@@ -86,6 +93,8 @@ export interface SessionExtensionCompositionOptions {
 	readonly audit?: (event: SessionExtensionAuditEvent) => Promise<void>;
 	/** mutation 经 recovery barrier 记账;缺省时 mutation 直通(测试接缝)。 */
 	readonly attemptPort?: () => AttemptPort | undefined;
+	/** P5 分发面;缺省时所有分发操作返回 operation_unavailable。 */
+	readonly distribution?: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
 }
 
 export interface SessionExtensionComposition {
@@ -144,7 +153,40 @@ const OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object
 	Object.freeze({ operation: "skill.provider.enable", capability: "session.skills", access: "mutate" }),
 	Object.freeze({ operation: "skill.provider.disable", capability: "session.skills", access: "mutate" }),
 	Object.freeze({ operation: "mcp.restart", capability: "session.mcp", access: "mutate" }),
+	// P5 分发面（§8 operation manifest 增量）。安装/启用/信任三者严格分离：
+	// 这些 mutate 只落盘与记账，绝不顺带授予执行。
+	Object.freeze({ operation: "plugin.distribution.list", capability: "session.plugins", access: "read" }),
+	Object.freeze({ operation: "plugin.doctor", capability: "session.plugins", access: "read" }),
+	Object.freeze({ operation: "marketplace.discover", capability: "session.plugins", access: "read" }),
+	Object.freeze({ operation: "plugin.install", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "plugin.uninstall", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "plugin.link", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "plugin.upgrade", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "marketplace.add", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "marketplace.remove", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "marketplace.update", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "marketplace.upgrade", capability: "session.plugins", access: "mutate" }),
 ]);
+
+/** 分发面读取操作的返回形状（bounded，不含 native path 之外的运行时私有上下文）。 */
+export interface SessionDistributionReadPort {
+	list(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	doctor(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	/** 读取所有已安装 package 的已声明 settings 与当前值；不需要 payload。 */
+	marketplaces(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+}
+
+/** 分发面变更操作。全部经 attempt barrier 记账后才返回。 */
+export interface SessionDistributionMutationPort {
+	install(input: { readonly spec: string; readonly scope: "user" | "workspace" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	uninstall(input: { readonly packageId: string; readonly scope: "user" | "workspace" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	link(input: { readonly packageId: string; readonly name: string; readonly localPath: string; readonly scope: "user" | "workspace" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	upgrade(input: { readonly spec: string; readonly scope: "user" | "workspace" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	addMarketplace(input: { readonly name: string; readonly sourceType: string; readonly sourceUri: string }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	removeMarketplace(input: { readonly name: string }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	updateMarketplace(input: { readonly name: string }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	upgradeFromMarketplace(input: { readonly marketplace: string; readonly scope: "user" | "workspace" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+}
 
 /**
  * S5:协调一个 owned SessionRuntime 私有的扩展快照、MCP 连接与清理顺序。
@@ -203,7 +245,8 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 	};
 }
 
-function queryResources(options: SessionExtensionCompositionOptions, operation: string): SessionDomainResult {	const snapshot = options.manager.publicSnapshot();
+async function queryResources(options: SessionExtensionCompositionOptions, operation: string): Promise<SessionDomainResult> {
+	const snapshot = options.manager.publicSnapshot();
 	const mcp = options.mcp.snapshots();
 	if (operation === "extension.inspect") {
 		return ok(operation, options.generation, { snapshot: snapshot ?? emptySnapshot(options.generation), mcp });
@@ -213,6 +256,16 @@ function queryResources(options: SessionExtensionCompositionOptions, operation: 
 	}
 	if (operation === "mcp.list" || operation === "mcp.doctor") {
 		return ok(operation, options.generation, { items: mcp });
+	}
+	if (operation === "plugin.distribution.list" || operation === "plugin.doctor" || operation === "marketplace.discover") {
+		const distribution = options.distribution?.read;
+		if (distribution === undefined) return { ok: false, status: "unavailable", code: "operation_unavailable", operation };
+		const read = operation === "plugin.distribution.list"
+			? await distribution.list()
+			: operation === "plugin.doctor"
+				? await distribution.doctor()
+				: await distribution.marketplaces();
+		return read.ok ? ok(operation, options.generation, read.value ?? {}) : { ok: false, status: "failed", code: read.code ?? "distribution_read_failed", operation };
 	}
 	const kind = operation === "plugin.list" ? "plugin" : operation === "skill.list" ? "skill" : operation === "hook.list" ? "hook" : undefined;
 	if (kind !== undefined) {
@@ -229,6 +282,82 @@ function ok(operation: string, domainRevision: number, value: Record<string, unk
 
 function stringValue(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** P5 分发 mutate 操作名；与 OPERATION_MANIFEST 中的 mutate 项一一对应。 */
+const DISTRIBUTION_MUTATION_OPERATIONS = new Set<string>([
+	"plugin.install",
+	"plugin.uninstall",
+	"plugin.link",
+	"plugin.upgrade",
+	"marketplace.add",
+	"marketplace.remove",
+	"marketplace.update",
+	"marketplace.upgrade",
+]);
+
+/**
+ * 分发 mutate 的 payload 校验与路由。所有分支都要求 durable command 已带
+ * expected revision（由调用方保证），并且**只**落盘/记账：不启用、不信任、
+ * 不起 host（D7）。
+ */
+async function dispatchDistributionMutation(
+	port: SessionDistributionMutationPort,
+	operation: string,
+	payload: Record<string, unknown>,
+	scope: "user" | "workspace",
+	stringValue: (value: unknown) => string | undefined,
+): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string }> {
+	switch (operation) {
+		case "plugin.install":
+		case "plugin.upgrade": {
+			const spec = stringValue(payload.spec);
+			if (spec === undefined) return { ok: false, code: "spec_required" };
+			const applied = operation === "plugin.install"
+				? await port.install({ spec, scope })
+				: await port.upgrade({ spec, scope });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "install_failed" };
+		}
+		case "plugin.uninstall": {
+			const packageId = stringValue(payload.pluginId);
+			if (packageId === undefined) return { ok: false, code: "plugin_id_required" };
+			const applied = await port.uninstall({ packageId, scope });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "uninstall_failed" };
+		}
+		case "plugin.link": {
+			const packageId = stringValue(payload.pluginId);
+			const name = stringValue(payload.name);
+			const localPath = stringValue(payload.localPath);
+			if (packageId === undefined || name === undefined || localPath === undefined) return { ok: false, code: "link_arguments_required" };
+			const applied = await port.link({ packageId, name, localPath, scope });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "link_failed" };
+		}
+		case "marketplace.add": {
+			const name = stringValue(payload.name);
+			const sourceType = stringValue(payload.sourceType);
+			const sourceUri = stringValue(payload.sourceUri);
+			if (name === undefined || sourceType === undefined || sourceUri === undefined) return { ok: false, code: "marketplace_arguments_required" };
+			const applied = await port.addMarketplace({ name, sourceType, sourceUri });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "marketplace_add_failed" };
+		}
+		case "marketplace.remove":
+		case "marketplace.update": {
+			const name = stringValue(payload.name);
+			if (name === undefined) return { ok: false, code: "marketplace_name_required" };
+			const applied = operation === "marketplace.remove"
+				? await port.removeMarketplace({ name })
+				: await port.updateMarketplace({ name });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "marketplace_operation_failed" };
+		}
+		case "marketplace.upgrade": {
+			const marketplace = stringValue(payload.marketplace);
+			if (marketplace === undefined) return { ok: false, code: "marketplace_name_required" };
+			const applied = await port.upgradeFromMarketplace({ marketplace, scope });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "marketplace_upgrade_failed" };
+		}
+		default:
+			return { ok: false, code: "operation_unavailable" };
+	}
 }
 
 function mutationResult(
@@ -312,6 +441,11 @@ async function mutateResources(
 			result = restarted.ok
 				? { ok: true, value: { server: restarted.value } }
 				: { ok: false, code: `mcp_${restarted.error.code}` };
+		} else if (DISTRIBUTION_MUTATION_OPERATIONS.has(operation)) {
+			const distribution = options.distribution?.mutate;
+			if (distribution === undefined) return { ok: false, status: "unavailable", code: "operation_unavailable", operation };
+			const scope = payload.scope === "workspace" ? "workspace" as const : "user" as const;
+			result = await dispatchDistributionMutation(distribution, operation, payload, scope, stringValue);
 		} else {
 			return { ok: false, status: "unavailable", code: "operation_unavailable", operation };
 		}
@@ -370,6 +504,12 @@ export async function createProductionSessionExtensionComposition(
 	const storageKey = workspaceStorageKey({ authorityId, tenantId, workspaceId, repositoryId });
 	const principalId = createRuntimeId("principal", `local-user-extension-${runtimeDigest({ authorityId, tenantId }).digest.slice(0, 48)}`);
 	const trustStore = new TrustStore(join(stateRoot, "trust.json"), storage);
+	const distribution = createSessionDistribution({
+		home: options.layout.home,
+		stateRoot,
+		storageKey,
+		distributionRoot: join(stateRoot, "plugins"),
+	});
 	const extensionStateStore = new ExtensionStateStore(join(stateRoot, "extensions-state.json"), storage);
 	const pluginManager = new PluginManager({
 		storage,
@@ -502,6 +642,7 @@ export async function createProductionSessionExtensionComposition(
 		manager,
 		mcp,
 		skillLoader,
+		distribution: distribution.ports,
 		contextSources: (modelContextChars) => {
 			const skills = manager.currentSkills().filter((skill) => skill.descriptor.activation === "ready");
 			if (skills.length === 0) return [];
@@ -628,6 +769,106 @@ async function loadSessionMcpConfigs(input: {
 		configs.push(...parsed.configs);
 	}
 	return configs.sort((left, right) => left.serverId.localeCompare(right.serverId));
+}
+
+/**
+ * Session 私有分发接线（P5）。
+ *
+ * 安装/启用/信任三者分离：这里只提供落盘、账本与查询能力，**不**启用、不信任、
+ * 也不启动 extension host。git 源的受治 materialize 尚未接线，因此所有
+ * 非本地源都明确返回 `network_denied`（D7 的默认拒绝姿态），而不是回退到
+ * 本地猜测路径。
+ */
+function createSessionDistribution(input: {
+	readonly home: string;
+	readonly stateRoot: string;
+	readonly storageKey: string;
+	readonly distributionRoot: string;
+}): { readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort } } {
+	const storage = new NodeExtensionDistributionStorage({ runledgerHome: input.home });
+	const registry = new ExtensionDistributionRegistry({
+		storage,
+		paths: resolveExtensionDistributionPaths({ stateRoot: input.stateRoot, pluginsRoot: input.distributionRoot }),
+	});
+	const materializer: ExtensionSourceMaterializer = {
+		materialize: async () => ({ ok: false, code: "network_denied", message: "governed git materialization is not wired in this build; only local plugin sources can be installed" }),
+	};
+	const scopeRoot = (scope: "user" | "workspace"): string => scope === "user"
+		? join(input.distributionRoot, "user")
+		: join(input.distributionRoot, "workspaces", input.storageKey);
+	const installer = new ExtensionInstaller({ storage, registry, materializer, pluginsRoot: input.distributionRoot, scopeRoot });
+	const fetcher = new MarketplaceFetcher({
+		storage,
+		cache: resolveExtensionCachePaths({ pluginsRoot: input.distributionRoot }),
+		materializer,
+	});
+	const manager = new MarketplaceManager({ registry, fetcher, installer, scope: () => "workspace" });
+	const scopeRootForDoctor = (scope: "user" | "project"): string => scope === "user"
+		? join(input.distributionRoot, "user")
+		: join(input.distributionRoot, "workspaces", input.storageKey);
+
+	const read: SessionDistributionReadPort = {
+		list: async () => {
+			const listed = await manager.listInstalled();
+			return listed.ok ? { ok: true, value: { items: listed.value } } : { ok: false, code: listed.code, message: listed.message };
+		},
+		doctor: async () => {
+			const report = await runExtensionDoctor({ storage, registry, scopeRoot: scopeRootForDoctor });
+			return { ok: true, value: { findings: report.findings, counts: report.counts } };
+		},
+		marketplaces: async () => {
+			const listed = await manager.listMarketplaces();
+			if (!listed.ok) return { ok: false, code: listed.code, message: listed.message };
+			const updates = await manager.pendingUpdates();
+			return { ok: true, value: { marketplaces: listed.value, pendingUpdates: updates.ok ? updates.value : [] } };
+		},
+	};
+	const mutate: SessionDistributionMutationPort = {
+		install: async ({ spec, scope }) => {
+			const installed = await manager.installPlugin({ spec, scope });
+			return installed.ok ? { ok: true, value: { receipt: installed.value.receipt } } : { ok: false, code: installed.code, message: installed.message };
+		},
+		uninstall: async ({ packageId, scope }) => {
+			const removed = await installer.uninstall({ packageId, scope });
+			return removed.ok ? { ok: true, value: { removedPath: removed.removedPath } } : { ok: false, code: removed.code, message: removed.message };
+		},
+		link: async ({ packageId, name, localPath, scope }) => {
+			const linked = await installer.link({ packageId, name, localPath, scope });
+			return linked.ok ? { ok: true, value: { receipt: linked.receipt } } : { ok: false, code: linked.code, message: linked.message };
+		},
+		upgrade: async ({ spec, scope }) => {
+			const installed = await manager.installPlugin({ spec, scope });
+			return installed.ok ? { ok: true, value: { receipt: installed.value.receipt } } : { ok: false, code: installed.code, message: installed.message };
+		},
+		addMarketplace: async ({ name, sourceType, sourceUri }) => {
+			const added = await manager.addMarketplace({
+				name,
+				sourceType: sourceType === "github" || sourceType === "git" || sourceType === "url" ? sourceType : "local",
+				sourceUri,
+			});
+			return added.ok ? { ok: true, value: { marketplace: added.value } } : { ok: false, code: added.code, message: added.message };
+		},
+		removeMarketplace: async ({ name }) => {
+			const removed = await manager.removeMarketplace(name);
+			return removed.ok ? { ok: true, value: { ...removed.value } } : { ok: false, code: removed.code, message: removed.message };
+		},
+		updateMarketplace: async ({ name }) => {
+			const refreshed = await manager.refreshMarketplace(name);
+			return refreshed.ok ? { ok: true, value: { marketplace: refreshed.value } } : { ok: false, code: refreshed.code, message: refreshed.message };
+		},
+		upgradeFromMarketplace: async ({ marketplace, scope }) => {
+			const updates = await manager.pendingUpdates();
+			if (!updates.ok) return { ok: false, code: updates.code, message: updates.message };
+			const applied: Record<string, unknown>[] = [];
+			for (const update of updates.value.filter((item) => item.marketplace === marketplace)) {
+				const installed = await manager.installPlugin({ spec: `${update.name}@${marketplace}`, scope });
+				if (!installed.ok) return { ok: false, code: installed.code, message: installed.message };
+				applied.push({ packageId: update.packageId, version: installed.value.receipt.version });
+			}
+			return { ok: true, value: { upgraded: applied } };
+		},
+	};
+	return { ports: { read, mutate } };
 }
 
 async function discoverPluginRoots(

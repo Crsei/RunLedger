@@ -32,8 +32,12 @@ export interface DoctorReport {
 export interface DoctorOptions {
 	readonly storage: ExtensionDistributionPort;
 	readonly registry: ExtensionDistributionRegistry;
-	/** 包当前是否被信任；缺省视为未信任（doctor 不读 trust 文件，由调用方注入）。 */
-	readonly trustDigest: (packageId: string) => string | undefined;
+	/**
+	 * 包当前是否被信任（doctor 不读 trust 文件，由调用方注入）。缺省表示
+	 * **本组合还没有 trust 桥**：doctor 跳过逐包 trust 判断并给出一条
+	 * `trust.not_checked`，而不是把“查不到”谎报成“未信任”。
+	 */
+	readonly trustDigest?: (packageId: string) => string | undefined;
 	/** 每个 scope 的包根；用于反向发现“磁盘上有、账本里没有”的目录。 */
 	readonly scopeRoot: (scope: "user" | "project") => string;
 }
@@ -108,7 +112,7 @@ export async function runExtensionDoctor(options: DoctorOptions): Promise<Doctor
 			add("install.digest_mismatch", "error", "installed content no longer matches the recorded digest", packageId);
 		}
 
-		const trusted = options.trustDigest(packageId);
+		const trusted = options.trustDigest?.(packageId);
 		if (record.enabled) {
 			const gate = resolveExtensionHostActivation({
 				enabled: true,
@@ -123,7 +127,7 @@ export async function runExtensionDoctor(options: DoctorOptions): Promise<Doctor
 		if (trusted !== undefined && trusted !== record.digest) {
 			add("trust.stale", "warning", "trust receipt binds a different digest than the installed content", packageId);
 		}
-		if (trusted === undefined) add("trust.missing", "warning", "no trust receipt for the installed package; it cannot be activated", packageId);
+		if (options.trustDigest !== undefined && trusted === undefined) add("trust.missing", "warning", "no trust receipt for the installed package; it cannot be activated", packageId);
 	}
 
 	// 反向检查：磁盘上存在但账本里没有的版本目录。只报告，不自动删除。
@@ -144,6 +148,7 @@ export async function runExtensionDoctor(options: DoctorOptions): Promise<Doctor
 		}
 	}
 
+	if (options.trustDigest === undefined) add("trust.not_checked", "warning", "this composition has no trust bridge yet, so trust receipts were not checked");
 	if (findings.every((finding) => finding.severity !== "error")) add("doctor.completed", "ok", "extension distribution state is consistent");
 	return finish(findings);
 }
