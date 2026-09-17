@@ -1,8 +1,16 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    // 测试与仓库源码同源运行（与其它 src 测试一致），不要求先构建 collab-web；
+    // 构建产物由 check:collab-web 与真实 runledger web 验证覆盖。
+    alias: {
+      "@runledger/collab-web/contracts": fileURLToPath(new URL("packages/collab-web/src/contracts/index.ts", import.meta.url)),
+    },
+  },
   test: {
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "packages/*/test/**/*.test.ts"],
     exclude: ["tests/**/*.bun.test.ts"],
     environment: "node",
     globals: false,

@@ -21,7 +21,7 @@
 
 | 开发模块 | 计划与设计文档 | 关注范围 | 当前事实入口 |
 |---|---|---|---|
-| 项目运行数据 Web 展示 | [Plan 15](plan/15-project-runtime-web-observability-plan.md) | collab-web 参考、本地只读看板、项目/Session 历史与实时、轨迹和用量 | planned；源码调查与 W01–W07 实施/验收计划，尚未实现 |
+| 项目运行数据 Web 展示 | [Plan 15](plan/15-project-runtime-web-observability-plan.md) | collab-web 参考、本地只读看板、项目/Session 历史与实时、轨迹和用量 | in progress；只读 Web 已接线，浏览器侧已拆为 workspace 包 `packages/collab-web`，真实 CLI/浏览器与规模证据见 §9；W07 全仓门禁受阻 |
 | Agent Harness 既有执行闭环加固 | [`Plan 14`](plan/14-agent-harness-reliability-hardening-plan.md) | 失败响应执行边界、工具输出、上下文选择、重复失败与中断恢复回归；不新增产品功能 | H1–H5 已实现；完整 check/test/build、确定性 HTTP/Owner 与 Built CLI/TTY 已通过；六例结果与人工/平台验收缺口见本文 |
 | Prompt / standard 行为基座 | [`prompt/README.md`](prompt/README.md) | standard@2 固定执行规则、AGENTS 来源标记、显式 schema 迁移与 Codex 行为缺口 | [`实现与缺口说明`](prompt/01-standard-execution-and-behavior-gaps.md)；行为遵循率与基础设施能力分开验收 |
 | Codex 提示词模板 | [`notez/README.md`](notez/README.md) | 创建任务、执行、debug、重构、文档和协作提示词 | 可复制模板，不作为项目实现状态或自动执行指令 |

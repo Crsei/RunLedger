@@ -105,6 +105,14 @@ export const DEFAULT_TEST_DISCOVERY_RULES: readonly TestDiscoveryRule[] = [
 		prCi: true,
 	},
 	{
+		id: "vitest-package-colocated",
+		runner: "vitest",
+		include: ["packages/*/test/**/*.test.ts"],
+		executionBucket: "fast",
+		defaultLocal: true,
+		prCi: true,
+	},
+	{
 		id: "bun-tui-native",
 		runner: "bun",
 		include: ["tests/**/*.bun.test.ts"],
@@ -258,13 +266,14 @@ function isExcludedTestFile(path: string): boolean {
 
 async function discoverCandidateFiles(repoRoot: string): Promise<CandidateFile[]> {
 	const testFiles = await listFilesIfPresent(`${repoRoot}/tests`);
+	const packageFiles = await listFilesIfPresent(`${repoRoot}/packages`);
 	const rustFiles = await listFilesIfPresent(`${repoRoot}/native/syntax-highlighter/src`);
 	const rustTestFiles = await Promise.all(rustFiles
 		.filter((path) => path.endsWith(".rs"))
 		.map(async (path) => ({ path, source: await readFile(path, "utf8") })));
 	const candidates = [
-		...testFiles
-			.filter((path) => path.endsWith(".test.ts"))
+		...[...testFiles, ...packageFiles]
+			.filter((path) => path.endsWith(".test.ts") && !path.includes("/node_modules/") && !path.includes("/dist/"))
 			.map((path) => normalizePath(relative(repoRoot, path)))
 			.filter((path) => !isExcludedTestFile(path))
 			.map((path) => ({ path })),

@@ -34,6 +34,16 @@ P0  冻结当前依赖图、公共面和生产 authority
   -> P6  稳定后评估是否需要更多独立包
 ```
 
+### 2026-09-17 先行拆包：`packages/collab-web`
+
+首次创建物理 workspace 包 `packages/collab-web`（`@runledger/collab-web`，`private: true`），把 Plan 15 浏览器侧（web DTO、React SPA、静态壳、构建脚本、包内测试）从根包移出，形态对齐参考实现 oh-my-pi `packages/collab-web`。依赖方向为 app → 包，包内零 RunLedger 内部依赖，因此不引入循环，也不与 P1–P3 的收口目标冲突。
+
+- 根 `package.json` 增加 `workspaces: ["packages/*"]`、`dependencies["@runledger/collab-web"]: "*"` 与 `bundleDependencies: ["@runledger/collab-web"]`；后者使 `npm pack` 把包嵌入 tarball 的 `node_modules/@runledger/`，保证仓库外安装的 `runledger` 仍能解析 `@runledger/collab-web/contracts`。
+- 新增门禁：`check:collab-web`（包构建 + SPA/测试类型检查 + `types: []` 浏览器 consumer）、`check-package-boundaries` 的 `deep-package-import`/`package-escape`/`package-contract-dependency` 三条规则、`check-typecheck-coverage` 的 `packages/*` 覆盖检查；包内测试纳入 test inventory 的 `packages/*/test/**/*.test.ts` 规则。
+- 服务端 `src/web/**` 仍是 app 层的薄 HTTP 桥，不随本次迁移；是否继续下沉到 `packages/core` 依赖其只读端口，留待 P3/P4 决定。
+
+证据见 Plan 15 §9.5。
+
 ### 2026-09-05 审计修复进展（单包阶段）
 
 本次沿 P0/P1 推进，未创建物理 workspace，P2–P6 不据此标记完成：
@@ -360,6 +370,7 @@ app 是唯一允许同时依赖 AI、core 和 product-tui 的位置。任何跨�
 | `src/tui/**` | `packages/product-tui` | 先消除下层反向 import |
 | `src/cli/**`、`src/auth-gateway/**` | `apps/runledger` | composition root；legacy 文件等待 R9 |
 | `native/syntax-highlighter`、`npm/syntax-highlighter-*` | 保持原位 | 已有独立平台发行边界，不重复搬迁 |
+| 浏览器侧（原 `web/src/**`、`src/contracts/web/**`、web 构建脚本与浏览器测试） | `packages/collab-web` | 2026-09-17 已建包：形态对齐参考实现 oh-my-pi `packages/collab-web`；服务端 `src/web/**` 暂留 app 层（薄 HTTP 桥，随 core 拆包再评估），见 Plan 15 §9.5 |
 
 ## 8. `utils` 处置规则
 
@@ -607,7 +618,7 @@ npm run build
 | P1 current contracts/TUI preference | planned | P0 | storage 不再依赖 TUI；contract gates |
 | P2 AI 边界 | planned | P1 | AI 只依赖 contracts；provider/auth/generator gates |
 | P3 core ports/消环 | planned | P1、P2 model port | authority invariants + core DAG + candidate |
-| P4 物理 workspace | planned | P1–P3 无目标包循环 | package-local/full build、test、exports、bin |
+| P4 物理 workspace | implementing | P1–P3 无目标包循环（`packages/collab-web` 为该原则的先行样本，其余仍 planned） | 已建 `packages/collab-web`：包内零内部依赖、根 exports/workspaces/bundleDependencies 接线、边界与类型覆盖门禁、pack 安装与真实 CLI 验证见 Plan 15 §9.5；完整 P4 仍需其余包迁移 |
 | P5 legacy Host R9 | blocked | Runtime 06 R8 accepted + R9 authorized | Runtime 06 R9 + full/CLI/TTY/human gates |
 | P6 二次拆包评估 | planned/optional | P4/P5 稳定窗口 | 独立成包五项条件逐包成立 |
 

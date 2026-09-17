@@ -127,6 +127,7 @@ Workspace、filesystem、network、process、sandbox、trace 与 child runtime �
 | 新增 filesystem/network/process/sandbox 行为 | `src/security/` 的 broker、policy、gateway 或 final leaf，并保持 attempt barrier |
 | 新增 workspace/platform 行为 | `src/workspace/` adapter/factory；worktree 生命周期放在 `src/worktree/` |
 | 新增 TUI 展示 | `src/tui/timeline/` projection 与 presentation/component；不在 renderer 写 durable state |
+| 新增 Web 看板展示 | 浏览器侧（DTO、SPA、静态资源、构建与包内测试）在 workspace 包 `packages/collab-web/`；只读 HTTP/认证/桥接适配器在 `src/web/`。浏览器不得直接持有 Session Owner 凭据或 storage 句柄 |
 | 新增 Plugin/Skill/Hook/MCP 能力 | `src/extensions/`，并通过 Session extension composition 获得 lifecycle 与 authority |
 | 新增本地 trace 字段或投影 | `src/runtime/trace/`；Session authority 事实仍属于 Session Store |
 | 改变 turn/queue/tool continuation 语义 | `src/runtime/agent-loop/` 与 `src/runtime/agent.ts`，并同步更新本文和 [core.md](subsystems/core.md) |

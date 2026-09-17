@@ -1,0 +1,32 @@
+{
+	"name": "@runledger/collab-web",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"description": "RunLedger 本地只读运行看板的浏览器侧：web DTO 合同与 React 单页应用。",
+	"exports": {
+		"./contracts": {
+			"types": "./dist/contracts/index.d.ts",
+			"import": "./dist/contracts/index.js"
+		}
+	},
+	"files": [
+		"dist/contracts"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"build:assets": "bun scripts/build.ts",
+		"check": "tsc -p tsconfig.json && tsc -p tsconfig.contracts.json"
+	},
+	"dependencies": {
+		"marked": "17.0.1",
+		"typebox": "1.1.38"
+	},
+	"devDependencies": {
+		"@types/react": "19.2.17",
+		"@types/react-dom": "19.2.3",
+		"react": "19.2.7",
+		"react-dom": "19.2.7",
+		"vitest": "3.2.6"
+	}
+}

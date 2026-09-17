@@ -140,6 +140,15 @@ runledger --session-id <session-id> mcp doctor
 
 `--json` 在这里控制紧凑 JSON 输出；非 token 命令的默认结果仍可为格式化 JSON。token 命令输出凭据，应按凭据处理。strict 成功要求 token 已配置、至少一个已配置 provider，且所有被检查 provider 均成功。源码：[`auth-gateway-cli.ts`](../src/cli/auth-gateway-cli.ts)。
 
+### 本地只读 Web 看板
+
+| 命令 | 参数 / 默认 | 行为 |
+|---|---|---|
+| `web` | `--port <0-65535>`，默认 `0`（随机空闲端口） | 前台启动 loopback 只读看板，打印一次性登录链接；Ctrl+C 关闭 Web，不停止 Session Owner |
+| `web --help` | 也支持 `-h` | 显示子命令帮助 |
+
+服务只监听 `127.0.0.1`，通过一次性 fragment 凭据兑换 HttpOnly、SameSite=Strict、仅 `/api/v1` 路径的 cookie；同一实例的启动链接不可重复兑换。看板按项目查看 Session 对话、工具结果、轨迹、用量、进程、已有 child 与 Plan 摘要；没有 prompt、abort、审批、恢复或配置写入口，也不创建、迁移或修复 `state.db`。浏览器侧实现位于独立 workspace 包 [`packages/collab-web`](../packages/collab-web/README.md)，HTTP 桥在 [`src/web/server.ts`](../src/web/server.ts)；验收状态见 [Plan 15](../development-doc/plan/15-project-runtime-web-observability-plan.md)。
+
 ### Workspace 与迁移
 
 | 命令 | 必需参数 / 限制 | 行为 |

@@ -1,0 +1,1679 @@
+{
+  "status": "implementation-present-validation-blocked",
+  "date": "2026-09-16",
+  "baseCommit": "c54b9e47f322854b766fa4b24efd60781b97a4c7",
+  "webSourceDigestSha256": "25c5fc84e4ef624e298d8d9c55909a524830aa43c6aaeff02733023b57dfa479",
+  "scaleFinal": {
+    "status": "complete",
+    "hardware": {
+      "cpu": "Intel(R) Xeon(R) Gold 5218 CPU @ 2.30GHz",
+      "cpus": 64,
+      "memoryBytes": 1080800772096,
+      "kernel": "5.4.0-150-generic",
+      "node": "v22.23.1"
+    },
+    "browser": {
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/138.0.0.0 Safari/537.36"
+    },
+    "sessions": 1000,
+    "initialEvents": 100000,
+    "observers": 10,
+    "durationSeconds": 42.105,
+    "seedMs": 14876.18635,
+    "survivesFirstTabClose": true,
+    "warmFirstScreenUiP95Ms": 84.80000114440918,
+    "coldRebuild": {
+      "elapsedMs": 30368.573423999995,
+      "cancelled": true,
+      "health": "ready",
+      "scanned": 100010,
+      "samples": [
+        {
+          "scanned": 4200,
+          "rss": 234323968
+        },
+        {
+          "scanned": 8200,
+          "rss": 241770496
+        },
+        {
+          "scanned": 12200,
+          "rss": 238505984
+        },
+        {
+          "scanned": 16200,
+          "rss": 240123904
+        },
+        {
+          "scanned": 20200,
+          "rss": 248045568
+        },
+        {
+          "scanned": 24200,
+          "rss": 242925568
+        },
+        {
+          "scanned": 28200,
+          "rss": 264519680
+        },
+        {
+          "scanned": 32200,
+          "rss": 247750656
+        },
+        {
+          "scanned": 36200,
+          "rss": 247463936
+        },
+        {
+          "scanned": 40200,
+          "rss": 248864768
+        },
+        {
+          "scanned": 44200,
+          "rss": 295022592
+        },
+        {
+          "scanned": 48200,
+          "rss": 247820288
+        },
+        {
+          "scanned": 52200,
+          "rss": 246960128
+        },
+        {
+          "scanned": 56200,
+          "rss": 246779904
+        },
+        {
+          "scanned": 60200,
+          "rss": 247857152
+        },
+        {
+          "scanned": 64200,
+          "rss": 250744832
+        },
+        {
+          "scanned": 68200,
+          "rss": 246493184
+        },
+        {
+          "scanned": 72200,
+          "rss": 247046144
+        },
+        {
+          "scanned": 76200,
+          "rss": 247246848
+        },
+        {
+          "scanned": 80200,
+          "rss": 247644160
+        },
+        {
+          "scanned": 84200,
+          "rss": 247963648
+        },
+        {
+          "scanned": 88200,
+          "rss": 245260288
+        },
+        {
+          "scanned": 92200,
+          "rss": 246272000
+        },
+        {
+          "scanned": 96200,
+          "rss": 245338112
+        },
+        {
+          "scanned": 100010,
+          "rss": 245776384
+        }
+      ]
+    },
+    "warmSnapshotHttpP95Ms": 23.299999237060547,
+    "durableToDomP95Ms": 242,
+    "perObserver": [
+      {
+        "tab": "t1",
+        "samples": 9,
+        "p95Ms": 251,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-1",
+        "samples": 9,
+        "p95Ms": 190,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-2",
+        "samples": 9,
+        "p95Ms": 235,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-3",
+        "samples": 9,
+        "p95Ms": 242,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-4",
+        "samples": 9,
+        "p95Ms": 211,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-5",
+        "samples": 9,
+        "p95Ms": 255,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-6",
+        "samples": 9,
+        "p95Ms": 261,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-7",
+        "samples": 9,
+        "p95Ms": 233,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-8",
+        "samples": 9,
+        "p95Ms": 217,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-9",
+        "samples": 9,
+        "p95Ms": 244,
+        "domRows": 13
+      }
+    ],
+    "memory": [
+      {
+        "elapsedSeconds": 0.016,
+        "ownerRss": 212303872,
+        "webRss": 229163008,
+        "browserHeap": 3227562
+      }
+    ],
+    "driverClaimEvents": 0,
+    "limits": "Synthetic scale fixture with real Owner TCP and built CLI/HTTP/browser; separate real Agent execution and TUI throughput evidence required."
+  },
+  "soak30Minutes": {
+    "status": "complete",
+    "hardware": {
+      "cpu": "Intel(R) Xeon(R) Gold 5218 CPU @ 2.30GHz",
+      "cpus": 64,
+      "memoryBytes": 1080800772096,
+      "kernel": "5.4.0-150-generic",
+      "node": "v22.23.1"
+    },
+    "browser": {
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/138.0.0.0 Safari/537.36"
+    },
+    "sessions": 1000,
+    "initialEvents": 100000,
+    "observers": 10,
+    "durationSeconds": 1801.681,
+    "seedMs": 15119.659735,
+    "warmSnapshotHttpP95Ms": 35,
+    "durableToDomP95Ms": 216,
+    "perObserver": [
+      {
+        "tab": "t1",
+        "samples": 1798,
+        "p95Ms": 209,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-1",
+        "samples": 1798,
+        "p95Ms": 211,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-2",
+        "samples": 1798,
+        "p95Ms": 213,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-3",
+        "samples": 1798,
+        "p95Ms": 222,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-4",
+        "samples": 1798,
+        "p95Ms": 216,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-5",
+        "samples": 1798,
+        "p95Ms": 214,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-6",
+        "samples": 1798,
+        "p95Ms": 216,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-7",
+        "samples": 1798,
+        "p95Ms": 219,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-8",
+        "samples": 1798,
+        "p95Ms": 221,
+        "domRows": 13
+      },
+      {
+        "tab": "observer-9",
+        "samples": 1798,
+        "p95Ms": 221,
+        "domRows": 13
+      }
+    ],
+    "memory": [
+      {
+        "elapsedSeconds": 0.013,
+        "ownerRss": 198545408,
+        "webRss": 219234304,
+        "browserHeap": 3223021
+      },
+      {
+        "elapsedSeconds": 10.033,
+        "ownerRss": 198553600,
+        "webRss": 216510464,
+        "browserHeap": 4132116
+      },
+      {
+        "elapsedSeconds": 20.054,
+        "ownerRss": 198553600,
+        "webRss": 215625728,
+        "browserHeap": 3997394
+      },
+      {
+        "elapsedSeconds": 30.076,
+        "ownerRss": 198553600,
+        "webRss": 216027136,
+        "browserHeap": 3207584
+      },
+      {
+        "elapsedSeconds": 40.093,
+        "ownerRss": 198553600,
+        "webRss": 217194496,
+        "browserHeap": 3644929
+      },
+      {
+        "elapsedSeconds": 50.112,
+        "ownerRss": 198553600,
+        "webRss": 220504064,
+        "browserHeap": 3656152
+      },
+      {
+        "elapsedSeconds": 60.131,
+        "ownerRss": 198553600,
+        "webRss": 220889088,
+        "browserHeap": 4479183
+      },
+      {
+        "elapsedSeconds": 70.186,
+        "ownerRss": 198553600,
+        "webRss": 221425664,
+        "browserHeap": 4392816
+      },
+      {
+        "elapsedSeconds": 80.206,
+        "ownerRss": 198553600,
+        "webRss": 223817728,
+        "browserHeap": 4337411
+      },
+      {
+        "elapsedSeconds": 90.225,
+        "ownerRss": 198553600,
+        "webRss": 223481856,
+        "browserHeap": 5073376
+      },
+      {
+        "elapsedSeconds": 100.242,
+        "ownerRss": 128700416,
+        "webRss": 223408128,
+        "browserHeap": 5301102
+      },
+      {
+        "elapsedSeconds": 110.259,
+        "ownerRss": 128966656,
+        "webRss": 223404032,
+        "browserHeap": 5537207
+      },
+      {
+        "elapsedSeconds": 120.277,
+        "ownerRss": 129183744,
+        "webRss": 209752064,
+        "browserHeap": 5576600
+      },
+      {
+        "elapsedSeconds": 130.295,
+        "ownerRss": 129507328,
+        "webRss": 210223104,
+        "browserHeap": 5944785
+      },
+      {
+        "elapsedSeconds": 140.312,
+        "ownerRss": 129740800,
+        "webRss": 209326080,
+        "browserHeap": 6138299
+      },
+      {
+        "elapsedSeconds": 150.33,
+        "ownerRss": 129970176,
+        "webRss": 209317888,
+        "browserHeap": 6196322
+      },
+      {
+        "elapsedSeconds": 160.349,
+        "ownerRss": 130207744,
+        "webRss": 209772544,
+        "browserHeap": 6548211
+      },
+      {
+        "elapsedSeconds": 170.369,
+        "ownerRss": 130318336,
+        "webRss": 209035264,
+        "browserHeap": 3603807
+      },
+      {
+        "elapsedSeconds": 180.445,
+        "ownerRss": 130322432,
+        "webRss": 211689472,
+        "browserHeap": 3892933
+      },
+      {
+        "elapsedSeconds": 190.467,
+        "ownerRss": 130326528,
+        "webRss": 211529728,
+        "browserHeap": 4333250
+      },
+      {
+        "elapsedSeconds": 200.488,
+        "ownerRss": 130342912,
+        "webRss": 209788928,
+        "browserHeap": 4123233
+      },
+      {
+        "elapsedSeconds": 210.508,
+        "ownerRss": 130527232,
+        "webRss": 210624512,
+        "browserHeap": 4708895
+      },
+      {
+        "elapsedSeconds": 220.525,
+        "ownerRss": 130531328,
+        "webRss": 210710528,
+        "browserHeap": 4522693
+      },
+      {
+        "elapsedSeconds": 230.545,
+        "ownerRss": 130535424,
+        "webRss": 238419968,
+        "browserHeap": 5059975
+      },
+      {
+        "elapsedSeconds": 240.565,
+        "ownerRss": 130580480,
+        "webRss": 212627456,
+        "browserHeap": 4886181
+      },
+      {
+        "elapsedSeconds": 250.587,
+        "ownerRss": 130674688,
+        "webRss": 213139456,
+        "browserHeap": 5457491
+      },
+      {
+        "elapsedSeconds": 260.618,
+        "ownerRss": 130678784,
+        "webRss": 210628608,
+        "browserHeap": 5357349
+      },
+      {
+        "elapsedSeconds": 270.635,
+        "ownerRss": 130699264,
+        "webRss": 210456576,
+        "browserHeap": 5944963
+      },
+      {
+        "elapsedSeconds": 280.655,
+        "ownerRss": 130703360,
+        "webRss": 211054592,
+        "browserHeap": 5816632
+      },
+      {
+        "elapsedSeconds": 290.674,
+        "ownerRss": 130707456,
+        "webRss": 226889728,
+        "browserHeap": 6417198
+      },
+      {
+        "elapsedSeconds": 300.693,
+        "ownerRss": 130715648,
+        "webRss": 212578304,
+        "browserHeap": 3922793
+      },
+      {
+        "elapsedSeconds": 310.707,
+        "ownerRss": 130908160,
+        "webRss": 210305024,
+        "browserHeap": 3931526
+      },
+      {
+        "elapsedSeconds": 320.724,
+        "ownerRss": 130912256,
+        "webRss": 211079168,
+        "browserHeap": 4098988
+      },
+      {
+        "elapsedSeconds": 330.742,
+        "ownerRss": 130916352,
+        "webRss": 211132416,
+        "browserHeap": 4512422
+      },
+      {
+        "elapsedSeconds": 340.758,
+        "ownerRss": 130936832,
+        "webRss": 213024768,
+        "browserHeap": 4953428
+      },
+      {
+        "elapsedSeconds": 350.781,
+        "ownerRss": 130945024,
+        "webRss": 213544960,
+        "browserHeap": 5320742
+      },
+      {
+        "elapsedSeconds": 360.799,
+        "ownerRss": 130949120,
+        "webRss": 211775488,
+        "browserHeap": 5504204
+      },
+      {
+        "elapsedSeconds": 370.816,
+        "ownerRss": 130953216,
+        "webRss": 210481152,
+        "browserHeap": 5692330
+      },
+      {
+        "elapsedSeconds": 380.836,
+        "ownerRss": 130981888,
+        "webRss": 210345984,
+        "browserHeap": 5896696
+      },
+      {
+        "elapsedSeconds": 390.856,
+        "ownerRss": 130990080,
+        "webRss": 209850368,
+        "browserHeap": 5618086
+      },
+      {
+        "elapsedSeconds": 400.875,
+        "ownerRss": 130994176,
+        "webRss": 213082112,
+        "browserHeap": 6047532
+      },
+      {
+        "elapsedSeconds": 410.894,
+        "ownerRss": 131010560,
+        "webRss": 213229568,
+        "browserHeap": 5738846
+      },
+      {
+        "elapsedSeconds": 420.914,
+        "ownerRss": 131014656,
+        "webRss": 211148800,
+        "browserHeap": 6197608
+      },
+      {
+        "elapsedSeconds": 430.989,
+        "ownerRss": 131035136,
+        "webRss": 211337216,
+        "browserHeap": 6614090
+      },
+      {
+        "elapsedSeconds": 441.01,
+        "ownerRss": 131039232,
+        "webRss": 210960384,
+        "browserHeap": 4210430
+      },
+      {
+        "elapsedSeconds": 451.029,
+        "ownerRss": 131047424,
+        "webRss": 215769088,
+        "browserHeap": 4687355
+      },
+      {
+        "elapsedSeconds": 461.05,
+        "ownerRss": 131051520,
+        "webRss": 213630976,
+        "browserHeap": 4233930
+      },
+      {
+        "elapsedSeconds": 471.072,
+        "ownerRss": 131055616,
+        "webRss": 214097920,
+        "browserHeap": 4748760
+      },
+      {
+        "elapsedSeconds": 481.092,
+        "ownerRss": 131084288,
+        "webRss": 211038208,
+        "browserHeap": 5204466
+      },
+      {
+        "elapsedSeconds": 491.111,
+        "ownerRss": 131088384,
+        "webRss": 211755008,
+        "browserHeap": 4834300
+      },
+      {
+        "elapsedSeconds": 501.131,
+        "ownerRss": 131112960,
+        "webRss": 210685952,
+        "browserHeap": 5357342
+      },
+      {
+        "elapsedSeconds": 511.149,
+        "ownerRss": 131117056,
+        "webRss": 213630976,
+        "browserHeap": 5189684
+      },
+      {
+        "elapsedSeconds": 521.168,
+        "ownerRss": 131145728,
+        "webRss": 213774336,
+        "browserHeap": 5984046
+      },
+      {
+        "elapsedSeconds": 531.186,
+        "ownerRss": 131149824,
+        "webRss": 213831680,
+        "browserHeap": 5932560
+      },
+      {
+        "elapsedSeconds": 541.207,
+        "ownerRss": 131153920,
+        "webRss": 211124224,
+        "browserHeap": 6158038
+      },
+      {
+        "elapsedSeconds": 551.225,
+        "ownerRss": 131178496,
+        "webRss": 211505152,
+        "browserHeap": 6588444
+      },
+      {
+        "elapsedSeconds": 561.244,
+        "ownerRss": 131182592,
+        "webRss": 212459520,
+        "browserHeap": 6804562
+      },
+      {
+        "elapsedSeconds": 571.265,
+        "ownerRss": 131190784,
+        "webRss": 213569536,
+        "browserHeap": 4492076
+      },
+      {
+        "elapsedSeconds": 581.353,
+        "ownerRss": 131194880,
+        "webRss": 213995520,
+        "browserHeap": 4533061
+      },
+      {
+        "elapsedSeconds": 591.371,
+        "ownerRss": 131219456,
+        "webRss": 210456576,
+        "browserHeap": 4713019
+      },
+      {
+        "elapsedSeconds": 601.393,
+        "ownerRss": 131227648,
+        "webRss": 211144704,
+        "browserHeap": 4540029
+      },
+      {
+        "elapsedSeconds": 611.414,
+        "ownerRss": 131231744,
+        "webRss": 211460096,
+        "browserHeap": 5016687
+      },
+      {
+        "elapsedSeconds": 621.432,
+        "ownerRss": 131235840,
+        "webRss": 211116032,
+        "browserHeap": 5362061
+      },
+      {
+        "elapsedSeconds": 631.452,
+        "ownerRss": 131239936,
+        "webRss": 214028288,
+        "browserHeap": 5067555
+      },
+      {
+        "elapsedSeconds": 641.474,
+        "ownerRss": 131244032,
+        "webRss": 211861504,
+        "browserHeap": 5586029
+      },
+      {
+        "elapsedSeconds": 651.49,
+        "ownerRss": 131248128,
+        "webRss": 211742720,
+        "browserHeap": 5389423
+      },
+      {
+        "elapsedSeconds": 661.509,
+        "ownerRss": 131252224,
+        "webRss": 212910080,
+        "browserHeap": 6264093
+      },
+      {
+        "elapsedSeconds": 671.528,
+        "ownerRss": 131260416,
+        "webRss": 213827584,
+        "browserHeap": 5723959
+      },
+      {
+        "elapsedSeconds": 681.546,
+        "ownerRss": 131264512,
+        "webRss": 216797184,
+        "browserHeap": 5900173
+      },
+      {
+        "elapsedSeconds": 691.566,
+        "ownerRss": 131297280,
+        "webRss": 215101440,
+        "browserHeap": 6075275
+      },
+      {
+        "elapsedSeconds": 701.589,
+        "ownerRss": 131305472,
+        "webRss": 212742144,
+        "browserHeap": 4037713
+      },
+      {
+        "elapsedSeconds": 711.61,
+        "ownerRss": 131334144,
+        "webRss": 213012480,
+        "browserHeap": 4218406
+      },
+      {
+        "elapsedSeconds": 721.63,
+        "ownerRss": 130904064,
+        "webRss": 213188608,
+        "browserHeap": 4401988
+      },
+      {
+        "elapsedSeconds": 731.651,
+        "ownerRss": 131100672,
+        "webRss": 213553152,
+        "browserHeap": 4588270
+      },
+      {
+        "elapsedSeconds": 741.67,
+        "ownerRss": 131112960,
+        "webRss": 216772608,
+        "browserHeap": 4761400
+      },
+      {
+        "elapsedSeconds": 751.687,
+        "ownerRss": 131121152,
+        "webRss": 212692992,
+        "browserHeap": 4935430
+      },
+      {
+        "elapsedSeconds": 761.704,
+        "ownerRss": 131145728,
+        "webRss": 213569536,
+        "browserHeap": 5115560
+      },
+      {
+        "elapsedSeconds": 771.725,
+        "ownerRss": 131149824,
+        "webRss": 213872640,
+        "browserHeap": 5245743
+      },
+      {
+        "elapsedSeconds": 781.74,
+        "ownerRss": 131153920,
+        "webRss": 213336064,
+        "browserHeap": 5424105
+      },
+      {
+        "elapsedSeconds": 791.76,
+        "ownerRss": 131158016,
+        "webRss": 215543808,
+        "browserHeap": 5588990
+      },
+      {
+        "elapsedSeconds": 801.778,
+        "ownerRss": 131190784,
+        "webRss": 212766720,
+        "browserHeap": 5711914
+      },
+      {
+        "elapsedSeconds": 811.796,
+        "ownerRss": 131194880,
+        "webRss": 212537344,
+        "browserHeap": 5885528
+      },
+      {
+        "elapsedSeconds": 821.813,
+        "ownerRss": 131219456,
+        "webRss": 212799488,
+        "browserHeap": 6430620
+      },
+      {
+        "elapsedSeconds": 831.831,
+        "ownerRss": 131223552,
+        "webRss": 212180992,
+        "browserHeap": 3899709
+      },
+      {
+        "elapsedSeconds": 841.852,
+        "ownerRss": 131227648,
+        "webRss": 214941696,
+        "browserHeap": 4635750
+      },
+      {
+        "elapsedSeconds": 851.873,
+        "ownerRss": 131231744,
+        "webRss": 215359488,
+        "browserHeap": 4511246
+      },
+      {
+        "elapsedSeconds": 861.9,
+        "ownerRss": 131235840,
+        "webRss": 212365312,
+        "browserHeap": 5188413
+      },
+      {
+        "elapsedSeconds": 871.915,
+        "ownerRss": 131264512,
+        "webRss": 212705280,
+        "browserHeap": 4848678
+      },
+      {
+        "elapsedSeconds": 881.929,
+        "ownerRss": 131301376,
+        "webRss": 212103168,
+        "browserHeap": 4965244
+      },
+      {
+        "elapsedSeconds": 891.95,
+        "ownerRss": 131305472,
+        "webRss": 215891968,
+        "browserHeap": 5667819
+      },
+      {
+        "elapsedSeconds": 901.969,
+        "ownerRss": 131358720,
+        "webRss": 217628672,
+        "browserHeap": 5355516
+      },
+      {
+        "elapsedSeconds": 911.986,
+        "ownerRss": 131362816,
+        "webRss": 216117248,
+        "browserHeap": 5553962
+      },
+      {
+        "elapsedSeconds": 922.005,
+        "ownerRss": 131366912,
+        "webRss": 212373504,
+        "browserHeap": 6233769
+      },
+      {
+        "elapsedSeconds": 932.025,
+        "ownerRss": 131375104,
+        "webRss": 213278720,
+        "browserHeap": 5933526
+      },
+      {
+        "elapsedSeconds": 942.047,
+        "ownerRss": 131399680,
+        "webRss": 213110784,
+        "browserHeap": 6107124
+      },
+      {
+        "elapsedSeconds": 952.065,
+        "ownerRss": 131403776,
+        "webRss": 214831104,
+        "browserHeap": 6304106
+      },
+      {
+        "elapsedSeconds": 962.084,
+        "ownerRss": 131411968,
+        "webRss": 215257088,
+        "browserHeap": 4288721
+      },
+      {
+        "elapsedSeconds": 972.104,
+        "ownerRss": 131432448,
+        "webRss": 212705280,
+        "browserHeap": 4388118
+      },
+      {
+        "elapsedSeconds": 982.125,
+        "ownerRss": 131436544,
+        "webRss": 212996096,
+        "browserHeap": 4676912
+      },
+      {
+        "elapsedSeconds": 992.144,
+        "ownerRss": 131440640,
+        "webRss": 213327872,
+        "browserHeap": 5162206
+      },
+      {
+        "elapsedSeconds": 1002.164,
+        "ownerRss": 131444736,
+        "webRss": 215678976,
+        "browserHeap": 5083808
+      },
+      {
+        "elapsedSeconds": 1012.186,
+        "ownerRss": 131481600,
+        "webRss": 217030656,
+        "browserHeap": 5080710
+      },
+      {
+        "elapsedSeconds": 1022.203,
+        "ownerRss": 131485696,
+        "webRss": 216158208,
+        "browserHeap": 5861962
+      },
+      {
+        "elapsedSeconds": 1032.225,
+        "ownerRss": 131489792,
+        "webRss": 213069824,
+        "browserHeap": 5721262
+      },
+      {
+        "elapsedSeconds": 1042.245,
+        "ownerRss": 131514368,
+        "webRss": 213557248,
+        "browserHeap": 5659634
+      },
+      {
+        "elapsedSeconds": 1052.263,
+        "ownerRss": 131518464,
+        "webRss": 213110784,
+        "browserHeap": 6451738
+      },
+      {
+        "elapsedSeconds": 1062.281,
+        "ownerRss": 131522560,
+        "webRss": 264052736,
+        "browserHeap": 6296054
+      },
+      {
+        "elapsedSeconds": 1072.302,
+        "ownerRss": 131526656,
+        "webRss": 216600576,
+        "browserHeap": 6232886
+      },
+      {
+        "elapsedSeconds": 1082.32,
+        "ownerRss": 131534848,
+        "webRss": 216633344,
+        "browserHeap": 4678533
+      },
+      {
+        "elapsedSeconds": 1092.335,
+        "ownerRss": 131538944,
+        "webRss": 217100288,
+        "browserHeap": 4761664
+      },
+      {
+        "elapsedSeconds": 1102.351,
+        "ownerRss": 131543040,
+        "webRss": 214188032,
+        "browserHeap": 4849756
+      },
+      {
+        "elapsedSeconds": 1112.37,
+        "ownerRss": 131551232,
+        "webRss": 214810624,
+        "browserHeap": 4891488
+      },
+      {
+        "elapsedSeconds": 1122.387,
+        "ownerRss": 131555328,
+        "webRss": 214904832,
+        "browserHeap": 4944886
+      },
+      {
+        "elapsedSeconds": 1132.404,
+        "ownerRss": 131563520,
+        "webRss": 213508096,
+        "browserHeap": 5699230
+      },
+      {
+        "elapsedSeconds": 1142.493,
+        "ownerRss": 131567616,
+        "webRss": 215986176,
+        "browserHeap": 5871426
+      },
+      {
+        "elapsedSeconds": 1152.512,
+        "ownerRss": 131641344,
+        "webRss": 213839872,
+        "browserHeap": 6029862
+      },
+      {
+        "elapsedSeconds": 1162.539,
+        "ownerRss": 131645440,
+        "webRss": 213676032,
+        "browserHeap": 5903706
+      },
+      {
+        "elapsedSeconds": 1172.56,
+        "ownerRss": 131649536,
+        "webRss": 213929984,
+        "browserHeap": 5862098
+      },
+      {
+        "elapsedSeconds": 1182.581,
+        "ownerRss": 131657728,
+        "webRss": 214306816,
+        "browserHeap": 6589962
+      },
+      {
+        "elapsedSeconds": 1192.601,
+        "ownerRss": 131661824,
+        "webRss": 216879104,
+        "browserHeap": 6519334
+      },
+      {
+        "elapsedSeconds": 1202.689,
+        "ownerRss": 131670016,
+        "webRss": 217120768,
+        "browserHeap": 6411934
+      },
+      {
+        "elapsedSeconds": 1212.71,
+        "ownerRss": 131674112,
+        "webRss": 217423872,
+        "browserHeap": 4494135
+      },
+      {
+        "elapsedSeconds": 1222.729,
+        "ownerRss": 131702784,
+        "webRss": 215347200,
+        "browserHeap": 5133814
+      },
+      {
+        "elapsedSeconds": 1232.752,
+        "ownerRss": 131706880,
+        "webRss": 215437312,
+        "browserHeap": 4796062
+      },
+      {
+        "elapsedSeconds": 1242.768,
+        "ownerRss": 131710976,
+        "webRss": 215732224,
+        "browserHeap": 4970890
+      },
+      {
+        "elapsedSeconds": 1252.789,
+        "ownerRss": 131735552,
+        "webRss": 217333760,
+        "browserHeap": 5162482
+      },
+      {
+        "elapsedSeconds": 1262.809,
+        "ownerRss": 131739648,
+        "webRss": 217341952,
+        "browserHeap": 5371006
+      },
+      {
+        "elapsedSeconds": 1272.83,
+        "ownerRss": 131743744,
+        "webRss": 213958656,
+        "browserHeap": 5959050
+      },
+      {
+        "elapsedSeconds": 1282.848,
+        "ownerRss": 131751936,
+        "webRss": 214142976,
+        "browserHeap": 6140314
+      },
+      {
+        "elapsedSeconds": 1292.881,
+        "ownerRss": 131772416,
+        "webRss": 213905408,
+        "browserHeap": 6359494
+      },
+      {
+        "elapsedSeconds": 1302.903,
+        "ownerRss": 131776512,
+        "webRss": 216674304,
+        "browserHeap": 6183022
+      },
+      {
+        "elapsedSeconds": 1312.923,
+        "ownerRss": 131805184,
+        "webRss": 216854528,
+        "browserHeap": 6301474
+      },
+      {
+        "elapsedSeconds": 1322.94,
+        "ownerRss": 131837952,
+        "webRss": 217346048,
+        "browserHeap": 6511646
+      },
+      {
+        "elapsedSeconds": 1332.963,
+        "ownerRss": 131842048,
+        "webRss": 218415104,
+        "browserHeap": 4366466
+      },
+      {
+        "elapsedSeconds": 1342.981,
+        "ownerRss": 131846144,
+        "webRss": 215269376,
+        "browserHeap": 4613277
+      },
+      {
+        "elapsedSeconds": 1352.999,
+        "ownerRss": 131870720,
+        "webRss": 215937024,
+        "browserHeap": 5296569
+      },
+      {
+        "elapsedSeconds": 1363.018,
+        "ownerRss": 131874816,
+        "webRss": 215031808,
+        "browserHeap": 4979533
+      },
+      {
+        "elapsedSeconds": 1373.037,
+        "ownerRss": 131878912,
+        "webRss": 217305088,
+        "browserHeap": 5253005
+      },
+      {
+        "elapsedSeconds": 1383.056,
+        "ownerRss": 131883008,
+        "webRss": 217419776,
+        "browserHeap": 5791093
+      },
+      {
+        "elapsedSeconds": 1393.074,
+        "ownerRss": 131903488,
+        "webRss": 214233088,
+        "browserHeap": 6019665
+      },
+      {
+        "elapsedSeconds": 1403.091,
+        "ownerRss": 131907584,
+        "webRss": 214499328,
+        "browserHeap": 6399185
+      },
+      {
+        "elapsedSeconds": 1413.11,
+        "ownerRss": 131911680,
+        "webRss": 214781952,
+        "browserHeap": 5927289
+      },
+      {
+        "elapsedSeconds": 1423.13,
+        "ownerRss": 131936256,
+        "webRss": 217346048,
+        "browserHeap": 6246157
+      },
+      {
+        "elapsedSeconds": 1433.152,
+        "ownerRss": 131940352,
+        "webRss": 214216704,
+        "browserHeap": 6911505
+      },
+      {
+        "elapsedSeconds": 1443.171,
+        "ownerRss": 131944448,
+        "webRss": 215506944,
+        "browserHeap": 6626269
+      },
+      {
+        "elapsedSeconds": 1453.191,
+        "ownerRss": 131948544,
+        "webRss": 215072768,
+        "browserHeap": 4712431
+      },
+      {
+        "elapsedSeconds": 1463.21,
+        "ownerRss": 131989504,
+        "webRss": 216170496,
+        "browserHeap": 4587019
+      },
+      {
+        "elapsedSeconds": 1473.225,
+        "ownerRss": 132005888,
+        "webRss": 217128960,
+        "browserHeap": 4830916
+      },
+      {
+        "elapsedSeconds": 1483.248,
+        "ownerRss": 131440640,
+        "webRss": 217419776,
+        "browserHeap": 5461300
+      },
+      {
+        "elapsedSeconds": 1493.283,
+        "ownerRss": 131461120,
+        "webRss": 216416256,
+        "browserHeap": 5910244
+      },
+      {
+        "elapsedSeconds": 1503.315,
+        "ownerRss": 131465216,
+        "webRss": 216928256,
+        "browserHeap": 5502024
+      },
+      {
+        "elapsedSeconds": 1513.334,
+        "ownerRss": 131469312,
+        "webRss": 213905408,
+        "browserHeap": 5952560
+      },
+      {
+        "elapsedSeconds": 1523.362,
+        "ownerRss": 131473408,
+        "webRss": 214294528,
+        "browserHeap": 6572637
+      },
+      {
+        "elapsedSeconds": 1533.383,
+        "ownerRss": 131502080,
+        "webRss": 214306816,
+        "browserHeap": 6767376
+      },
+      {
+        "elapsedSeconds": 1543.405,
+        "ownerRss": 131510272,
+        "webRss": 217673728,
+        "browserHeap": 6366743
+      },
+      {
+        "elapsedSeconds": 1553.433,
+        "ownerRss": 131514368,
+        "webRss": 218054656,
+        "browserHeap": 6821876
+      },
+      {
+        "elapsedSeconds": 1563.509,
+        "ownerRss": 131518464,
+        "webRss": 218554368,
+        "browserHeap": 7504381
+      },
+      {
+        "elapsedSeconds": 1573.533,
+        "ownerRss": 131522560,
+        "webRss": 215883776,
+        "browserHeap": 4482611
+      },
+      {
+        "elapsedSeconds": 1583.55,
+        "ownerRss": 131526656,
+        "webRss": 216104960,
+        "browserHeap": 5406334
+      },
+      {
+        "elapsedSeconds": 1593.57,
+        "ownerRss": 131534848,
+        "webRss": 214822912,
+        "browserHeap": 5032604
+      },
+      {
+        "elapsedSeconds": 1603.587,
+        "ownerRss": 131567616,
+        "webRss": 214921216,
+        "browserHeap": 5648886
+      },
+      {
+        "elapsedSeconds": 1613.607,
+        "ownerRss": 131571712,
+        "webRss": 217288704,
+        "browserHeap": 5603426
+      },
+      {
+        "elapsedSeconds": 1623.624,
+        "ownerRss": 131575808,
+        "webRss": 217219072,
+        "browserHeap": 6358554
+      },
+      {
+        "elapsedSeconds": 1633.652,
+        "ownerRss": 131584000,
+        "webRss": 214925312,
+        "browserHeap": 5922890
+      },
+      {
+        "elapsedSeconds": 1643.674,
+        "ownerRss": 131588096,
+        "webRss": 214794240,
+        "browserHeap": 6785538
+      },
+      {
+        "elapsedSeconds": 1653.693,
+        "ownerRss": 131592192,
+        "webRss": 215498752,
+        "browserHeap": 6769934
+      },
+      {
+        "elapsedSeconds": 1663.71,
+        "ownerRss": 131596288,
+        "webRss": 218779648,
+        "browserHeap": 6719330
+      },
+      {
+        "elapsedSeconds": 1673.726,
+        "ownerRss": 131710976,
+        "webRss": 216199168,
+        "browserHeap": 6949738
+      },
+      {
+        "elapsedSeconds": 1683.747,
+        "ownerRss": 131788800,
+        "webRss": 215547904,
+        "browserHeap": 4500683
+      },
+      {
+        "elapsedSeconds": 1693.775,
+        "ownerRss": 131817472,
+        "webRss": 217325568,
+        "browserHeap": 4644098
+      },
+      {
+        "elapsedSeconds": 1703.791,
+        "ownerRss": 131842048,
+        "webRss": 214945792,
+        "browserHeap": 4882794
+      },
+      {
+        "elapsedSeconds": 1713.81,
+        "ownerRss": 131850240,
+        "webRss": 217669632,
+        "browserHeap": 5080966
+      },
+      {
+        "elapsedSeconds": 1723.829,
+        "ownerRss": 131854336,
+        "webRss": 215298048,
+        "browserHeap": 5292126
+      },
+      {
+        "elapsedSeconds": 1733.849,
+        "ownerRss": 131858432,
+        "webRss": 215498752,
+        "browserHeap": 5495254
+      },
+      {
+        "elapsedSeconds": 1743.869,
+        "ownerRss": 131887104,
+        "webRss": 215236608,
+        "browserHeap": 5666910
+      },
+      {
+        "elapsedSeconds": 1753.887,
+        "ownerRss": 131891200,
+        "webRss": 214548480,
+        "browserHeap": 6014522
+      },
+      {
+        "elapsedSeconds": 1763.905,
+        "ownerRss": 131895296,
+        "webRss": 217714688,
+        "browserHeap": 6165282
+      },
+      {
+        "elapsedSeconds": 1773.923,
+        "ownerRss": 131919872,
+        "webRss": 215633920,
+        "browserHeap": 6516098
+      },
+      {
+        "elapsedSeconds": 1783.939,
+        "ownerRss": 131923968,
+        "webRss": 216109056,
+        "browserHeap": 6719630
+      },
+      {
+        "elapsedSeconds": 1793.957,
+        "ownerRss": 131928064,
+        "webRss": 215969792,
+        "browserHeap": 6921578
+      }
+    ],
+    "driverClaimEvents": 0,
+    "limits": "Synthetic scale fixture with real Owner TCP and built CLI/HTTP/browser; separate real Agent execution and TUI throughput evidence required.",
+    "buildNote": "Captured before final browser lease heartbeats, nested toolResult projection and pre-dispatch cancellation fixes. The Owner range-read/SSE invalidation path was unchanged; final build repeated short scale/cold/first-tab-close validation."
+  },
+  "realOwner": {
+    "execution": "Linked built CLI/Bun, real tmux TTY, real Session Owner, governed bash and deterministic isolated local HTTP provider",
+    "externalPaidProvider": false,
+    "firstTurn": {
+      "modelCalls": 2,
+      "inputTokens": 90,
+      "outputTokens": 30,
+      "tuiTotalTokens": 120
+    },
+    "all17Turns": {
+      "ledger": {
+        "calls": 34,
+        "input": 1530,
+        "output": 510
+      },
+      "webUsage": {
+        "asOfMs": 1789540532937,
+        "cacheReadTokens": {
+          "estimated": null,
+          "exact": null,
+          "missingCalls": 34
+        },
+        "cacheWriteTokens": {
+          "estimated": null,
+          "exact": 0,
+          "missingCalls": 0
+        },
+        "costUsd": {
+          "estimated": null,
+          "exact": null,
+          "missingCalls": 34
+        },
+        "coverage": "partial",
+        "excludedUnidentifiedObservations": 0,
+        "inputTokens": {
+          "estimated": null,
+          "exact": 1530,
+          "missingCalls": 0
+        },
+        "outputTokens": {
+          "estimated": null,
+          "exact": 510,
+          "missingCalls": 0
+        },
+        "sources": [
+          "provider"
+        ],
+        "timeFrom": 0,
+        "timeTo": 1789540532934,
+        "uniqueCalls": 34,
+        "version": 1
+      },
+      "toolCardSucceeded": true,
+      "toolOutputMatches": true
+    },
+    "webStopDidNotStopOwner": true,
+    "screenshot": "15-web-observability-real-owner-2026-09-16.png",
+    "tuiExit": {
+      "priorCurrentCrashes": {
+        "count": 2,
+        "runtime": "Bun 1.3.14",
+        "kinds": [
+          "segmentation fault",
+          "illegal instruction"
+        ],
+        "attribution": "unresolved; not reproduced in subsequent checks"
+      },
+      "baselineCommit": "c54b9e47f322854b766fa4b24efd60781b97a4c7",
+      "baselineIdleExitCode": 0,
+      "baselineExecution": {
+        "governedBashTurns": 17,
+        "inputTokens": 1530,
+        "outputTokens": 510,
+        "exitCode": 0
+      },
+      "currentExecution": {
+        "governedBashTurns": 17,
+        "inputTokens": 1530,
+        "outputTokens": 510,
+        "exitCode": 0
+      },
+      "currentResumedWithWeb": {
+        "browserObserverCount": 1,
+        "governedBashTurnsWithWeb": 8,
+        "governedBashTurnsAfterWebStopped": 8,
+        "tuiExitCode": 0,
+        "webExitCode": 0
+      },
+      "limits": "Same deterministic local HTTP provider, separate isolated homes. Successful repeats do not prove the earlier intermittent native crash fixed."
+    }
+  },
+  "tuiThroughput": {
+    "with_web": {
+      "samplesMs": [
+        1710.5394806712866,
+        1701.6473077237606,
+        1579.6660166233778,
+        1709.0106755495071,
+        1781.4193535596132,
+        1655.900701880455,
+        1869.6262165904045,
+        1813.521696254611
+      ],
+      "meanMs": 1727.666431106627,
+      "medianMs": 1709.7750781103969
+    },
+    "without_web": {
+      "samplesMs": [
+        1701.3615127652884,
+        1691.8709427118301,
+        1898.3587436378002,
+        1692.1789702028036,
+        1844.4692194461823,
+        2012.9240471869707,
+        1880.6985691189766,
+        1997.6120553910732
+      ],
+      "meanMs": 1839.9342575576156,
+      "medianMs": 1862.5838942825794
+    },
+    "limits": "Real CLI/TUI/Owner governed bash, deterministic local HTTP provider; one browser observer; latency includes tool runtime and UI input delivery."
+  },
+  "installedPackage": {
+    "installedOutsideRepo": true,
+    "reactDevDependencyInstalled": false,
+    "helpExitCode": 0,
+    "assets": {
+      "app.js": {
+        "bytes": 252266,
+        "sha256": "d3cab70b22ae36154a1770089d66aa0ec15c3e82459abe19ae4969898fb8279e"
+      },
+      "app.css": {
+        "bytes": 9256,
+        "sha256": "b5ab82a51b143aef33e4fd537a707bb3f28cb0584423aefa75bed17a9e37ab9a"
+      },
+      "event-worker.js": {
+        "bytes": 3260,
+        "sha256": "d09890de48f255c20d2883d1e1173af4d2e0937ed604a96f5f7f66699418b504"
+      },
+      "index.html": {
+        "bytes": 354,
+        "sha256": "834e560b1030603de6cf637514f3567b46121779aedc2ba6e35e7eeedde40c33"
+      }
+    },
+    "authenticatedProjects": 1,
+    "licensePackaged": true,
+    "packageEntries": 6881,
+    "limits": "Production dependencies installed without dev dependencies; node-pty native install build required and completed; real installed CLI uses an isolated test home.",
+    "webExitCode": 0,
+    "finalLicenseArchiveVerified": true,
+    "licenseSha256": "9f61985ab37af0011ce3367c8c98ec8059ed93c6c76146aad0e6a0f6f0e0f211"
+  },
+  "browserBehaviors": {
+    "bootstrapFragmentCleared": true,
+    "maliciousHtmlExecuted": false,
+    "automaticExternalImages": false,
+    "unsafeJavascriptLinks": false,
+    "unknownToolFallback": true,
+    "tailBottomGapPixels": 0,
+    "olderPageAnchorDeltaPixels": 0.09375,
+    "nestedToolResultSucceeded": true,
+    "inputOutputAndLongBodyPagingRegressionPassed": true,
+    "firstTabCloseOtherTabsContinue": true
+  },
+  "gates": {
+    "buildExitCode": 0,
+    "focused": {
+      "files": 10,
+      "passed": 38
+    },
+    "inventory": {
+      "ownedFiles": 569,
+      "diagnostics": 0
+    },
+    "consumerTypecheck": {
+      "files": 642,
+      "diagnostics": 0,
+      "exitCode": 0
+    },
+    "check": {
+      "exitCode": 0,
+      "baselineDocumentationBlockerResolved": true,
+      "authorizedDocumentationCommit": "a8134c0",
+      "currentFormatRegressionTestsPassed": 7
+    },
+    "remainingCheckCommands": {
+      "check:storage-boundaries": 0,
+      "check:runtime-boundaries": 0,
+      "check:contract-consumers": 0,
+      "check:web-contracts": 0,
+      "check:web": 0,
+      "check:execution-boundaries": 0,
+      "check:platform-boundaries": 0,
+      "check:tui-boundaries": 0,
+      "check:session-owner-boundaries": 0,
+      "check:syntax-highlighter": 0,
+      "check:bash-ast-assets": 0,
+      "check:package-boundaries": 0,
+      "tsc": 0
+    },
+    "fullNpmTestAttempts": [
+      {
+        "exitCode": 1,
+        "assertionFilesPassed": 80,
+        "assertionsPassed": 530,
+        "error": "Vitest onTaskUpdate RPC timeout in first fast chunk"
+      },
+      {
+        "exitCode": 1,
+        "assertionFilesPassed": 80,
+        "assertionsPassed": 530,
+        "error": "Vitest onTaskUpdate RPC timeout in first fast chunk"
+      },
+      {
+        "exitCode": 1,
+        "assertionFilesPassed": 80,
+        "assertionsPassed": 530,
+        "error": "Vitest onTaskUpdate RPC timeout in first fast chunk",
+        "conditions": "browser and scale workload stopped",
+        "durationSeconds": 85.1
+      }
+    ],
+    "completedBuckets": {
+      "fastRemainingChunks": {
+        "1": 0,
+        "2": 0
+      },
+      "singleton": 0,
+      "security-storage": 0,
+      "integration": 0,
+      "tui-native": 0
+    },
+    "runtime": {
+      "chunks0Through2Passed": true,
+      "remainingChunks": {
+        "runtime-4": 0,
+        "runtime-5": 0,
+        "runtime-6": 0,
+        "runtime-7": 0,
+        "runtime-8": 0,
+        "runtime-9": 0,
+        "runtime-10": 0,
+        "runtime-11": 0,
+        "runtime-12": 0
+      },
+      "priorChunk3FailedTest": "tests/runtime/current-format-boundary.test.ts (same nine baseline documentation violations)",
+      "currentFormatRetest": {
+        "files": 1,
+        "passed": 7,
+        "exitCode": 0
+      }
+    },
+    "rustNativeTestsPassed": 12,
+    "tuiExit": {
+      "priorCurrentCrashes": {
+        "count": 2,
+        "runtime": "Bun 1.3.14",
+        "kinds": [
+          "segmentation fault",
+          "illegal instruction"
+        ],
+        "attribution": "unresolved; not reproduced in subsequent checks"
+      },
+      "baselineCommit": "c54b9e47f322854b766fa4b24efd60781b97a4c7",
+      "baselineIdleExitCode": 0,
+      "baselineExecution": {
+        "governedBashTurns": 17,
+        "inputTokens": 1530,
+        "outputTokens": 510,
+        "exitCode": 0
+      },
+      "currentExecution": {
+        "governedBashTurns": 17,
+        "inputTokens": 1530,
+        "outputTokens": 510,
+        "exitCode": 0
+      },
+      "currentResumedWithWeb": {
+        "browserObserverCount": 1,
+        "governedBashTurnsWithWeb": 8,
+        "governedBashTurnsAfterWebStopped": 8,
+        "tuiExitCode": 0,
+        "webExitCode": 0
+      },
+      "limits": "Same deterministic local HTTP provider, separate isolated homes. Successful repeats do not prove the earlier intermittent native crash fixed."
+    },
+    "baselineFullNpmTest": {
+      "commit": "c54b9e47f322854b766fa4b24efd60781b97a4c7",
+      "isolatedWorktree": true,
+      "exitCode": 1,
+      "assertionFilesPassed": 80,
+      "assertionsPassed": 530,
+      "error": "same Vitest onTaskUpdate RPC timeout in first fast chunk",
+      "durationSeconds": 85.7
+    }
+  },
+  "notClaimed": [
+    "full npm test pass",
+    "earlier intermittent TUI native crash fixed",
+    "paid external provider evidence",
+    "human visual/keyboard/Chinese IME acceptance",
+    "macOS or Windows acceptance",
+    "Web implementation commit or push"
+  ]
+}
