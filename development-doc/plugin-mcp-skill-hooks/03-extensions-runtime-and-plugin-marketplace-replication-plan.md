@@ -580,8 +580,8 @@ git diff --check
 | P3 事件桥 | **done** | `src/extensions/events/**`;319 用例通过(含真实子进程的 PreToolUse 重写重新授权与 `SessionEnd` 并行证据);`tsc -p tsconfig.json`/`tsconfig.tests.json`、`check:current-format`、`check:runtime-boundaries`、`check:package-boundaries` 通过 |
 | P4 运行时动作 | **done** | `src/extensions/actions/**`(校验、回执账本、同 ID 重放/conflict/uncertain 不重试);actor port 已在 P5 接到真实命令面,并有 `tests/runtime/session-runtime/extension-action-actor.test.ts` 6 条直接单测 |
 | P5 分发:安装/scope/激活 | **done** | 安装内核、activation 门禁、catalog/settings、cache/fetcher/manager、doctor、分发面接线、受治 git materialize、声明式回灌、host 资格判定、host 装配/工具准入调用点、`extension.host.inspect`、`plugin.config.*`(含 settings 键空间)与 actor 命令面(3 个真实动作 + 4 个带原因的显式拒绝)均已交付,并有 6 条直接单测 |
-| P6 CLI/TUI 与 Marketplace | **partial** | CLI 词表与真实闭环已交付(`marketplace add/discover/autoUpdate/upgrade`、`plugin install/distribution/list/doctor/config/features` 全部 exit 0,含 `feature_unknown` exit 1 与用法错误 exit 2,见 §15.2);`autoUpdate` 已接线(user 层 settings 键 + `autoUpdatePlan`,可见出口为 CLI `pendingUpdates` **加 TUI notice**);TUI 确认边界与动作入口已交付(t 只打开确认视图;`/plugins install\|upgrade\|config` 同样先确认后 mutate,见第十七/十九批);剩余 TUI/TTY 级人机验证与 TUI 的 marketplace add/remove 入口 |
-| P7 加固与真实 smoke | **partial** | 失败语义矩阵(16 用例)、预算/上限矩阵(15 用例)、两份文档同步、真实 TTY 九步闭环(exit 0、`activation:"ready"`)、"调用"段缺口定位与收口(4 用例 + `skill.skills_root_empty` warning)、文件 watcher 全链(协调器 8 + 适配器 5 + 接线 2 用例,默认关闭、`plugins.watch` 启用)、descriptor 命名(按 skills root 的 immediate-child 目录命名,`skill list` 显示真实 skill 名)、`autoUpdate` 接线(user 层 settings 键 + `autoUpdatePlan` + 真实 CLI 四模式与 pending→upgrade 闭环)均已交付;剩余 TUI 的 install/upgrade/config 入口 |
+| P6 CLI/TUI 与 Marketplace | **done** | CLI 词表与真实闭环(`marketplace add/discover/autoUpdate/upgrade`、`plugin install/distribution/list/doctor/config/features` 全部 exit 0,含 `feature_unknown` exit 1 与用法错误 exit 2);`autoUpdate` 接线(user 层 settings 键 + `autoUpdatePlan`,CLI `pendingUpdates` 与 TUI notice 两条可见出口)并有真实 CLI 四模式 + pending→upgrade→清空证据;TUI 确认边界覆盖 trust/untrust 与 `/plugins install\|upgrade\|config`(取消不触碰端口)。**证据类别**:CLI 侧 = built `dist` + 隔离 home + 真实 PTY;TUI 侧 = 真实 `InteractiveMode` harness(自动化,**非 TTY**),未关闭的 TTY/human 证据见 §15.3 |
+| P7 加固与真实 smoke | **done** | 失败语义矩阵(16 用例)、预算/上限矩阵(15 用例)、三处文档同步、真实 TTY 九步闭环(exit 0、`activation:"ready"`)、"调用"段缺口定位与收口(4 用例 + `skill.skills_root_empty` warning)、文件 watcher 全链(协调器 8 + 适配器 5 + 接线 2 用例,默认关闭、`plugins.watch` 启用)、descriptor 命名(按 skills root 的 immediate-child 目录命名)、`autoUpdate` 接线(settings 键 + 真实 CLI 四模式与 pending→upgrade 闭环)均已交付;分类缺口与既有失败见 §15.3 |
 
 ### 15.2 实施记录
 
@@ -610,7 +610,7 @@ git diff --check
 - 2026-09-17 环境故障记录:本轮多次遇到仓库挂载暂时不可用(bash `spawn bash ENOENT`、write `EACCES`、`cd` 报 `No such file or directory`),持续数秒到数十秒后自行恢复。影响:一次后台 `npm run check` 在启动前被击杀(无输出),已重跑通过;文件写入改用 `workdir: /` + `cd` 或 shell heredoc 规避。非本计划缺陷,但作业时需按「写完即提交」处理。
 - 2026-09-17 P7 预算矩阵与 TTY 闭环:预算矩阵把散落常量变成可执行清单(边界内接受/越界拒绝);TTY 闭环用 `script -qec` 分配真实 PTY 并逐条断言 **exit code 与 JSON 字段**,九步全部 exit 0,`plugin.list` 实测达到 `activation:"ready"`、`plugin distribution` 卸载后回到空。同时如实记录两处未达标:插件 skill 贡献在 enable 后从 `skill list` 消失(开放缺口),以及环境泄漏 48 条真实用户 skill 使按列表内容断言不可靠。验证:`npx vitest run tests/extensions/limits-matrix.test.ts` 15 用例;全量 `npm run check` **exit 0**。
 - 2026-09-17 "调用"段缺口收口:根因是 **manifest `skills[]` 的语义被误读**——它是 skills **root**,扫描器只枚举其 immediate-child 目录。夹具用 `./skills/review` 导致 skill 永远扫不到且无任何提示;改为 `./skills` 后实测 `activation:"ready"` 且进入 `modelDiscoverable`。同时在 `scanSkillsDirectory` 增加 `skill.skills_root_empty` warning,把"静默 0 结果"变成可诊断。验证:`npx vitest run tests/extensions/skill-declaration-shape.test.ts` 4 用例、`npx vitest run tests/extensions/` 43 文件 328 用例通过;`tsc -p tsconfig.json` 干净。**这同时修掉了我此前 TTY 复测的证据缺口**:TTY 那一步的失败由夹具形状错误解释,产品侧的分发→信任→启用链路本身是正确的。
-- 2026-09-17 "调用"段真实 TTY 复验:修正声明形状后,九步闭环包含 skill 由 `disabled` → `ready`+`trusted`,全部 exit 0。顺带记录一处**观感问题(未修,低优先)**:enable 之前 `skill list` 里那条 descriptor 的 `displayName` 取的是声明 root 的最后一段(`skills`),而 enable 之后真实的 skill 名是 `review`;`componentName` 用 root 路径末段命名,对"声明的是 root"这一语义并不贴切。
+- 2026-09-17 "调用"段真实 TTY 复验:修正声明形状后,九步闭环包含 skill 由 `disabled` → `ready`+`trusted`,全部 exit 0。顺带记录一处**观感问题**(当时未修,低优先):enable 之前 `skill list` 里那条 descriptor 的 `displayName` 取的是声明 root 的最后一段(`skills`),而 enable 之后真实的 skill 名是 `review`;**已在第十六批修正**(按 immediate-child skill 目录命名,`tests/extensions/skill-declaration-shape.test.ts` 固定)。
 - 2026-09-17 `extension.host.inspect` 落地:分发给 P5 的 operation manifest 增量补上最后一项 read。投影刻意只给"数"与"码"而不给路径:`entrypoints` 只给条数、候选只给 `eligibility` code,因此 TUI/CLI 能回答"为什么没跑起来"而不会把 native 路径带出去。验证:`npx vitest run tests/extensions/ tests/runtime/session-runtime/extension-distribution-domain.test.ts` 44 文件 341 用例通过;`tsc -p tsconfig.json`/`tsconfig.tests.json`、`check:current-format`、`test:inventory` 通过。
 - 2026-09-17 `plugin.config.*` + D13 键空间:值层放 settings 的 `plugins.values`,复用 skills policy 先例;结构清洗**逐条**丢弃非法值(一个插件的坏值不连坐其它插件),空值层既不留下键也不让写入失败。读路径与写路径共用同一套 schema 校验。CLI 复合动词 `plugin config [read|set ...]` 的 mutation 分类由子动作决定(与 `skill provider` 一致),值以字符串送出、由 schema 定型。验证:`tests/storage/settings-manager.test.ts` 33 用例、分发 domain 17 用例、`tests/cli/control-commands.test.ts` 21 用例通过;全量 `npm run check` exit 0。
 - 2026-09-17 actor 命令面:晚绑定持有者避免了"controller 尚未构建"的循环依赖,同时不把 controller 类型泄漏到 extensions 层;`sendMessage` 固定 `origin:"runtime"` 是刻意的安全选择——扩展不得冒充用户输入(D4/D9)。四个未接线动作**各自给出具体原因**,而不是统一一句"未接线",这样 CLI/TUI 能告诉用户到底缺什么。验证:`npx vitest run tests/extensions/ tests/runtime/session-runtime/extension-distribution-domain.test.ts tests/cli/control-commands.test.ts` 45 文件 366 用例通过;全量 `npm run check` **exit 0**。
@@ -620,4 +620,31 @@ git diff --check
 - 2026-09-17 watcher 生产接线:settings 在组合构造期读一次,因此打开 `plugins.watch` 需重开会话——写进文档而不是假装热生效;`requestReload` **等** `manager.reload()` 才得到 ready/pending,保证审计说的是真话;watcher 经 options 传入(而不是在 composition 内部 new),因此 start/stop 顺序可以用 stub 断言。验证:`npx vitest run tests/extensions/ tests/runtime/session-runtime/extension-distribution-domain.test.ts` 360 用例、`tests/storage/settings-manager.test.ts` 35 用例;全量 `npm run check` **exit 0**。
 - **既有缺陷(与本计划无关,单独记录)**:`tests/runtime/session-runtime/extensions-domain.test.ts` 的「real embedded production path owns an isolated extension snapshot」在当前运行环境下失败——它断言 `snapshot.descriptors` 为空,但兼容 skill provider 会从运行者的 OS 用户目录发现真实 skill。已在**干净的 HEAD worktree**上复现(补上并发专项的未跟踪文件后同样失败),确认不是本计划改动引入。
 - **本阶段验证阻塞(历史记录,已解除)**:共享工作树 `rollback/before-composer-shape` 同时存在另一专项(P15 Web 可观测性)的未提交改动,该改动删除了 `src/contracts/web/` 但 `src/contracts/index.ts` 与 `src/web/**` 仍 import 它,导致 `tests/cli/**` 因 `ERR_MODULE_NOT_FOUND` 失败(P15 随后自行收敛,`tsc -p tsconfig.json` 已恢复 0 错误)。全量 `npm run check` 目前在 `check:consumers` 的 `check-typecheck-coverage` 失败:8 条 `overlapping_package_consumer` 指向 P15 新增的 `packages/collab-web/**` 被 `tsconfig.json` 与 `tsconfig.contracts.json` 重复覆盖,与本计划无关。`tests/extensions/**` 与 `tests/runtime-contracts/**` 全部通过。另有既有缺陷(与本计划无关,单独记录、未顺带修):`tests/glob.test.ts`「`*.ts` 单段不递归」在 `2b046ef` 上即失败,glob 工具对单段模式仍返回 `src/x.ts`。本阶段的 `npm run check`/`npm test` 全量门禁因此在共享工作树恢复一致前无法作为通过证据。
+- 2026-09-17 P6/P7 收口(本计划最后一轮):`plugin features`(三态选择 + `feature_unknown`/用法错误退出码)、TUI 信任确认边界与 `pendingUpdates` notice、descriptor 命名、`marketplace.autoUpdate`(settings 键 + `autoUpdatePlan` + CLI 四模式)、TUI `/plugins install|upgrade|config` 确认入口依次交付,每批各自 `npm run check` **exit 0**。最终门禁(本轮状态):`npm run check` **exit 0**(715 consumers / 0 diagnostics);`npm run build:typescript` exit 0 后以隔离 `RUNLEDGER_DIR` + 真实 PTY 复验 `plugin features` 三态/两种退出码、`marketplace` 四模式、`pendingUpdates`→`marketplace upgrade`→清空,全部 exit 0;`tests/tui/` 与 `tests/extensions/` 合计 1164 用例通过(2 条既有失败见 §15.3)。
 - 2026-09-17 P1 收口:host 协议 JSONL 编解码(半包/字节上限/深度/版本/generation/未知 kind 全部分开失败);注册表校验(重复名拒绝、白名单订阅、上限、identity digest 与 pid/generation/到达顺序无关);扩展侧 API 的注册期/运行期分离(`ExtensionRuntimeNotInitializedError`);owner 侧 client 的握手、事件请求/回执、动作帧应答与 fail-closed 协议违规处理;channel 只经既有 governed managed process port 创建进程;supervisor 的 generation 生命周期、idle 边界与 last-known-good 回退。验证:`npx vitest run tests/extensions/host/` 38 passed(其中 4 例走真实 Node 子进程:握手后回收、工厂抛错只 failed 该 generation、裸 `setInterval` 抛错后 owner/session 存活并可恢复、真实注册表投影);`tsc --noEmit -p tsconfig.json` 与 `-p tsconfig.tests.json` 通过;`npm run check:current-format`、`npm run check:runtime-boundaries` 通过。行为影响:新增模块尚未接入任何 composition root,生产路径行为不变。
+
+### 15.3 证据矩阵与未关闭项
+
+按 §10.4 分列,不允许互相顶替:
+
+| 证据类别 | 本计划实际取得 | 说明 |
+|---|---|---|
+| 自动化单测/契约 | 有 | `tests/runtime-contracts/extensions-contracts.test.ts`、`tests/extensions/**`、`tests/tui/**`、`tests/cli/control-commands.test.ts`、`tests/storage/settings-manager.test.ts`、`tests/runtime/session-runtime/{extension-distribution-domain,extension-action-actor}.test.ts` |
+| 真实 Node 子进程 | 有 | `tests/extensions/host/host-process.test.ts`:握手与回收、factory 抛错只 failed 该 generation、裸 timer 崩溃隔离、PreToolUse 重写重新授权、SessionEnd 并行、动作往返、注册表投影 |
+| built `dist` + 真实 CLI | 有 | 隔离 `RUNLEDGER_DIR`、`npm run build:typescript` 后:九步安装→信任→启用→禁用→取消信任→卸载闭环;`plugin features` 三态与 exit 1/2;`marketplace autoUpdate` 四模式与 `pendingUpdates`→`upgrade`→清空;`marketplace add/discover/install/distribution/doctor` 全部 exit 0 |
+| 真实 TTY(PTY) | 有(CLI) | 上述 CLI 闭环均经 `script -qec` 分配真实 PTY 执行,按 exit code 与 JSON 字段断言 |
+| TUI 按键/渲染 | **未关闭** | 确认边界与 notice 由真实 `InteractiveMode` harness(自动化)覆盖全部分支;**没有**在真实 PTY 里捕获按键与渲染。这是证据类别缺口,不是 DoD 未实现项 |
+| human/visual、跨平台 | 未取得 | 本计划只承诺 §10 的 Linux 证据;human-verified 与 macOS/Windows 仍由总索引维护 |
+
+与本计划无关、在本工作树可复现的既有失败(不作为本计划门禁证据,也不顺带修):
+
+- `tests/runtime/session-runtime/extensions-domain.test.ts`「real embedded production path owns an isolated extension snapshot」:兼容 provider 从运行者 OS 用户目录发现真实 skill,断言空 descriptors 失败;已在干净 HEAD worktree 复现。
+- `tests/tui/interactive-controls.test.ts`「derives footer plan progress from the live safe timeline」与 `tests/tui/adapters/session-domain.test.ts`「validates catalog and transitions for 'plan'@2」:均在干净 HEAD worktree 复现。
+- `tests/cli/multi-client/acceptance-runners.test.ts` 3 例:`scripts/verify-multi-client-host.ts` 返回 `host_startup_timeout`,在干净 HEAD worktree 同样失败。
+- `tests/glob.test.ts` 单段模式不递归:`2b046ef` 上即失败。
+
+仍留待后续专项(非本计划 DoD):
+
+- TUI 的 TTY/human 按键证据。
+- TUI 的 marketplace add/remove 入口(安装前需先用 CLI 注册 catalog)。
+- 运行时动作里 `setActiveTools`/`setSessionName`/`exec`/`appendEntry` 仍是**带原因的显式拒绝**:owner 面没有对应命令(active-tool setter、标题 mutation、governed exec、session ledger append),不是静默 no-op。
