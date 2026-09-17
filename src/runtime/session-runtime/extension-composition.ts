@@ -16,6 +16,7 @@ import { MarketplaceFetcher } from "../../extensions/plugins/marketplace/fetcher
 import { resolveExtensionCachePaths } from "../../extensions/plugins/marketplace/cache.ts";
 import { createManagedGitMaterializer } from "../../extensions/plugins/git-materializer.ts";
 import { distributionPluginRoots } from "../../extensions/plugins/discovery-bridge.ts";
+import { selectDistributionHostCandidates } from "../../extensions/plugins/host-activation.ts";
 import { MarketplaceManager } from "../../extensions/plugins/marketplace/manager.ts";
 import { runExtensionDoctor } from "../../extensions/plugins/doctor.ts";
 import { TrustStore } from "../../extensions/trust/trust-store.ts";
@@ -42,6 +43,7 @@ import type { ManagedBackgroundBashOperations } from "../tools/bash.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
 import { workspaceStorageKey } from "../contracts/storage-layout.ts";
 import { createRuntimeId, parseRuntimeId } from "../protocol/ids.ts";
+import type { PrincipalId } from "../protocol/ids.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
 import type { SessionStore } from "../../storage/session-store/session-store.ts";
@@ -513,6 +515,8 @@ export async function createProductionSessionExtensionComposition(
 		distributionRoot: join(stateRoot, "plugins"),
 		managedProcess: options.managedProcess,
 		cwd: options.cwd,
+		trustStore,
+		principalId,
 	});
 	// 已安装的声明式包回灌到既有 PluginManager 发现面：安装只落盘，是否生效
 	// 仍由既有 enable/trust 决定（§1.2 缺口 #11）。
@@ -795,6 +799,8 @@ function createSessionDistribution(input: {
 	readonly distributionRoot: string;
 	readonly managedProcess: ProcessToolClient & Pick<ManagedBackgroundBashOperations, "start">;
 	readonly cwd: string;
+	readonly trustStore: TrustStore;
+	readonly principalId: PrincipalId;
 }): {
 	readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
 	/** 已安装声明式包的发现根；注册表不可读时返回空数组（不阻断会话启动）。 */
@@ -829,7 +835,17 @@ function createSessionDistribution(input: {
 	const read: SessionDistributionReadPort = {
 		list: async () => {
 			const listed = await manager.listInstalled();
-			return listed.ok ? { ok: true, value: { items: listed.value } } : { ok: false, code: listed.code, message: listed.message };
+			if (!listed.ok) return { ok: false, code: listed.code, message: listed.message };
+			// 附上 host 资格与原因，让 CLI/TUI 能回答“为什么这个扩展没在跑”。
+			const selection = await selectDistributionHostCandidates({ registry, storage, trustStore: input.trustStore, principalId: input.principalId });
+			const reasons = new Map(selection.gates.map((gate) => [gate.candidate.packageId, gate.ok ? "host-ready" : gate.code]));
+			return {
+				ok: true,
+				value: {
+					items: listed.value.map((item) => ({ ...item, hostEligibility: reasons.get(item.packageId) ?? "no-entrypoints" })),
+					diagnostics: selection.diagnostics,
+				},
+			};
 		},
 		doctor: async () => {
 			const report = await runExtensionDoctor({ storage, registry, scopeRoot: scopeRootForDoctor });
