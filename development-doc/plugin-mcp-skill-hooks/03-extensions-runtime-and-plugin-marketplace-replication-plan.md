@@ -1,6 +1,6 @@
 # Extensions 运行时与 Plugin 分发/Marketplace 完整复刻计划
 
-> 状态:**P0 完成,进入 P1**。P0 已交付 §5.2 契约、§8 事件增量、Q1–Q4 裁定;P1–P7 未开始。
+> 状态:**P1 完成,进入 P2**。P0 已交付 §5.2 契约、§8 事件增量、Q1–Q4 裁定;P1 已交付 extension host 进程与协议骨架(含真实子进程崩溃隔离证据);P2–P7 未开始。
 > 基线日期:2026-09-17;RunLedger 基线为当前工作树 `rollback/before-composer-shape`(`git status` 含并发未提交改动,HEAD `2b046ef`;实施前必须重新核对)。
 > 参考基线:oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`(`packages/coding-agent` v18.1.17,本机 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/oh-my-pi`,工作树干净 0 dirty);下文 omp 行号以该工作树为准,仅为机制参考,不是 RunLedger 完成证据。
 > 适用范围:`src/extensions/**`、`src/runtime/{session-runtime,harness-profiles,protocol,contracts,tools,agent-loop}/**`、`src/security/**`、`src/storage/**`、`src/cli/**`、`src/tui/**`、`src/contracts/**` 与对应 `tests/**`。
@@ -8,6 +8,7 @@
 > 姊妹计划:[`../plan/16-omp-tool-parity-update-plan.md`](../plan/16-omp-tool-parity-update-plan.md)(新工具准入 checklist)、[`../plan/17-omp-loop-goal-mode-adaptation-plan.md`](../plan/17-omp-loop-goal-mode-adaptation-plan.md)(omp 行为移植范式 D1–D15)、[`../plan/13-package-boundary-workspace-refactor-plan.md`](../plan/13-package-boundary-workspace-refactor-plan.md)(Extension host 若独立成包时的边界先例)。
 > 修订记录:2026-09-17 初版。依据三路只读侦察(omp Extensions runtime 接口面、omp Plugin/Marketplace 磁盘与 CLI 契约、RunLedger `src/extensions/**` 现状与缺口)撰写。
 > 修订记录:2026-09-17 P0 收口。Q1–Q4 按推荐项裁定;§5.2 契约落 `src/contracts/extensions/**`;§8 事件增量落 `src/runtime/protocol/events.ts`;`01` §13/M7 同步。
+> 修订记录:2026-09-17 P1 收口。Host 协议编解码、注册表校验、扩展侧 API、owner 侧 client/channel 与 supervisor 落地;真实 host 子进程的工厂失败与裸 timer 崩溃只让 generation failed。
 
 ## 0. 文档定位与执行规则
 
@@ -284,11 +285,15 @@ Session Owner(每 owned Session)
 
 | 路径 | 内容 |
 |---|---|
-| `src/extensions/host/supervisor.ts` | ExtensionHostSupervisor:启停、协议握手、generation、崩溃恢复、预算 |
-| `src/extensions/host/protocol.ts` | host 协议帧编解码、版本校验、载荷上限 |
-| `src/extensions/host/client.ts` | owner 侧请求/回执、超时、abort 传播 |
-| `src/extensions/host/runtime-api.ts` | 扩展侧 `ExtensionAPI` 实现(注册记录 + 动作 RPC 桩) |
-| `src/extensions/host/registration.ts` | 注册表序列化/校验/去重/上限 |
+| `src/extensions/host/supervisor.ts` | ExtensionHostSupervisor:启停、协议握手、generation、崩溃恢复、预算(P1 已落地) |
+| `src/extensions/host/protocol.ts` | host 协议帧编解码、版本校验、载荷上限(P1 已落地) |
+| `src/extensions/host/client.ts` | owner 侧请求/回执、超时、abort 传播(P1 已落地) |
+| `src/extensions/host/channel.ts` | 受治理 managed process → 行式通道的 owner 侧适配(P1 补充;原表未列) |
+| `src/extensions/host/runtime-api.ts` | 扩展侧 `ExtensionAPI` 实现(注册记录 + 动作 RPC 桩)(P1 已落地) |
+| `src/extensions/host/registration.ts` | 注册表序列化/校验/去重/上限(P1 已落地) |
+| `src/extensions/host/runtime.ts` | host 进程内运行时循环与事件派发(P1 补充;原表未列) |
+| `src/extensions/host/bootstrap.ts` | host 子进程 bootstrap 配置的解析与 containment 校验(P1 补充;原表未列) |
+| `src/extensions/host/entry.ts` | host 子进程入口(P1 补充;原表未列) |
 | `src/extensions/events/projection.ts` | canonical event → `ExtensionEventProjection` |
 | `src/extensions/events/bridge.ts` | 派发、结果合成、重新授权 |
 | `src/extensions/tools/admission.ts` | 扩展工具 → `AgentTool` 准入(provenance/approval/limits) |
@@ -330,10 +335,13 @@ Session Owner(每 owned Session)
 - 行为影响:无。本阶段不装配 supervisor、不改 operation manifest、不改 Profile 门控。
 - 顺带修复的既有缺陷(单独说明):本文件初版引入的内部 generational 措辞(`v` + 数字)触发 `npm run check:current-format` 的 internal generation marker 检查;P0 改写为“登记版本 N / 协议版本 1”。
 
-### P1 — Extension host 进程与协议骨架
+### P1 — Extension host 进程与协议骨架——**已完成**
 
 - RED:构造一个 factory 抛错的扩展包,断言 **session 存活**、generation `failed`、audit 有记录;再构造一个裸 `setInterval` 抛错扩展,断言同样不影响 session(与 omp 相反的行为必须被测试固定)。
 - DoD:supervisor 能起停 host、握手校验、序列化空注册表、超时与崩溃恢复;endTurn/idle 交换语义与既有 snapshot 一致;进程由 governed managed process 创建并可断言已回收。
+- 交付物:`src/extensions/host/**`(protocol/registration/runtime-api/runtime/bootstrap/entry/channel/client/supervisor);`tests/extensions/host/**`(6 文件 38 用例)与 `tests/fixtures/extensions/host/**`(4 个夹具)。
+- 证据类别(§10.4):自动化契约与真实 Node 子进程两类,均**不含** built `dist` 与真实 TTY;后者归 P7。
+- 已知缺口(留给后续阶段):supervisor 尚未接入 `createProductionSessionExtensionComposition`(P2/P3);`session_shutdown` 并行派发与逐事件结果合成(P3);`./extensions` 公开子路径(P2);进程内存/生命周期预算只做了超时与上限,内存预算在 P7。
 
 ### P2 — 注册面与工具准入
 
@@ -487,7 +495,7 @@ git diff --check
 | 阶段 | 状态 | 证据 |
 |---|---|---|
 | P0 契约冻结与裁定 | **done** | `src/contracts/extensions/**`(8 文件);`src/runtime/protocol/events.ts` 12 个新事件;`tests/runtime-contracts/extensions-contracts.test.ts`(23 用例);§12 Q1–Q4 裁定;`01` §13/M7 同步;`npm run check` 与 `npm test` 见 §15.2 |
-| P1 host 进程与协议骨架 | planned | — |
+| P1 host 进程与协议骨架 | **done** | `src/extensions/host/**`(9 文件);`tests/extensions/host/**` 38 用例全部通过(含真实 Node 子进程的 factory 失败与裸 timer 崩溃隔离);`tsc -p tsconfig.json`/`tsconfig.tests.json` 通过 |
 | P2 注册面与工具准入 | planned | — |
 | P3 事件桥 | planned | — |
 | P4 运行时动作 | planned | — |
@@ -498,4 +506,5 @@ git diff --check
 ### 15.2 实施记录
 
 - 2026-09-17 初版:依据三路只读侦察建立基线、逐项对照表、D1–D15、P0–P7 与验收口径;未实现任何代码,未提交。
-- 2026-09-17 P0 收口:契约落 `src/contracts/extensions/**`;canonical event catalog 增量落 `src/runtime/protocol/events.ts`(并把 runtime `eventAction` 改为取最后一段,与类型层推断一致);新增 12 项事件投影白名单;marketplace/Claude 兼容磁盘契约成形。验证:`npx vitest run tests/runtime-contracts/extensions-contracts.test.ts` 23 passed;`npm run check:current-format`、`npm run check:runtime-boundaries`、`npx tsc --noEmit -p tsconfig.json` 通过。行为影响为零:未装配 supervisor、未改 operation manifest、未改 Profile 门控。
+- 2026-09-17 P0 收口:契约落 `src/contracts/extensions/**`;canonical event catalog 增量落 `src/runtime/protocol/events.ts`(并把 runtime `eventAction` 改为取最后一段,与类型层推断一致);新增 12 项事件投影白名单;marketplace/Claude 兼容磁盘契约成形。验证:`npx vitest run tests/runtime-contracts/extensions-contracts.test.ts` 23 passed;`npm run check:current-format`、`npm run check:runtime-boundaries`、`npx tsc --noEmit -p tsconfig.json` 通过。行为影响为零:未装配 supervisor、未改 operation manifest、未改 Profile 门控。commit `9ff63af`。
+- 2026-09-17 P1 收口:host 协议 JSONL 编解码(半包/字节上限/深度/版本/generation/未知 kind 全部分开失败);注册表校验(重复名拒绝、白名单订阅、上限、identity digest 与 pid/generation/到达顺序无关);扩展侧 API 的注册期/运行期分离(`ExtensionRuntimeNotInitializedError`);owner 侧 client 的握手、事件请求/回执、动作帧应答与 fail-closed 协议违规处理;channel 只经既有 governed managed process port 创建进程;supervisor 的 generation 生命周期、idle 边界与 last-known-good 回退。验证:`npx vitest run tests/extensions/host/` 38 passed(其中 4 例走真实 Node 子进程:握手后回收、工厂抛错只 failed 该 generation、裸 `setInterval` 抛错后 owner/session 存活并可恢复、真实注册表投影);`tsc --noEmit -p tsconfig.json` 与 `-p tsconfig.tests.json` 通过;`npm run check:current-format`、`npm run check:runtime-boundaries` 通过。行为影响:新增模块尚未接入任何 composition root,生产路径行为不变。
