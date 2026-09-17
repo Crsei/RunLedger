@@ -211,6 +211,18 @@ export async function scanSkillsDirectory(
 	const { skillsRoot, limits } = options;
 	const listed = await listSkillEntries(storage, skillsRoot, limits);
 	const diagnostics = [...listed.diagnostics];
+	// 声明的是 skills root：若它下面没有子目录，说明作者很可能指向了 skill 目录
+	// 本身（`./skills/review` 而不是 `./skills`）。静默产出 0 个 skill 会让这个
+	// 形状错误极难排查，因此显式给出 warning。
+	if (listed.entries.length === 0 && diagnostics.every((diagnostic) => diagnostic.code !== "skill.scan_bound")) {
+		diagnostics.push(extensionDiagnostic({
+			code: "skill.skills_root_empty",
+			severity: "warning",
+			message: "declared skills root has no immediate-child skill directory; declare the parent directory (for example ./skills), not one skill directory",
+			source: "skills",
+			path: skillsRoot,
+		}));
+	}
 	const skills: SkillDescriptor[] = [];
 	let cursor = 0;
 	const worker = async (): Promise<void> => {
