@@ -112,7 +112,7 @@ runledger --session-id <session-id> mcp doctor
 | `plugin uninstall <plugin-id>` / `plugin link <plugin-id> <path>` | 可选 `--scope user\|workspace` | `uninstall` 移除版本目录与账本；`link` 只记录本地目录，不伪造 marketplace 来源 |
 | `plugin config [read] / set <plugin-id> <key> <value>` | 默认 `read`；`set` 的值以字符串传入 | 读返回每个已安装包的声明式 settings schema 与 user 层生效值(补默认值)；写先按声明校验再只合并被接受的键，secret 只在 user 层 |
 | `plugin features [read] / set <plugin-id> <*\|none\|feature,...>` | 默认 `read`；`*` = 声明默认值、`none` = 全关、逗号列表 = 精确集合 | 读返回每个已安装包的 feature 声明、账本选择与生效集合；写只改 `enabledFeatures`，不启用、不信任、不重启 host；未声明名字返回 `feature_unknown`(退出码 1)，非法选择是解析错误(退出码 2) |
-| `marketplace [discover] / add / remove / update / upgrade` | 默认 `discover`；`add <name> <github\|git\|url\|local> <uri>`；`remove`/`update <name>`；`upgrade [name]` | 注册/移除/刷新 catalog 与按 catalog 版本升级；`notify` 自动更新尚无 TUI 通知落点 |
+| `marketplace [discover] / add / remove / update / upgrade` | 默认 `discover`；`add <name> <github\|git\|url\|local> <uri>`；`remove`/`update <name>`；`upgrade [name]` | 注册/移除/刷新 catalog 与按 catalog 版本升级；`pendingUpdates` 可在 CLI 查询，并会在 TUI 打开 `/plugins` 时以 notice 提示 |
 | `skill [list]` | 默认 `list` | 查询 Skill catalog |
 | `skill trust / untrust <skill-id>` | ID 必填 | 修改 Skill trust，仍受领域校验 |
 | `skill provider list` | 显式 `provider list` | 查询 Skill provider |
