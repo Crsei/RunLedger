@@ -1,6 +1,6 @@
 # RunLedger CLI 参数表
 
-本文面向终端用户，说明启动参数、控制子命令、环境变量及当前限制。依据 [架构总览](architecture.md)、[子系统文档](subsystems/README.md)与当前 CLI 实现整理，核对日期为 **2026-09-05**。实现依据包括当前工作树的未提交修复；已安装版本可能不同。本文是源码核对结果，不代表本轮已完成真实 provider 或 TUI 验收。
+本文面向终端用户，说明启动参数、控制子命令、环境变量及当前限制。依据 [架构总览](architecture.md)、[子系统文档](subsystems/README.md)与当前 CLI 实现整理，核对日期为 **2026-09-17**。实现依据包括当前工作树的未提交修复；已安装版本可能不同。本文是源码核对结果，不代表本轮已完成真实 provider 或 TUI 验收。
 
 ## 1. 调用方式与解析规则
 
@@ -100,11 +100,17 @@ runledger --session-id <session-id> mcp doctor
 
 省略会话选择参数会走新建流程，不会自动操作最近会话。输出是 JSON 结果；领域操作返回 `ok: false` 时退出码为 1，解析错误通常为 2。能力以认证握手协商结果为准；表内“未接通”表示标准 Session 当前未暴露该操作，不是语法错误。
 
+分发与 marketplace 命令补充说明：安装/升级/链接都只写 canonical `plugins/` 下的版本化 store 与账本，**安装不授予执行**——首次启用仍必须显式 `plugin trust`。`install/upgrade/uninstall/link/marketplace add` 只接受 `--scope user|workspace`，其他取值在解析期拒绝；当前 Session 组合固定把包落到 workspace scope。`git`/`url` 源经会话的受治 managed process 执行 clone/fetch，网络策略默认拒绝，被拒时返回失败而不是回退到本地猜测路径。真实闭环核对见 [Extensions 计划](../development-doc/plugin-mcp-skill-hooks/03-extensions-runtime-and-plugin-marketplace-replication-plan.md) §15.2。
+
 | 命令（均加 `runledger [会话选择参数]` 前缀） | 参数与默认动作 | 标准 Session 状态 |
 |---|---|---|
 | `security [inspect]` | 默认 `inspect` | 查询有效安全设置 |
 | `worktree list / inspect / create / resume / release` | 默认 `list`；`create <source-cwd> <label>`；`release confirm [reason]` | 控制命令未接通；启动 `--worktree` 的组合路径另行存在 |
 | `plugin list / inspect / reload / enable / disable / trust / untrust` | 默认 `list`；enable/disable/trust/untrust 需要 `<plugin-id>` | `inspect` 未接通，其他操作取决于当前扩展能力 |
+| `plugin distribution / doctor` | 默认动作即 `distribution` | `distribution` 列出分发账本（含 `enabled`、`marketplace`、`hostEligibility`）；`doctor` 只报告账本/目录/digest/lifecycle/trust/孤立目录问题，不自动修复 |
+| `plugin install / upgrade <spec>` | spec 为 `name`、`name@marketplace` 或 `name[features]`；可选 `--scope user\|workspace` | 从已注册 marketplace 安装或升级到版本化 store；**不**启用、**不**授予信任 |
+| `plugin uninstall <plugin-id>` / `plugin link <plugin-id> <path>` | 可选 `--scope user\|workspace` | `uninstall` 移除版本目录与账本；`link` 只记录本地目录，不伪造 marketplace 来源 |
+| `marketplace [discover] / add / remove / update / upgrade` | 默认 `discover`；`add <name> <github\|git\|url\|local> <uri>`；`remove`/`update <name>`；`upgrade [name]` | 注册/移除/刷新 catalog 与按 catalog 版本升级；`notify` 自动更新尚无 TUI 通知落点 |
 | `skill [list]` | 默认 `list` | 查询 Skill catalog |
 | `skill trust / untrust <skill-id>` | ID 必填 | 修改 Skill trust，仍受领域校验 |
 | `skill provider list` | 显式 `provider list` | 查询 Skill provider |

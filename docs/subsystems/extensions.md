@@ -18,6 +18,8 @@ Plugin 当前是声明式 `.runledger-plugin/plugin.json` 容器，只贡献受 
 
 Plugin enable/disable/trust/untrust 是 Session resource mutation，经 expected revision 和 attempt barrier 执行。插件贡献跟随 Session snapshot 生命周期；当前没有独立 plugin 进程或 executable-plugin cleanup authority，也不建立跨 Session 的隐式全局 registry。
 
+可执行扩展有独立的 host 子进程与分发面，见下文「Plugin 分发与 marketplace」与「Extension host」两节。上面的约束只描述**声明式容器本身**：`PluginManager` 仍然不加载可执行代码、不注册任意 runtime tool。
+
 ## Skills
 
 Skill registry 聚合受支持 provider 的发现结果，catalog 暴露安全 summary，`SkillToolResolver` 在实际加载时再次检查 policy/trust/digest。模型只有通过 `Skill` tool 才得到被选 skill 的正文；catalog presence 不会把所有 skill 内容预先注入 prompt。
@@ -56,8 +58,29 @@ load extension snapshot
 
 shutdown 是幂等 promise。fenced Runtime 也执行资源终止，但不能在清理过程中以旧 generation 提交新的 durable mutation。
 
+## Plugin 分发与 marketplace
+
+分发面与上面的声明式 Plugin 容器是**两层**，不是一个系统：
+
+- **分发账本**：`<home>/state/extensions/plugins/` 下的 `registry.json`（RunLedger 自有）、`marketplaces.json`（Claude 兼容字段，登记版本 1）与 `installed_plugins.json`（登记版本 2）。内容按 `<scope>/packages/<packageId>/<version>/` 版本化落盘，未知顶层键读写时保留，损坏文件 fail closed 而不是重置用户数据。
+- **安装**：`staging → digest → 同设备原子激活`，任一步失败清 staging。不运行包管理器，也不执行任何 lifecycle script——声明了 `preinstall`/`install`/`postinstall`/`prepare`/`publish` 的包在安装期直接拒绝。`git`/`url` 源经该会话的受治 managed process 执行 clone/fetch，网络策略默认拒绝；`git-subdir` 用 containment 校验的存储适配器落位。
+- **安装、启用、信任三者分离**：安装只落盘 + 记 digest；启用只改账本位；host 只在 `enabled + 当前内容的 trust receipt + 有 entrypoint + host 未 failed` 全满足时才启动。内容变化会让旧 receipt 变 stale，缺失/stale/revoked 分别有独立诊断码。
+- **回灌**：已安装的**声明式**包会被投影为既有 `PluginManager` 的发现根，因此安装后 `plugin.list` 立刻可见，但仍是 `disabled` + `untrusted`，直到用户显式信任并启用。分发包的权威 manifest 是 `package.json#runledger`；`.runledger-plugin/plugin.json` 只是发现容器。
+
+## Extension host
+
+可执行扩展在 **session 私有的 host 子进程**内运行，由既有 governed managed process 创建；模块工厂在该进程内求值，注册结果经版本化 JSONL 协议（每帧带 `protocolVersion` 与 `generation`）序列化回 owner。owner 侧不做任何进程内 fallback：host 退出、协议违规或超预算只让该 generation `failed`，session 继续。
+
+- 扩展工具经准入投影为带 provenance 的 `AgentTool`；未在 `capabilities.tools` 声明、与 stdlib 保留名冲突、与其它扩展冲突、runtime name 非法或参数 schema 超界（含 `$ref`/`$defs`/`pattern`）的注册一律拒绝，不自动改名、不静默遮蔽。准入后的工具在 host 握手完成后经既有 Session-owned 工具通道追加，authorization policy 动态读取当前工具集，因此新工具不会被静默拒绝。
+- 工具 handler 只存在于 host 进程内，经 `tool:<runtimeName>` 请求调用；未注册/抛错/超时各自返回明确失败码，host 不因单次工具失败退出。
+- 事件是 canonical event 的**投影**：按事件白名单裁剪载荷，凭据形状键额外硬拒绝，超限整条拒绝而不截断。`PreToolUse` 的 `updatedInput` 只在该事件合法且强制要求重新授权。
+- 运行时动作（`sendMessage`/`setModel`/`setActiveTools`/`exec` 等）在 owner 侧按 `(generation, action, requestId)` 记回执：同 ID 同体重放命中回执、异体是 conflict、结果不确定记 `uncertain_outcome` 且不重试。**当前组合尚未把动作接到 Session 命令面**，因此这些动作返回 `session_command_unavailable`，`intent` 只记审计。
+
 ## 稳定边界
 
 - descriptor、enabled、trusted、loaded 和 model-visible 是不同状态。
 - Extension resource operations 只通过 Session protocol 暴露；TUI 不直接持 manager/MCP client。
+- 安装不授予执行；分发账本不替代 trust receipt。
+- 扩展只能提交 intent，不能直接影响 presentation，也没有 UI context。
+- 扩展拿不到 store/settings/trust 句柄，动作只能经 owner 的帧协议请求。
 - child Agent 当前不继承 MCP/Hook/Skill/Plugin，只从 production tools 投影明确只读能力。
