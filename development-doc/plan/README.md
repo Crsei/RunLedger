@@ -4,6 +4,7 @@
 
 | 计划 | 范围与状态入口 |
 |---|---|
+| [Plan 18：oh-my-pi Web 能力移植（`web_search` 与站点抓取）](18-omp-web-capability-port-plan.md) | `planned`；范围取自 parity 00 §3 #6/#7，含 19 个 provider、站点 scraper 家族、三条新 port（transport/凭据/settings）与新工具准入接线。P0 的两项裁定（目录名、Tier C 延迟）待用户确认；阶段、冻结物与证据见该文 §4/§7/§8。 |
 | [Plan 17：oh-my-pi `/loop` 与 Goal Mode 适配](17-omp-loop-goal-mode-adaptation-plan.md) | in progress；P0.5 与 P0–P6 主体已提交（`12d0552`），含 P5 governed condition 接线。§13 记录本地 HTTP/CLI/TTY 证据；§14 登记未完成的 goal 首轮启动、run budget 持久暂停、loop reset client 闭环、动态描述及收尾验收。 |
 | [Plan 15：项目运行数据 Web 展示](15-project-runtime-web-observability-plan.md) | in progress；W01–W06 已接线，可启动本地只读 Web；浏览器侧已拆为 workspace 包 `packages/collab-web`（§9.5）；真实 CLI/浏览器与规模证据已记录，W07 全仓门禁受阻。 |
 | [Plan 14：Agent Harness 既有执行闭环加固](14-agent-harness-reliability-hardening-plan.md) | H1–H5 已实现，完整 check/test/build 与确定性 HTTP/Owner、Built CLI/TTY 已通过；六例功能结果及人工/平台缺口单列，不新增产品功能。 |
