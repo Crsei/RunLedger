@@ -238,6 +238,9 @@ describe("Plugin distribution disk contracts", () => {
 		expect(Value.Check(RunledgerPluginsRegistrySchema, { version: 1, plugins: { "sample-plugin@local": record }, settings: {} })).toBe(true);
 		expect(Value.Check(RunledgerPluginsRegistrySchema, { version: 1, plugins: { "sample-plugin@local": { ...record, enabledFeatures: "all" } }, settings: {} })).toBe(false);
 		expect(Value.Check(RunledgerPluginsRegistrySchema, { version: 1, plugins: { "sample-plugin@local": { ...record, unknown: 1 } }, settings: {} })).toBe(false);
+		// link 安装不是 marketplace source：source 可省略，本地目录记在 runledger 增量字段。
+		const { source: _source, ...linked } = record;
+		expect(Value.Check(RunledgerPluginsRegistrySchema, { version: 1, plugins: { "dev-plugin": { ...linked, runledgerLinkedPath: "/home/user/dev-plugin" } }, settings: {} })).toBe(true);
 	});
 
 	it("parses npm sources but marks them unsupported, never silently rerouted", () => {

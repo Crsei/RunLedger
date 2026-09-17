@@ -240,8 +240,11 @@ export const RunledgerPluginRecordSchema = Type.Object(
 		scope: ExtensionDiskScopeSchema,
 		enabled: Type.Boolean(),
 		enabledFeatures: ExtensionEnabledFeaturesSchema,
-		source: MarketplacePluginSourceSchema,
+		/** marketplace/catalog 安装时的来源；`link` 安装省略（见 `runledgerLinkedPath`）。 */
+		source: Type.Optional(MarketplacePluginSourceSchema),
 		marketplace: Type.Optional(ExtensionMarketplaceNameSchema),
+		/** RunLedger 增量:`link` 安装指向的本地目录；marketplace 安装省略。 */
+		runledgerLinkedPath: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
 		installedAt: ExtensionTimestampSchema,
 		lastUpdated: ExtensionTimestampSchema,
 		gitCommitSha: Type.Optional(Type.String({ minLength: 7, maxLength: 64, pattern: "^[0-9a-f]+$" })),

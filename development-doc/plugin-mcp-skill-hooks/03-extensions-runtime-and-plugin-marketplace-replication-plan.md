@@ -1,6 +1,6 @@
 # Extensions 运行时与 Plugin 分发/Marketplace 完整复刻计划
 
-> 状态:**P4 完成,进入 P5**。P0 契约、P1 host 进程与协议骨架、P2 工具准入与作者子路径、P3 事件投影与桥、P4 运行时动作与回执均已交付;composition root 接线随 P5 的安装产物一起落地;P5–P7 未开始。
+> 状态:**P5 进行中(安装内核已交付)**。P0–P4 已完成;P5 已交付受治理分发端口与 Node 适配器、source 解析、三分发账本、安装/卸载/链接/回滚与激活门禁;P5 剩余的 marketplace catalog、fetcher/manager、doctor、settings schema 与 composition root 接线,以及 P6/P7 未开始。
 > 基线日期:2026-09-17;RunLedger 基线为当前工作树 `rollback/before-composer-shape`(`git status` 含并发未提交改动,HEAD `2b046ef`;实施前必须重新核对)。
 > 参考基线:oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`(`packages/coding-agent` v18.1.17,本机 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/oh-my-pi`,工作树干净 0 dirty);下文 omp 行号以该工作树为准,仅为机制参考,不是 RunLedger 完成证据。
 > 适用范围:`src/extensions/**`、`src/runtime/{session-runtime,harness-profiles,protocol,contracts,tools,agent-loop}/**`、`src/security/**`、`src/storage/**`、`src/cli/**`、`src/tui/**`、`src/contracts/**` 与对应 `tests/**`。
@@ -12,6 +12,7 @@
 > 修订记录:2026-09-17 P2 部分收口。工具准入(保留名/跨扩展冲突/声明 capability/有界 schema)与 owner 侧 `setActiveTools` 语义落地;`runledger/extensions` 作者子路径发布。
 > 修订记录:2026-09-17 P3 收口。事件投影裁剪层与事件桥落地;host 侧改为逐 handler 记录 + `SessionEnd` 并行短预算;abort 传播;真实子进程端到端验证 PreToolUse 重写强制重新授权。
 > 修订记录:2026-09-17 P4 收口。owner 侧动作处理器与回执账本落地;逐动作形状校验、同 ID 重放不二次副作用、异体 conflict、不确定结果记 uncertain;真实子进程验证动作往返。
+> 修订记录:2026-09-17 P5 安装内核收口。受治理分发端口 + Node 适配器(写入 containment、bounded copyTree)、source 解析(npm 显式拒绝)、三分发账本(未知键 passthrough)、staging→digest→原子激活、卸载/链接/回滚、激活门禁。
 
 ## 0. 文档定位与执行规则
 
@@ -301,7 +302,10 @@ Session Owner(每 owned Session)
 | `src/extensions/events/bridge.ts` | 派发、结果合成、重新授权 |
 | `src/extensions/tools/admission.ts` | 扩展工具 → `AgentTool` 准入(provenance/approval/limits) |
 | `src/extensions/plugins/marketplace/{manager,registry,cache,fetcher,source-resolver,types}.ts` | 复刻 omp 的 catalog/registry/cache/resolver,受治理 fetch |
-| `src/extensions/plugins/installer.ts` | staging/校验/原子激活/卸载/回滚(与 omp `installer.ts` 无关,自研) |
+| `src/extensions/plugins/installer.ts` | staging/校验/原子激活/卸载/回滚(与 omp `installer.ts` 无关,自研)(P5 已落地) |
+| `src/extensions/plugins/distribution-port.ts`、`src/storage/extensions/distribution-storage.ts` | 分发的受治理文件系统端口与其 Node 适配器(P5 补充;原表未列) |
+| `src/extensions/plugins/activation.ts` | enable/trust/digest/host 状态的激活门禁(P5 补充;原表未列) |
+| `src/extensions/plugins/marketplace/source-resolver.ts`、`marketplace/registry.ts` | source 解析与三分发账本(P5 部分;`manager/fetcher/cache` 未开始) |
 | `src/extensions/plugins/settings-schema.ts` | plugin settings 校验(`validateSetting`/`parseSettingValue` 等价物) |
 | `src/extensions/plugins/doctor.ts` | doctor 检查项 |
 | `src/contracts/extensions/*` | 上述契约的 schema 与 consumer 测试入口 |
@@ -370,10 +374,13 @@ Session Owner(每 owned Session)
 - 未完成(转入 P5/P6 的接线):actor port 的**真实实现**必须由 composition root 提供(Session protocol + attempt barrier + durable receipt)。本阶段交付的是动作层的校验/幂等/投影边界与它的 port 契约,不是 port 的 Session 接线。
 - 证据:`tests/extensions/actions-handler.test.ts` 10 用例;`tests/extensions/host/host-process.test.ts` 新增真实子进程动作往返用例;合计 54 文件 / 330 用例通过。
 
-### P5 — 分发:安装、scope、激活
+### P5 — 分发:安装、scope、激活——**进行中**
 
 - RED:安装含 install script 的包必须失败;`./` 逃逸与超限包必须失败;切换 enable 而 trust 缺失时 host 不得启动;digest 变化后旧 receipt 变 stale。
 - DoD:`plugin install|uninstall|link|upgrade|doctor|features|config` 可用;staging→digest→原子激活;user/workspace scope 与遮蔽;`marketplaces.json`/install registry 磁盘契约与 Claude 兼容字段一致。
+- 已完成:`distribution-port.ts` + `src/storage/extensions/distribution-storage.ts`(所有变更操作 containment、bounded `copyTree`、同设备 rename);`marketplace/source-resolver.ts`(相对源 containment、git 简写、npm 显式拒绝、install spec/feature 语法);`marketplace/registry.ts`(三分发账本、未知顶层键 passthrough、损坏 fail closed、scope 遮蔽);`installer.ts`(staging→digest→原子激活、lifecycle script 拒绝、digest 不匹配拒绝、版本保留与显式回滚、卸载、link);`activation.ts`(enabled + trusted + digest 一致 + 有 entrypoint + host 未 failed 才允许启动)。
+- 未完成:marketplace `catalog`/`fetcher`/`cache`/`manager`、`doctor.ts`、`settings-schema.ts`、`upgrade` 命令语义,以及把这些接到 `extension-composition.ts` 的 composition root 接线(§6.3 串行窗口)。
+- 证据:`tests/extensions/distribution.test.ts` 20 用例(真实临时目录,无网络);`tests/runtime-contracts/extensions-contracts.test.ts` 增加 link 记录用例;合计 55 文件 / 350 用例通过。
 
 ### P6 — CLI/TUI 与 Marketplace
 
@@ -511,7 +518,7 @@ git diff --check
 | P2 注册面与工具准入 | **partial** | 工具准入 `src/extensions/tools/admission.ts`(10 用例通过)与 `runledger/extensions` 子路径已交付;composition root 接线与 `extension.host.inspect` 查询待 P3(串行窗口 + 当前工作树并发占用)|
 | P3 事件桥 | **done** | `src/extensions/events/**`;319 用例通过(含真实子进程的 PreToolUse 重写重新授权与 `SessionEnd` 并行证据);`tsc -p tsconfig.json`/`tsconfig.tests.json`、`check:current-format`、`check:runtime-boundaries`、`check:package-boundaries` 通过 |
 | P4 运行时动作 | **done**(动作层) | `src/extensions/actions/**`;330 用例通过(含真实子进程动作往返与回执);actor port 的 Session 接线待 P5/P6;`tsc`(src/tests)、`check:current-format`、`test:inventory` 通过 |
-| P5 分发:安装/scope/激活 | planned | — |
+| P5 分发:安装/scope/激活 | **partial** | 安装内核与 activation 门禁已交付(`tests/extensions/distribution.test.ts` 20 用例);marketplace catalog/fetcher/manager、doctor、settings schema、composition 接线未完成 |
 | P6 CLI/TUI 与 Marketplace | planned | — |
 | P7 加固与真实 smoke | planned | — |
 
@@ -524,5 +531,6 @@ git diff --check
 - **P3 期间修复的本计划缺陷**:host 事件回执原先只回 `{result}` 且读循环等待粒度为 250ms,使事件往返附加最多 250ms 延迟;现改为逐 handler 记录 + 50ms 读粒度(控制通道是延迟敏感路径,与 Hook/MCP 的 500ms 轮询不同)。
 - 2026-09-17 P4 收口:动作层落地。每个动作先做严格形状校验(未知字段即拒绝、未知动作 `unsupported_action`),再交给注入的 actor port;`set-active-tools` 只能选 owner 已准入的名字;`set-model` 的凭据解析完全在 owner 侧,port 返回失败时扩展得到失败而非“看似成功”。回执按 `(generation, action, requestId)` 记账:重放命中同一回执、异体是 conflict、port 抛错记 `uncertain_outcome` 且不重试,且错误文本不泄漏路径或凭据。验证:`npx vitest run tests/extensions/ tests/runtime-contracts/` 54 文件 330 用例通过;真实子进程用例证明动作帧经 owner 处理器落到 actor port 并把回执作为 middleware 结果返回;`tsc`(src 与 tests)、`check:current-format`、`test:inventory` 通过。
 - 2026-09-17 全量门禁(覆盖 P0–P4):共享工作树恢复一致后 `npm run check` **exit 0** —— `check:current-format`、`check:storage-boundaries`、`check:runtime-boundaries`、`check:contract-consumers`、`check:web-contracts`、`check:web`、`check:execution-boundaries`、`check:platform-boundaries`、`check:tui-boundaries`、`check:session-owner-boundaries`、`check:syntax-highlighter`(12 passed)、`check:bash-ast-assets`、`check:package-boundaries`、`check:consumers`(699 consumers / 0 diagnostics)与 `tsc -p tsconfig.json` 全部通过。`npm test` 的 fast 桶 79/80 文件通过(543/544 用例);唯一失败是**既有缺陷** `tests/glob.test.ts` 的「`*.ts` 单段不递归」,已确认在 `2b046ef`(本计划任何改动之前)即失败,未顺带修。
+- 2026-09-17 P5 安装内核:受治理分发端口与 Node 适配器;所有变更操作(含 symlink 目标与 rename 目标父目录)重新校验 containment;`copyTree` 有界且不解引用 symlink;安装走 staging→digest→同设备原子激活,失败即清 staging;声明 `preinstall|install|postinstall|prepare|publish` 等 lifecycle script 的包**直接拒绝**(不靠“恰好没执行”);catalog 声明的 digest 与实际不符即拒绝;升级保留旧版本目录,回滚是显式命令且目录缺失时拒绝;`link` 只记录本地路径,不伪造 marketplace source,也不授予启用。验证:`npx vitest run tests/extensions/ tests/runtime-contracts/` 55 文件 350 用例通过;`tsc`(src 与 tests)、`check:current-format`、`check:runtime-boundaries`、`test:inventory` 通过。
 - **本阶段验证阻塞(历史记录,已解除)**:共享工作树 `rollback/before-composer-shape` 同时存在另一专项(P15 Web 可观测性)的未提交改动,该改动删除了 `src/contracts/web/` 但 `src/contracts/index.ts` 与 `src/web/**` 仍 import 它,导致 `tests/cli/**` 因 `ERR_MODULE_NOT_FOUND` 失败(P15 随后自行收敛,`tsc -p tsconfig.json` 已恢复 0 错误)。全量 `npm run check` 目前在 `check:consumers` 的 `check-typecheck-coverage` 失败:8 条 `overlapping_package_consumer` 指向 P15 新增的 `packages/collab-web/**` 被 `tsconfig.json` 与 `tsconfig.contracts.json` 重复覆盖,与本计划无关。`tests/extensions/**` 与 `tests/runtime-contracts/**` 全部通过。另有既有缺陷(与本计划无关,单独记录、未顺带修):`tests/glob.test.ts`「`*.ts` 单段不递归」在 `2b046ef` 上即失败,glob 工具对单段模式仍返回 `src/x.ts`。本阶段的 `npm run check`/`npm test` 全量门禁因此在共享工作树恢复一致前无法作为通过证据。
 - 2026-09-17 P1 收口:host 协议 JSONL 编解码(半包/字节上限/深度/版本/generation/未知 kind 全部分开失败);注册表校验(重复名拒绝、白名单订阅、上限、identity digest 与 pid/generation/到达顺序无关);扩展侧 API 的注册期/运行期分离(`ExtensionRuntimeNotInitializedError`);owner 侧 client 的握手、事件请求/回执、动作帧应答与 fail-closed 协议违规处理;channel 只经既有 governed managed process port 创建进程;supervisor 的 generation 生命周期、idle 边界与 last-known-good 回退。验证:`npx vitest run tests/extensions/host/` 38 passed(其中 4 例走真实 Node 子进程:握手后回收、工厂抛错只 failed 该 generation、裸 `setInterval` 抛错后 owner/session 存活并可恢复、真实注册表投影);`tsc --noEmit -p tsconfig.json` 与 `-p tsconfig.tests.json` 通过;`npm run check:current-format`、`npm run check:runtime-boundaries` 通过。行为影响:新增模块尚未接入任何 composition root,生产路径行为不变。
