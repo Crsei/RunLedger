@@ -79,6 +79,37 @@ export interface ProjectSettings {
 	plugins?: PluginSettingsValues;
 	/** marketplace 自动更新模式；只有 user 层拥有该 authority（D10）。 */
 	marketplace?: MarketplaceSettings;
+	/**
+	 * web 检索的 provider 顺序/排除、超时与 SearXNG 端点。user 层拥有 order 与
+	 * timeout 的 authority；workspace 层只能追加 exclude（收窄）。
+	 */
+	webSearch?: WebSearchSettings;
+}
+
+/**
+ * web 检索设置。
+ *
+ * `order` 里的 id 视为显式选择（走 `isExplicitlyAvailable`，因此 Exa/Parallel 这类
+ * 无凭据兜底仍可用）；未识别的 id 在解析时丢弃。`exclude` 只做排除，不能反过来
+ * 把未列出的 provider 关掉。
+ */
+export interface WebSearchSettings {
+	/** 优先 provider 列表；空表示使用内建顺序。 */
+	readonly order?: readonly string[];
+	/** 永不使用的 provider。 */
+	readonly exclude?: readonly string[];
+	/** 单次 provider 传输的硬超时（秒），上限 300。 */
+	readonly timeoutSeconds?: number;
+	readonly searxng?: {
+		readonly endpoint?: string;
+		readonly token?: string;
+		readonly basicUsername?: string;
+		readonly basicPassword?: string;
+		readonly engines?: readonly string[];
+		readonly categories?: readonly string[];
+		readonly language?: string;
+		readonly safesearch?: number;
+	};
 }
 
 /**

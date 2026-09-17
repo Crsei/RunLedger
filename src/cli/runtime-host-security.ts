@@ -810,13 +810,14 @@ function createGovernedNetwork(input: {
 	return {
 		request: async (request: NetworkRequest, signal?: AbortSignal): Promise<NetworkResponse> => {
 			const url = new URL(request.url);
-			const context = await input.authorize("WebFetch", [{ kind: "network", operation: "fetch", host: url.hostname, protocol: url.protocol === "http:" ? "http" : "https", ...(url.port ? { port: Number(url.port) } : {}) }], request, undefined, signal);
+			const context = await input.authorize(request.principal ?? "WebFetch", [{ kind: "network", operation: "fetch", host: url.hostname, protocol: url.protocol === "http:" ? "http" : "https", ...(url.port ? { port: Number(url.port) } : {}) }], request, undefined, signal);
 			return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.network.request({
 				url: request.url,
 				method: request.method,
 				headers: request.headers,
 				...(request.body === undefined ? {} : { body: request.body }),
 				maxBytes: request.maxBytes,
+				...(request.principal === undefined ? {} : { principal: request.principal }),
 			}, signal)));
 		},
 	};

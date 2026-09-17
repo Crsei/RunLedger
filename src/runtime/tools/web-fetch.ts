@@ -3,17 +3,17 @@
  *
  * 对齐 claude-code-bun docs/tools/web-fetch-tool.mdx:
  *   - 输入 url (HTTPS upgrade) + prompt
- *   - 服务端通过 fetch → 转 markdown → 拿到正文后用模型按 prompt 提取
+ *   - 抓取 → 站点特化提取或 HTML→Markdown → 得到正文后交给调用方按 prompt 使用
  *   - 失败/超时 → throw,agent-loop 兜底转 isError
  *
- * 本期实现:
- *   - 仅做原生 fetch + 最 trivial 的 markdown 转换(剥 HTML 标签);
- *   - 不在工具里跑 LLM,prompt 直接给到调用方自己决定怎么用。
- *   - 服务端再大消息处理交上限调用方;工具给出 prompt 与 raw-markdown 给调用方。
+ * 抓取管线（对齐 oh-my-pi `tools/fetch.ts` 的 renderUrl 前两步）:
+ *   1. 顺序尝试站点特化 handler（github/npm/pypi/arxiv/… 共 74 个），首个命中即返回；
+ *   2. 未命中则通用抓取 + charset 解码 + Turndown(GFM) 转 Markdown。
  *
  * 安全:
  *   - HTTP upgrade to HTTPS
- *   - 跨 host redirect 直接 throw,要求调用方再发(对齐 claude-docs)
+ *   - 出站一律经受治 `Network` port（`createWebSearchFetch`），重定向由该层处理并
+ *     拒绝跨 host/port 跳转
  *   - 大响应截断到 maxBytes(默认 2MB)
  */
 
@@ -22,6 +22,15 @@ import type { Static } from "typebox";
 import { localNetwork } from "./local-defaults.ts";
 import type { Network } from "../execution-env.ts";
 import type { AgentTool } from "../types.ts";
+import {
+  unavailableWebSearchCredentials,
+  type WebSearchCredentialPort,
+} from "../../websource/credentials.ts";
+import type { WebSearchSettings } from "../../websource/settings.ts";
+import { createWebSearchFetch, WebSourceNetworkError } from "../../websource/transport.ts";
+import type { RenderResult, ScraperContext } from "../../websource/scrapers/types.ts";
+import { htmlToBasicMarkdown, loadPage } from "../../websource/scrapers/types.ts";
+import { handleSpecialUrls } from "../../websource/scrapers/dispatch.ts";
 
 export const webFetchSchema = Type.Object({
   url: Type.String({ description: "目标 URL;HTTP 自动升级 HTTPS" }),
@@ -38,27 +47,29 @@ export interface WebFetchDetails {
   fetchedBytes: number;
   truncated: boolean;
   redirectUrl?: string;
+  /** 产生正文的方式:`<handler>` 为站点特化提取,其余是通用管线。 */
+  method?: string;
 }
 
 const DEFAULT_MAX = 2_000_000;
+/** 站点 handler 的超时（秒）；与上游 fetch 工具的默认预算一致。 */
+const HANDLER_TIMEOUT_SECONDS = 20;
 
 export interface WebFetchToolOptions {
   readonly network?: Network;
-}
-
-/** 极简 HTML → 平文:去 tag,decode 几个 entity,其余原样。 */
-function htmlToText(html: string): string {
-  // 折叠非 <script>/<style> 节省 tokens
-  let s = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-  s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
-  s = s.replace(/<[^>]+>/g, "");
-  s = s.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
-  s = s.replace(/&nbsp;/g, " ").replace(/"/g, '"').replace(/&#39;/g, "'");
-  return s.trim();
+  /** 站点 handler 需要的凭据（例如 GitHub API token）；缺省视为无凭据。 */
+  readonly credentials?: WebSearchCredentialPort;
+  readonly settings?: WebSearchSettings;
 }
 
 export function createWebFetchTool(options: WebFetchToolOptions = {}): AgentTool<typeof webFetchSchema, WebFetchDetails> {
 	const network = options.network ?? localNetwork();
+	const fetch = createWebSearchFetch({ network, principal: "WebFetch" });
+	const context: ScraperContext = {
+		fetch,
+		credentials: options.credentials ?? unavailableWebSearchCredentials(),
+		...(options.settings === undefined ? {} : { settings: options.settings }),
+	};
   return {
     name: "WebFetch",
     label: "WebFetch",
@@ -85,44 +96,72 @@ export function createWebFetchTool(options: WebFetchToolOptions = {}): AgentTool
         url = new URL(input.replace(/^http:/i, "https:"));
       }
       const maxBytes = params.maxBytes ?? DEFAULT_MAX;
-	  const r = await network.request({
-	    url: url.toString(),
-	    method: "GET",
-	    headers: { "user-agent": "RunLedger/0.0.1 (+webfetch)" },
-	    maxBytes,
-	  }, signal);
-	  if (r.status >= 300 && r.status < 400) {
-        // redirect:跨 host 报错
-	    const loc = r.headers["location"] ?? r.headers["Location"];
-        if (loc) {
-          try {
-            const locUrl = new URL(loc, url.toString());
-            if (locUrl.hostname !== url.hostname) {
-              throw new Error(`WebFetch: cross-host redirect ${url.hostname} → ${locUrl.hostname}`);
-            }
-          } catch (e) {
-            if (e instanceof Error && e.message.startsWith("WebFetch:")) throw e;
-            // loc URL 解析失败,继续作为普通 redirect
-          }
+      const target = url.toString();
+
+      let rendered: RenderResult | undefined;
+      try {
+        rendered = await handleSpecialUrls(target, HANDLER_TIMEOUT_SECONDS, context, signal) ?? undefined;
+      } catch (error) {
+        throw toWebFetchError(error);
+      }
+
+      if (rendered === undefined) {
+        const page = await loadPage(context, target, {
+          timeout: HANDLER_TIMEOUT_SECONDS,
+          ...(signal === undefined ? {} : { signal }),
+        }).catch((error: unknown) => {
+          throw toWebFetchError(error);
+        });
+        if (!page.ok) {
+          // loadPage 把传输层错误降级成字符串,因此这里也要剥掉来源前缀,
+          // 让对外文案与跨站重定向一致(调用方按 `WebFetch: ...` 解析)。
+          const detail = stripSourcePrefix(page.error ?? `HTTP ${page.status ?? "error"}`);
+          throw new Error(`WebFetch: ${detail} for ${target}`);
         }
+        const body = page.contentType.includes("html") || page.contentType === ""
+          ? await htmlToBasicMarkdown(page.content)
+          : page.content;
+        rendered = {
+          url: target,
+          finalUrl: page.finalUrl,
+          contentType: page.contentType,
+          method: page.contentType.includes("html") ? "markdown" : "text",
+          content: body,
+          fetchedAt: new Date().toISOString(),
+          truncated: page.truncated === true,
+          notes: [],
+        };
       }
-	  const contentType = r.headers["content-type"] ?? r.headers["Content-Type"] ?? "";
-	  const fetched = r.body;
-      const truncated = fetched.length > maxBytes;
+
+      const fetched = Buffer.from(rendered.content, "utf8");
+      const truncated = fetched.byteLength > maxBytes;
       const slice = truncated ? fetched.subarray(0, maxBytes) : fetched;
-      let text = slice.toString("utf8");
-      if (contentType.includes("html")) {
-        text = htmlToText(text);
-      }
-      const promptSummary = `\n\n[fetched ${fetched.length} bytes${truncated ? ", truncated" : ""}]\n[prompt: ${params.prompt}]`;
+      const text = slice.toString("utf8");
+      const promptSummary = `\n\n[fetched ${fetched.byteLength} bytes via ${rendered.method}${truncated ? ", truncated" : ""}]\n[prompt: ${params.prompt}]`;
       return {
         content: [{ type: "text", text: text + promptSummary }],
         details: {
-          url: url.toString(),
-          fetchedBytes: fetched.length,
+          url: target,
+          fetchedBytes: fetched.byteLength,
           truncated,
+          method: rendered.method,
         },
       };
     },
   };
+}
+
+/**
+ * 把传输层的跨站重定向拒绝还原成 WebFetch 的既有错误文案。
+ *
+ * 该错误的语义（fail closed、要求调用方重发）没变,只是产生它的层从工具本体
+ * 移到了受治传输层;对外文案保持一致,避免调用方/测试依赖的契约漂移。
+ */
+function toWebFetchError(error: unknown): unknown {
+	if (error instanceof WebSourceNetworkError) return new Error(`WebFetch: ${stripSourcePrefix(error.message)}`);
+	return error;
+}
+
+function stripSourcePrefix(message: string): string {
+	return message.replace(/^websource: /, "");
 }

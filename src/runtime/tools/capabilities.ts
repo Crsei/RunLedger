@@ -22,7 +22,7 @@ export function builtinCapabilityClaims(toolName: string): readonly CapabilityCl
 			? "workspace_write"
 			: PROCESS_TOOLS.has(toolName)
 				? "process"
-				: toolName === "WebFetch" ? "network" : undefined;
+				: toolName === "WebFetch" || toolName === "web_search" ? "network" : undefined;
 	if (name === undefined) return undefined;
 	const resourceKind = name === "repository_read" || name === "workspace_write" ? "filesystem" : name === "network" ? "network" : "process";
 	return [{

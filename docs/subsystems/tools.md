@@ -14,7 +14,7 @@
 
 ## Production tool composition
 
-`createStdlibTools()` 可以构造 read/write/edit/multi-edit/bash/grep/glob/ls/web-fetch/todo、可选 permission/process tools 以及兼容工具；`todo` 经注入的 `ledger` 选项持久化。标准 Session domain 强制传入 `requireExecutionEnv: true`，再显式排除 demo/placeholder 工具，并叠加 LSP、Extension Skill、MCP 和可选 bounded-subagent tool。
+`createStdlibTools()` 可以构造 read/write/edit/multi-edit/bash/grep/glob/ls/web-fetch/todo、可选 permission/process tools 以及兼容工具；`todo` 经注入的 `ledger` 选项持久化。`web_search` 与 `WebFetch` 一样需要注入 governed `ExecutionEnv`（缺省不注册，避免暴露一个必然失败的工具），其 provider 凭据由 composition 通过 `webSearch.credentials` 注入。标准 Session domain 强制传入 `requireExecutionEnv: true`，再显式排除 demo/placeholder 工具，并叠加 LSP、Extension Skill、MCP 和可选 bounded-subagent tool。
 
 生产工具集由 [`productionSessionTools()`](../../src/runtime/session-runtime/domain.ts)与 Session extension composition 共同决定。新增工具文件但不在这里组合，不会让标准 CLI 自动获得该能力。
 
@@ -29,6 +29,18 @@
 Read/grep/glob/ls 经 governed filesystem/shell 读取（`glob` 的 `.gitignore` 读取也走同一 governed fs port）；write/edit/multi-edit 经 governed filesystem 修改；WebFetch 经 governed network；Bash 与 process tools 经 governed shell/managed process；`todo` 写入注入的 `LedgerSink`。工具不得在 execute 内另开 raw filesystem、fetch 或 child process 作为 fallback。
 
 `read` 接受内联行选择器（`file:A-B`、`file:-N`、多段、`:raw` 复合）。**未实现的模式**（`:conflicts`、`:img`）与非法选择器一律报错，而不是静默放宽成整文件读取。
+
+### web 检索与站点抓取（`src/websource/`）
+
+`src/websource/` 是从 oh-my-pi `packages/coding-agent/src/web`（+`src/exa`）移植的库层，包含检索管线、站点 handler 与共享 API client。它只依赖注入的 port，不持有全局设置或凭据单例，也不得直接出站：
+
+- `transport.ts` 把受治 `Network` port 适配成 `fetch` 形状，并在每个请求上声明 `principal`（审计/审批归属到真实工具，而不是固定 `WebFetch`）；重定向由该层跟随，只允许同 host+port 跳转，跨站 fail closed。
+- `credentials.ts` 是 provider 唯一的凭据来源（`auth.json` 按 id 分条 + 白名单环境变量），由 `src/storage/web-search-credentials.ts` 在 composition 期装配；库层内的 `process.env` 直读由静态检查覆盖。
+- `settings.ts` 接收设置快照；`ProjectSettings.webSearch` 经 `src/storage/web-search-settings.ts` 校验并丢弃无法识别的 provider id。
+
+`web_search` 用 `network` capability claim，provider 链与结果约束后处理在 `search/execute.ts`；`WebFetch` 复用同一 transport 与站点 handler 派发（`scrapers/dispatch.ts`），未命中 handler 时走通用抓取 + Turndown(GFM) 转 Markdown。
+
+**未移植**：Tier C 的 5 个 LLM 介导 provider（`anthropic`/`codex`/`gemini`/`perplexity`/`xai`，依赖上游 stream 与 OAuth 语义）、`youtube` 抓取（yt-dlp）、`markit` 文档转换、浏览器/puppeteer 兜底。这些 id 保留在设置项中，显式选中时返回 typed 不可用错误，自动链跳过它们。
 
 ## 新增 model-facing tool 的准入清单
 

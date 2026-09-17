@@ -186,6 +186,7 @@ function digestNetwork(request: Parameters<NonNullable<ExecutionEnv["network"]>[
 		headersDigest: runtimeDigest(request.headers).digest,
 		bodyDigest: runtimeDigest(body).digest,
 		maxBytes: request.maxBytes,
+		principal: request.principal ?? "WebFetch",
 	});
 }
 

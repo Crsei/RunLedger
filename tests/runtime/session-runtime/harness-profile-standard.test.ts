@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { buildSystemPrompt, productionSessionTools } from "../../../src/runtime/session-runtime/domain.ts";
 import type { ExecutionEnv } from "../../../src/runtime/execution-env.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/canonical-json.ts";
+import { unavailableWebSearchCredentials } from "../../../src/websource/credentials.ts";
 
 const roots: string[] = [];
 
@@ -45,7 +46,10 @@ describe("standard@1 production characterization", () => {
 
 	it("pins the current governed base tool order and provider-facing schemas", () => {
 		const cwd = "/workspace/standard-characterization";
-		const tools = productionSessionTools(cwd, inertExecutionEnv(cwd));
+		// 与生产装配一致:web 检索端口注入时才出现 web_search。
+		const tools = productionSessionTools(cwd, inertExecutionEnv(cwd), undefined, undefined, undefined, {
+			credentials: unavailableWebSearchCredentials(),
+		});
 		expect(tools.map((tool) => tool.name)).toEqual([
 			"read",
 			"write",
@@ -56,12 +60,13 @@ describe("standard@1 production characterization", () => {
 			"glob",
 			"ls",
 			"WebFetch",
+			"web_search",
 			"todo",
 		]);
 		expect(canonicalDigest(tools.map((tool) => ({
 			name: tool.name,
 			description: tool.description,
 			parameters: tool.parameters,
-		})))).toBe("b1a927fee83d3071ab06da810fc496c4f2fc65164eec0c5c7338ddbd76334dec");
+		})))).toBe("c3c366e1ee9729039e14c17027017ff984da4c90110d85a64acf8795cec7a0b5");
 	});
 });

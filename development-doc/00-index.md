@@ -78,7 +78,7 @@
 | Usage Status Line | [`plan/08-usage-status-line-replication-plan.md`](plan/08-usage-status-line-replication-plan.md) | 参考 oh-my-pi 在输入框下方展示累计 input/output/cache/cost、cache hit、output tok/s 与 context usage；复用 RunLedger 多行结构化 OpenTUI footer | 本文 §0 目标与结论、§3 冻结合同、§7 状态表 |
 | Plugin / Tree-sitter Bash AST | [`plugin/01-tree-sitter-bash-ast-port-plan.md`](plugin/01-tree-sitter-bash-ast-port-plan.md) | Tree-sitter Bash AST 安全分类移植：WASM worker、allowlist walker、语义规则、fail-closed 授权与 rollout | B0–B4 `implemented`；B5 `planned`，Node/Bun、pack、PTY、审计与 human gate 仍按计划闭合 |
 | 版本升级与发布设施 | [`release/README.md`](release/README.md)、[`release/01 实施计划`](release/01-release-and-upgrade-infrastructure-plan.md) | 版本真相与发布单元、清洁构建与打包边界、发布产物与完整性、安装形态识别、`runledger update` 委托升级、启动升级提示 | `planned`；现状实测基线与阻塞项见 [`release/00`](release/00-release-baseline.md)，阶段状态以 `release/01` §8 为唯一来源 |
-| Web 检索与站点抓取（omp `web/` 移植） | [`plan/18 omp web 能力移植计划`](plan/18-omp-web-capability-port-plan.md) | 以 parity 00 §3 #6/#7 为口径移植 `web/search`（19 provider + 查询管线）、`web/scrapers`（站点 handler）、共享 API client 与 vendored DOM/turndown；新增 transport / 凭据 / settings 三条 port，并裁定出站 principal 归属 | `planned`；范围、八类差异、阶段 P0–P6、冻结物清单与证据方式见本文 §0、§1.3、§4、§7、§8 |
+| Web 检索与站点抓取（omp `web/` 移植） | [`plan/18 omp web 能力移植计划`](plan/18-omp-web-capability-port-plan.md) | 从 oh-my-pi `packages/coding-agent/src/web` 移植检索管线、19 个 provider、站点 handler、共享 API client 与 vendored DOM/turndown 到 `src/websource/`；新增 transport / 凭据 / settings 三条注入式 port 与 `NetworkRequest.principal` | `implemented`；落地结果、验证证据与未闭合缺口（Tier C、外部真实检索、PDF 全文、浏览器兜底）见该文 §11 |
 
 ## 2026-08-04 当前实现批次
 

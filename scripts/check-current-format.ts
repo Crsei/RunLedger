@@ -38,6 +38,13 @@ const EXTERNAL_VERSION_ALLOWLIST: readonly RegExp[] = [
 	// 权威适配计划保留上游版本标签,不属于 RunLedger 运行时代际标记。
 	/^development-doc\/plan\/04-lsp-server-adaptation-plan\.md$/,
 	/^development-doc\/plan\/07-idle-recap-replication-plan\.md$/,
+	// omp web 移植计划记录上游 API/模块版本号。
+	/^development-doc\/plan\/18-omp-web-capability-port-plan\.md$/,
+	// websource 是从 oh-my-pi 移植的第三方 API 客户端树(与 src/api、src/providers 同类):
+	// 其中的 `V1`/`v2`/`v3` 是 Kagi/NuGet/GitHub/Sourcegraph 等外部协议版本,是输入事实,
+	// 不是 RunLedger 的内部代际标记。测试里的检索查询 fixture 同理。
+	/^src\/websource\//,
+	/^tests\/websource\//,
 ];
 
 const MARKER_PATTERNS: readonly [RegExp, string][] = [

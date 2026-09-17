@@ -19,6 +19,18 @@ import { createGrepTool } from "../src/runtime/tools/grep.ts";
 import { createGlobTool } from "../src/runtime/tools/glob.ts";
 import { createLsTool } from "../src/runtime/tools/ls.ts";
 import { createStdlibTools, stdlibTools } from "../src/runtime/tools/index.ts";
+import { unavailableWebSearchCredentials } from "../src/websource/credentials.ts";
+import type { ExecutionEnv } from "../src/runtime/execution-env.ts";
+
+/** 只用于装配期判定:任何真实调用都会抛出,确保测试不触碰真实 I/O。 */
+function inertExecutionEnv(cwd: string): ExecutionEnv {
+  const unavailable = async (): Promise<never> => { throw new Error("not executed by stdlib registration test"); };
+  return {
+    cwd,
+    fs: { readFile: unavailable, writeFile: unavailable, stat: unavailable, readdir: unavailable, mkdir: unavailable, rm: unavailable, rename: unavailable },
+    shell: { exec: unavailable },
+  };
+}
 
 describe("stdlib tools (cross-platform)", () => {
   let dir: string;
@@ -439,6 +451,22 @@ describe("stdlib tools (cross-platform)", () => {
     expect(r.has("NotebookEdit")).toBe(true);
     expect(r.has("echo")).toBe(true);
     expect(r.has("nonexistent")).toBe(false);
+  });
+
+  it("createStdlibTools: 注入 webSearch 且提供 executionEnv 时才注册 web_search", () => {
+    // 未接线(缺端口)时不注册:否则模型会看到一个必然失败的工具。
+    expect(createStdlibTools(dir).has("web_search")).toBe(false);
+    const env = inertExecutionEnv(dir);
+    const withoutPorts = createStdlibTools(dir, { executionEnv: env });
+    expect(withoutPorts.has("web_search")).toBe(false);
+    const withPorts = createStdlibTools(dir, {
+      executionEnv: env,
+      webSearch: { credentials: unavailableWebSearchCredentials() },
+    });
+    expect(withPorts.has("web_search")).toBe(true);
+    expect(withPorts.size).toBe(14);
+    // 出站工具的 capability claim 必须为 network,否则 Plan Mode 会按未知效果拒绝。
+    expect(withPorts.get("web_search")?.capabilityClaims?.map((claim) => claim.name)).toEqual(["network"]);
   });
 
   it("stdlibTools helper: 返回 AgentTool[]", () => {

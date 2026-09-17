@@ -181,6 +181,7 @@ export const DEFAULT_TEST_EXECUTION_BUCKET_RULES: readonly TestExecutionBucketRu
 		include: [
 			"tests/runtime/**/*.test.ts",
 			"tests/runtime-contracts/**/*.test.ts",
+			"tests/websource/**/*.test.ts",
 		],
 	},
 ];

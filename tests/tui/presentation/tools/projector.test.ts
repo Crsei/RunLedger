@@ -44,6 +44,8 @@ describe("B2 safe tool projector", () => {
 			bash: "shell", grep: "grep", glob: "glob", ls: "ls", todo: "plan",
 			// 历史调用名:事件流带旧名,但展示与它实际执行的 glob 一致。
 			find: "glob",
+			// web 检索:查询词进 chip 与时间线标题行,不在 body 回显结果。
+			web_search: "websearch",
 			// 计划模式工具与扩展/子代理工具:保持 generic（无专用布局,但已显式决定）。
 			plan: "plan", plan_read: "generic", plan_write: "generic",
 			enter_plan_mode: "generic", exit_plan_mode: "generic",

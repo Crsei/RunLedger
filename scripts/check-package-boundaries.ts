@@ -41,6 +41,16 @@ export function scanPackageBoundarySources(sources: ReadonlyMap<string, string>)
 		if (edge.from.startsWith("src/contracts/") && !edge.to.startsWith("src/contracts/") && edge.to !== "typebox") problems.add(`contract-dependency: ${edge.from} -> ${edge.to}`);
 		if (edge.value && edge.from.startsWith("src/tui/") && edge.from !== "src/tui/index.ts" && edge.to === "src/tui/index.ts") problems.add(`internal-barrel: ${edge.from}`);
 		if (/(?:^|\/)packages\//.test(edge.to)) problems.add(`deep-package-import: ${edge.from} -> ${edge.to}`);
+		// websource 是库层(与 lsp 同款):允许 runtime 的**类型**契约(工具/执行环境),
+		// 但不得反向依赖 TUI/CLI/session-runtime 的装配与展示,也不得引用 runtime 的**值**
+		// (否则库层与出站治理/装配互相纠缠)。
+		if (edge.from.startsWith("src/websource/") &&
+			(edge.to.startsWith("src/tui/") || edge.to.startsWith("src/cli/") || edge.to.startsWith("src/runtime/session-runtime/"))) {
+			problems.add(`websource-layer: ${edge.from} -> ${edge.to}`);
+		}
+		if (edge.value && edge.from.startsWith("src/websource/") && edge.to.startsWith("src/runtime/")) {
+			problems.add(`websource-runtime-value: ${edge.from} -> ${edge.to}`);
+		}
 	}
 	const adjacency = new Map<string, string[]>();
 	for (const edge of edges) {

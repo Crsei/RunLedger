@@ -311,6 +311,7 @@ function inputLine(input: import("../presentation/tools/types.ts").SafeToolInput
 	if (input.kind === "edit") return `${input.path.text} · ${knownCount(input.editCount)} edit`;
 	if (input.kind === "write") return `${input.path.text} · ${knownCount(input.lineCount)} lines · ${knownCount(input.byteCount)} bytes`;
 	if (input.kind === "read") return input.path.text;
+	if (input.kind === "websearch") return input.query.text;
 	return input.path.text;
 }
 

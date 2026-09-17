@@ -42,6 +42,11 @@ export interface NetworkRequest {
   headers: Record<string, string>;
   body?: string | Buffer;
   maxBytes: number;
+  /**
+   * 触发该请求的工具名,供授权/审批/审计归属使用;缺省按 `WebFetch` 处理。
+   * 由 composition 在构造工具时写死,模型不可指定。
+   */
+  principal?: string;
 }
 
 /** Bounded network response returned by the Host policy broker. */

@@ -66,7 +66,9 @@ export const MULTI_AGENT_LEGACY_HELPER_ALLOWLIST: readonly string[] = [
 const BOUNDARY_PATTERNS: readonly [RegExp, ExecutionBoundaryViolation["kind"]][] = [
 	[/from [\"'](?:node:)?fs(?:\/promises)?[\"']/, "raw-fs"],
 	[/from [\"']node:child_process[\"']/, "raw-process"],
-	[/\bfetch\s*\(/, "raw-network"],
+	// 只认裸的全局 `fetch`;注入式通道(`params.fetch(` / `context.fetch(` /
+// `options.fetch(`)是受治 adapter 的正当调用面,不应被当成 raw-network 旁路。
+[/(?<![.\w])fetch\s*\(/, "raw-network"],
 ];
 
 /** 非 import 行上的 `localExecutionEnv(` 调用（工具文件里默认 ops 的唯一合法来源被 allowlist 豁免）。 */
@@ -157,7 +159,7 @@ function hasUngovernedMultiAgentStdlibFactory(relativeFile: string, source: stri
 
 export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViolation[] {
 	const violations: ExecutionBoundaryViolation[] = [];
-	const roots = ["src/runtime/tools", "src/security", "src/worktree", "src/extensions"];
+	const roots = ["src/runtime/tools", "src/security", "src/worktree", "src/extensions", "src/websource"];
 	for (const root of roots) {
 		for (const file of listTypeScriptFiles(join(repoRoot, root))) {
 			const source = readFileSync(file, "utf8");

@@ -1,10 +1,10 @@
 # oh-my-pi Web 能力移植计划（`web_search` 与站点抓取）
 
-> 状态：**planned**（未开工；P0 的两项裁定待确认，见 §0.3）。
+> 状态：**implemented（P0–P6 已落地，证据见 §11）**。§0.3 两项裁定已定（2026-09-18）：**D1 = `src/websource/`**；**D3 = Tier C 不纳入本期**。
 > 上游基线：`oh-my-pi` `packages/coding-agent/src/web/**`（116 文件）与 `src/exa/**`（3 文件），快照 `1c0303b1f2ec515cbf4b44a9a49d68a029531aac`（2026-09-17，`coding-agent` v18.2.4）。
 > 目标基线：RunLedger 工作树（本计划写作时的 HEAD）。
 > 缺口出处：[`parity/00-oh-my-pi-coding-agent-module-gap-report.md`](../parity/00-oh-my-pi-coding-agent-module-gap-report.md) §3 #6（`web/`）、§3 #7（`exa/`）、§8 建议优先级 P1「`web/`（至少 search provider 层）」。
-> 本文只描述**待实施方案**：不表示任何模块已通过运行时验收，也不改变现有 authority；实施时原地维护阶段证据。
+> 落地结果与未闭合缺口见 §11；§1–§10 保留为设计口径（实施中的偏差在 §11.3 逐条登记）。
 
 ---
 
@@ -34,10 +34,10 @@ RL 当前唯一的出站 URL 能力是 [`WebFetch`](../../src/runtime/tools/web-
 
 ### 0.3 需要裁定的两项
 
-| # | 问题 | 建议 | 影响面 |
+| # | 问题 | 裁定（2026-09-18） | 影响面 |
 |---|---|---|---|
-| **D1** | 新模块目录名 | `src/websource/`（`src/web/` 已被本地只读看板占用，不能复用） | 仅命名；P1 落地前可改 |
-| **D3** | Tier C（5 个 LLM 介导 provider：`anthropic`/`codex`/`gemini`/`perplexity`/`xai`）是否本期移植 | **延迟**。它们依赖 `@oh-my-pi/pi-ai` 的 stream helpers、`pi-catalog` 的 model identity/headers、OAuth access API 与 credential-origin 语义；RL 对应物在 `src/api/*`、`src/providers/*`、`src/auth/oauth/*`，属**重写**而非复制 | 决定 P3 工作量与「零配置可用」的 provider 数量 |
+| **D1** | 新模块目录名 | **`src/websource/`**（`src/web/` 已被本地只读看板占用，不能复用） | 仅命名 |
+| **D3** | Tier C（5 个 LLM 介导 provider：`anthropic`/`codex`/`gemini`/`perplexity`/`xai`）是否本期移植 | **不纳入本期**。它们依赖 `@oh-my-pi/pi-ai` 的 stream helpers、`pi-catalog` 的 model identity/headers、OAuth access API 与 credential-origin 语义；RL 对应物在 `src/api/*`、`src/providers/*`、`src/auth/oauth/*`，属**重写**而非复制。注册表按 §3 D5 保留 id 与选项、报 typed unavailable | 本期 provider 数 19；Tier C 留待独立专项 |
 
 其余裁定（D2/D4–D9）由本计划直接给出并说明理由，实施时按此执行；若要变更需在此节登记。
 
@@ -560,3 +560,47 @@ grep -rn "process.env\|Bun.env" $OMP/src/web --include='*.ts' | wc -l
 rg -n "principal|WebFetch" src/security/composition/governed-network.ts
 rg -n "roots = " scripts/check-execution-boundaries.ts
 ```
+
+---
+
+## 11. 落地结果与证据（2026-09-18）
+
+### 11.1 交付物
+
+| 层 | 落地内容 |
+|---|---|
+| 库层 | `src/websource/`（116 个上游文件 → 117 个移植文件）：`transport.ts`、`credentials.ts`、`settings.ts`、`internal/`（platform/abort/dom/turndown/mcp-rpc/retry）、`search/`（types/query/utils/provider/execute/tool/prompt + 19 个 provider）、`scrapers/`（types/utils/format/dispatch/index + 74 个 handler）、`exa/`、共享 client `firecrawl.ts`/`kagi.ts`/`parallel.ts` |
+| 治理接线 | `NetworkRequest.principal`（`execution-env.ts` → session/Host governed leaf → attempt digest）；`scripts/check-execution-boundaries.ts` 扫描 `src/websource`，并把 `raw-network` 模式收紧为「裸 `fetch(`」 |
+| 组合 | `src/storage/web-search-credentials.ts`（auth.json + 白名单 env）、`src/storage/web-search-settings.ts`、`StdlibToolsOptions.webSearch`、`productionSessionTools(...)` 第 6 参、`ProjectSettings.webSearch` |
+| 展示 | TUI `SafeToolRenderer` 新增 `websearch` + `projector.ts` 输入 metadata + `timeline/selectors.ts` 标题行；`packages/collab-web` 的 `web_search` 登记 |
+| 测试 | `tests/websource/**`（83 例：transport 10、query 36（上游用例原样移植）、provider-chain 18、tool 6、scrapers 13）+ 更新 4 个既有测试 |
+
+### 11.2 验证证据
+
+| 项 | 证据 |
+|---|---|
+| `npm run check` | 全部子门禁通过（含 `check:execution-boundaries`、`check:package-boundaries`、`check:consumers` 720 consumers / 0 diagnostics、`tsc -p tsconfig.json`）。**唯一失败项**是 `check:current-format` / `tests/runtime/current-format-boundary.test.ts`：命中另一任务的**未跟踪**文件 `development-doc/parity/00,01-*.md`（本计划落地前即存在），与本次改动无关 |
+| 测试 | `tests/websource` 83 例 + `stdlib-tools` / `tools-m4` / `plan-mode-tool-admission` / `harness-profile-standard` / `tui projector` 全绿；`tests/security/**` 39 文件 266 例全绿 |
+| `npm run build` | 通过；`dist/websource/**` 产出完整 |
+| 构建产物冒烟 | 用 `dist/websource/*` 驱动：`web_search` 经假受治 Network 返回格式化结果；`handleSpecialUrls` 命中 npm handler（`method: npm`）；未命中 URL 返回 `null` 并走 turndown（`# Hello` / `World`）；Network 收到的 principal 为 `web_search` 与 `WebFetch` 两类 |
+| 真实 CLI（标准 PATH，`~/.npm-global/bin/runledger` → 本仓库 `bin/runledger.js`） | 隔离 `RUNLEDGER_DIR` 下启动真实 TTY（tmux，140×40）：启动正常；提交首个 prompt 后 durable `harness.composed` receipt 记录 `standard@2` 的 **27 个工具**，其中包含 `web_search` 与 `WebFetch`；`--network deny` 下同样组成 27 个工具（策略在执行期由 governed leaf fail closed）。Esc → Ctrl+D 干净退出，会话与临时目录已清理 |
+
+### 11.3 与设计口径的偏差（实施中确认）
+
+| # | 设计写法 | 实际落地 | 原因 |
+|---|---|---|---|
+| 1 | §2.2 的 `ResponseLike`/`WebSearchFetch` 自建响应形状 | 直接用真实 `Response` | 受治 port 本来就缓冲整个 body，构造 `Response` 即可满足上游全部读取面（含 SSE reader），自建形状是多余的抽象 |
+| 2 | §3 D6 计划整体复制 `packages/utils/src/turndown/*` | 复制 4 个文件，但 `createTurndown` 只保留 web 需要的 GFM 装配 | 上游 `utils/turndown.ts` 的 `normalizeTablesHtml` 属 markit 文档路径，未移植 |
+| 3 | §2.1 计划 `scrapers/utils.ts` 删 `convertWithMarkit` | 已删；连带 `arxiv.ts` / `iacr.ts` 的 PDF 全文分支移除（`/pdf/` URL 现只返回 API 摘要） | markit 不在本期范围；这是**能力收窄**，恢复需先决策 PDF 转换依赖 |
+| 4 | §2.1 计划复制 `exa/mcp-client.ts` 全量 | 只保留检索路径消费的 `isSearchResponse` / `normalizeExaMcpPayload` | 上游其余部分是「从 MCP schema 动态生成 CustomTool」，依赖未移植的扩展面 |
+| 5 | §2.1 计划 `scrapers/types.ts` 保留 `Bun.Encoding` | 改为 `new TextDecoder(label as ...)` | `tsconfig` 的 `types: ["node"]` 下没有 Bun 命名空间 |
+| 6 | §3 D4 计划「注册表改静态 import」 | 已改，并把上游的**模块级全局** `setSearchProviderOrder`/`setExcludedSearchProviders` 改为 `resolveProviderCandidates({order, exclude})` 入参 | 全局可变状态会让同进程不同配置互相污染 |
+| 7 | §5 中「73 个 handler」 | 实际 74 个（去 `youtube.ts`） | 上游 `index.ts` 数组为 75 项 |
+
+### 11.4 未闭合项
+
+1. **Tier C 的 5 个 provider**（`anthropic`/`codex`/`gemini`/`perplexity`/`xai`）按裁定不纳入本期；`SEARCH_PROVIDER_OPTIONS` 保留其 id 与设置项，自动链跳过，显式选中返回 typed 不可用错误。
+2. **真实外部检索服务未验证**：本机无出网（`litellm` provider 连接失败、到 `raw.githubusercontent.com` 超时），因此**零配置引擎的抓取质量、凭据 provider 的响应映射、站点 handler 的真实页面结构**都只有离线 fixture 证据。反爬挑战、`Retry-After` 实测、真实 charset 页面均未在真实网络下验证。
+3. **PDF 全文能力收窄**（偏差 3）。
+4. **浏览器兜底未移植**：被 Cloudflare/JS 挑战的引擎（google/ecosia/mojeek/startpage/duckduckgo）会直接返回不可用，而不是升级到 headless 浏览器。
+5. 未跑 `npm test` 全量桶（只跑了 `test:runtime`、`test:security-storage` 与定向文件）。

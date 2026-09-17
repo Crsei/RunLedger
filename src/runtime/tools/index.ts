@@ -35,6 +35,9 @@ import { createGlobTool, type GlobToolOptions } from "./glob.ts";
 import { createLsTool, type LsToolOptions } from "./ls.ts";
 import { createTodoTool, type TodoToolOptions } from "./todo.ts";
 import { createWebFetchTool } from "./web-fetch.ts";
+import { createWebSearchTool } from "../../websource/search/tool.ts";
+import type { WebSearchCredentialPort } from "../../websource/credentials.ts";
+import type { WebSearchSettings } from "../../websource/settings.ts";
 import { createSkillTool } from "./skill.ts";
 import { createNotebookEditTool } from "./notebook-edit.ts";
 import { createProcessOutputTool } from "./process-output.ts";
@@ -44,6 +47,7 @@ import { createProcessStopTool } from "./process-stop.ts";
 import { createProcessResizeTool } from "./process-resize.ts";
 import type { ProcessToolClient } from "./process-tool-support.ts";
 import { withBuiltinCapabilityClaims } from "./capabilities.ts";
+import { createWebSearchFetch } from "../../websource/transport.ts";
 import { createRequestPermissionsTool, type RequestPermissionsPort } from "../../security/tools/request-permissions.ts";
 
 export interface StdlibToolsOptions {
@@ -58,6 +62,14 @@ export interface StdlibToolsOptions {
 	readonly permissionRequester?: RequestPermissionsPort;
 	/** todo 工具的持久化 sink;未注入时 todo 只在进程内维护状态。 */
 	readonly ledger?: import("../ledger/types.ts").LedgerSink;
+	/**
+	 * web 检索的旁路依赖。三者齐备时才注册 `web_search`;缺省不注册,使未接线的
+	 * 组合(以及 minimal/plan allowlist)不会暴露一个必然失败的工具。
+	 */
+	readonly webSearch?: {
+		readonly credentials: WebSearchCredentialPort;
+		readonly settings?: WebSearchSettings;
+	};
 }
 
 /**
@@ -88,7 +100,22 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
   register(createGrepTool(cwd, helperShell === undefined ? {} : { shell: helperShell }));
   register(createGlobTool(cwd, env === undefined ? {} : { operations: globOperations(env) }));
   register(createLsTool(cwd, env === undefined ? {} : { operations: lsOperations(env) }));
-  register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }));
+  const webSearchFetch = env === undefined ? undefined : createWebSearchFetch({
+    network: env.network ?? unavailableNetwork(),
+    principal: "web_search",
+  });
+  register(createWebFetchTool({
+    ...(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }),
+    ...(options.webSearch === undefined ? {} : { credentials: options.webSearch.credentials }),
+    ...(options.webSearch?.settings === undefined ? {} : { settings: options.webSearch.settings }),
+  }));
+  if (webSearchFetch !== undefined && options.webSearch !== undefined) {
+    register(createWebSearchTool({
+      fetch: webSearchFetch,
+      credentials: options.webSearch.credentials,
+      ...(options.webSearch.settings === undefined ? {} : { settings: options.webSearch.settings }),
+    }));
+  }
   register(createSkillTool(options.skillLoader === undefined ? {} : { loader: options.skillLoader }));
 	register(createTodoTool(options.ledger === undefined ? {} : { ledger: options.ledger }));
 	register(createNotebookEditTool());
@@ -198,6 +225,8 @@ export function stdlibTools(cwd: string = process.cwd()): AgentTool[] {
 }
 
 export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoTool };
+export { createWebSearchTool };
+export type { WebSearchCredentialPort, WebSearchSettings };
 export type { TodoToolOptions };
 export { createProcessOutputTool, createProcessWaitTool, createWriteStdinTool, createProcessStopTool, createProcessResizeTool };
 export { createRequestPermissionsTool } from "../../security/tools/request-permissions.ts";

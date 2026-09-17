@@ -6,6 +6,8 @@ import type { AgentContext, AgentTool, AgentToolCall, AssistantAgentMessage, Too
 import type { PlanModeState } from "../../src/runtime/modes/plan/types.ts";
 import { echoTool } from "../../src/runtime/tools/echo.ts";
 import { createStdlibTools } from "../../src/runtime/tools/index.ts";
+import type { ExecutionEnv } from "../../src/runtime/execution-env.ts";
+import { unavailableWebSearchCredentials } from "../../src/websource/credentials.ts";
 import { createRequestPermissionsTool } from "../../src/security/tools/request-permissions.ts";
 import { HostGovernedToolAuthorizationPolicy } from "../../src/security/integration/runtime-tool-authorization.ts";
 import { createSpawnAgentTool } from "../../src/runtime/agents/spawn-tool.ts";
@@ -65,6 +67,16 @@ function sessionOwnedTools(): readonly AgentTool[] {
 			ownerGeneration: 1,
 		}),
 	];
+}
+
+/** 只用于装配期判定:任何真实调用都会抛出。 */
+function inertExecutionEnv(cwd: string): ExecutionEnv {
+	const unavailable = async (): Promise<never> => { throw new Error("not executed by admission test"); };
+	return {
+		cwd,
+		fs: { readFile: unavailable, writeFile: unavailable, stat: unavailable, readdir: unavailable, mkdir: unavailable, rm: unavailable, rename: unavailable },
+		shell: { exec: unavailable },
+	};
 }
 
 describe("governed tool admission", () => {
@@ -133,10 +145,16 @@ describe("governed tool admission", () => {
 	});
 
 	it("publishes explicit Runtime capability claims for builtin tools", () => {
-		const tools = createStdlibTools("/tmp/runledger-plan-policy");
+		// web_search 与 WebFetch 同样在注入 ExecutionEnv 时才注册,因此这里按生产
+		// 装配方式构造。
+		const tools = createStdlibTools("/tmp/runledger-plan-policy", {
+			executionEnv: inertExecutionEnv("/tmp/runledger-plan-policy"),
+			webSearch: { credentials: unavailableWebSearchCredentials() },
+		});
 		expect(tools.get("read")?.capabilityClaims?.map((item) => item.name)).toEqual(["repository_read"]);
 		expect(tools.get("write")?.capabilityClaims?.map((item) => item.name)).toEqual(["workspace_write"]);
 		expect(tools.get("bash")?.capabilityClaims?.map((item) => item.name)).toEqual(["process"]);
 		expect(tools.get("WebFetch")?.capabilityClaims?.map((item) => item.name)).toEqual(["network"]);
+		expect(tools.get("web_search")?.capabilityClaims?.map((item) => item.name)).toEqual(["network"]);
 	});
 });

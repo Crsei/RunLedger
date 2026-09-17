@@ -15,7 +15,7 @@ export function createGovernedNetwork(
 		request: async (request: NetworkRequest, signal?: AbortSignal): Promise<NetworkResponse> => {
 			const url = new URL(request.url);
 			const context = await authorize(
-				"WebFetch",
+				request.principal ?? "WebFetch",
 				[{ kind: "network", operation: "fetch", host: url.hostname, protocol: url.protocol === "http:" ? "http" : "https", ...(url.port ? { port: Number(url.port) } : {}) }],
 				networkDigestInput(request),
 				cwd,
@@ -33,5 +33,6 @@ function networkDigestInput(request: NetworkRequest): Record<string, unknown> {
 		headers: request.headers,
 		bodyDigest: digestOf(request.body ?? ""),
 		maxBytes: request.maxBytes,
+		principal: request.principal ?? "WebFetch",
 	};
 }

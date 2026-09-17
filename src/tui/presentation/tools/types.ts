@@ -20,6 +20,7 @@ export type SafeToolRenderer =
 	| "ls"
 	| "media"
 	| "goal"
+	| "websearch"
 	| "shell";
 
 export type SafeToolInputMetadata =
@@ -31,6 +32,7 @@ export type SafeToolInputMetadata =
 	| { readonly kind: "find"; readonly path: SafeBoundedText; readonly pattern: SafeBoundedText }
 	| { readonly kind: "glob"; readonly path: SafeBoundedText; readonly pattern: SafeBoundedText }
 	| { readonly kind: "ls"; readonly path: SafeBoundedText }
+	| { readonly kind: "websearch"; readonly query: SafeBoundedText }
 	| { readonly kind: "shell"; readonly commandLabel: SafeBoundedText; readonly background?: boolean };
 
 export type SafeDiffLine =

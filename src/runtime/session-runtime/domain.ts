@@ -9,6 +9,8 @@ import type { LoopConditionExecution } from "../loop/condition.ts";
 /** 条件谓词的强制超时:坏条件不得挂住 owner。 */
 const LOOP_CONDITION_TIMEOUT_MS = 60_000;
 import { resolveGoalSettings, resolveLoopSettings, type EffectiveGoalSettings, type EffectiveLoopSettings } from "../../storage/settings-manager.ts";
+import { createWebSearchCredentials } from "../../storage/web-search-credentials.ts";
+import { toWebSearchSettings } from "../../storage/web-search-settings.ts";
 import { buildStandardExecutionPrompt } from "./standard-system-prompt.ts";
 import { assertAssembledPromptBase } from "../harness-profiles/composition.ts";
 import { createSessionPlanTools } from "./plan-tools.ts";
@@ -251,7 +253,10 @@ export async function assembleSessionDomain(
 		}
 		: undefined;
 	const baseTools = [
-		...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions),
+		...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions, {
+			credentials: createWebSearchCredentials({ layout: options.layout }),
+			...(options.settings.webSearch === undefined ? {} : { settings: toWebSearchSettings(options.settings.webSearch) }),
+		}),
 		...planTools.tools,
 		...(goalSettings.enabled ? goalTools.tools : []),
 	];
@@ -724,6 +729,7 @@ export function productionSessionTools(
 	managedProcess?: StdlibToolsOptions["managedProcess"],
 	permissionRequester?: StdlibToolsOptions["permissionRequester"],
 	lspOptions?: LspToolOptions,
+	webSearch?: StdlibToolsOptions["webSearch"],
 ): AgentTool[] {
 	const excluded = new Set(["NotebookEdit", "echo"]);
 	excluded.add("Skill");
@@ -732,6 +738,7 @@ export function productionSessionTools(
 		executionEnv,
 		...(managedProcess === undefined ? {} : { managedProcess }),
 		...(permissionRequester === undefined ? {} : { permissionRequester }),
+		...(webSearch === undefined ? {} : { webSearch }),
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));

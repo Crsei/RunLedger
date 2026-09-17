@@ -154,6 +154,8 @@ export function rendererForTool(toolName: string): SafeToolRenderer {
 			return "ls";
 		case "goal":
 			return "goal";
+		case "web_search":
+			return "websearch";
 		default:
 			return "generic";
 	}
@@ -218,6 +220,11 @@ export function projectInputMetadata(toolName: string, args: unknown): SafeToolI
 			};
 		case "ls":
 			return { kind: "ls", path: path() ?? boundedToolText("<path>") };
+		case "websearch":
+			return {
+				kind: "websearch",
+				query: boundedToolText(typeof args.query === "string" ? args.query : "<query>", LABEL_BOUND_BYTES),
+			};
 		default:
 			return { kind: "generic" };
 	}
