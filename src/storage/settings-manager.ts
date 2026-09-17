@@ -75,6 +75,18 @@ export interface ProjectSettings {
 	multiAgent?: MultiAgentSettingsSource;
 	/** 版本化 skills provider policy（user/workspace 均可写，workspace 只能收窄）。 */
 	skills?: SkillsSettings;
+	/** plugin settings 的**值层**：声明式 schema 在分发包的 `package.json#runledger` 里。 */
+	plugins?: PluginSettingsValues;
+}
+
+/**
+ * plugin settings 的值层。只在 user 层授权；workspace 层只能收窄（非 secret 键、
+ * 且值本身仍合法），secret 键在 workspace 层一律拒绝——规则由
+ * `extensions/plugins/settings-schema.ts` 的 `resolvePluginSettings` 执行。
+ */
+export interface PluginSettingsValues {
+	/** `packageId` → setting 名 → 值。 */
+	readonly values?: Readonly<Record<string, Readonly<Record<string, string | number | boolean>>>>;
 }
 
 export interface RecapSettings {
@@ -518,6 +530,8 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (multiAgent !== undefined) out.multiAgent = multiAgent;
 	const skills = sanitizeSkillsSettings(raw.skills);
 	if (skills !== undefined) out.skills = skills;
+	const plugins = sanitizePluginSettings(raw.plugins);
+	if (plugins !== undefined) out.plugins = plugins;
 	return out;
 }
 
@@ -568,6 +582,29 @@ function sanitizeMultiAgentSettings(value: unknown): MultiAgentSettingsSource | 
 }
 
 const SKILLS_PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+
+/**
+ * 结构清洗 plugin settings 值层：非法条目**逐条丢弃**（不是整体丢弃），
+ * 因为一个插件的坏值不应该让其它插件的合法值一起失效。
+ */
+function sanitizePluginSettings(value: unknown): PluginSettingsValues | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const rawValues = (value as Record<string, unknown>).values;
+	if (typeof rawValues !== "object" || rawValues === null || Array.isArray(rawValues)) return undefined;
+	const values: Record<string, Record<string, string | number | boolean>> = {};
+	for (const [packageId, entry] of Object.entries(rawValues as Record<string, unknown>)) {
+		if (packageId.length === 0 || packageId.length > 128) continue;
+		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+		const settings: Record<string, string | number | boolean> = {};
+		for (const [key, item] of Object.entries(entry as Record<string, unknown>)) {
+			if (key.length === 0 || key.length > 64) continue;
+			if (typeof item === "string" || typeof item === "boolean") settings[key] = item;
+			else if (typeof item === "number" && Number.isFinite(item)) settings[key] = item;
+		}
+		if (Object.keys(settings).length > 0) values[packageId] = Object.freeze(settings);
+	}
+	return Object.keys(values).length === 0 ? undefined : { values: Object.freeze(values) };
+}
 
 /** 结构清洗 skills policy；非法结构整体丢弃（不拒绝整个 settings 文件）。 */
 function sanitizeSkillsSettings(value: unknown): SkillsSettings | undefined {

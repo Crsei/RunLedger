@@ -88,6 +88,7 @@ function readPort(overrides: Partial<SessionDistributionReadPort> = {}): Session
 		list: async () => ({ ok: true, value: { items: [{ packageId: "alpha@local", version: "1.0.0" }] } }),
 		doctor: async () => ({ ok: true, value: { findings: [{ code: "doctor.completed", severity: "ok" }], counts: { ok: 1, warning: 0, error: 0 } } }),
 		marketplaces: async () => ({ ok: true, value: { marketplaces: [{ name: "local" }], pendingUpdates: [] } }),
+		configRead: async () => ({ ok: true, value: { items: [] } }),
 		...overrides,
 	};
 }
@@ -104,6 +105,7 @@ function mutatePort(calls: Array<Record<string, unknown>>, overrides: Partial<Se
 		removeMarketplace: async (input) => record("removeMarketplace", input),
 		updateMarketplace: async (input) => record("updateMarketplace", input),
 		upgradeFromMarketplace: async (input) => record("upgradeFromMarketplace", input),
+		configWrite: async (input) => record("configWrite", input),
 		...overrides,
 	};
 }
@@ -119,6 +121,8 @@ describe("session extension distribution domain", () => {
 			"marketplace.remove",
 			"marketplace.update",
 			"marketplace.upgrade",
+			"plugin.config.read",
+			"plugin.config.write",
 			"plugin.disable",
 			"plugin.distribution.list",
 			"plugin.doctor",
@@ -318,5 +322,52 @@ describe("extension.host.inspect", () => {
 			ok: true,
 			value: { host: "ready", generation: 3, hostPid: 42, candidates: [{ packageId: "alpha@local", eligibility: "host-ready" }] },
 		});
+	});
+});
+
+describe("plugin.config read/write domain routing", () => {
+	it("publishes config read as a read and write as a mutate", async () => {
+		const session = composition();
+		const byOperation = new Map(session.resources.operationManifest.map((entry) => [entry.operation, entry.access]));
+		expect(byOperation.get("plugin.config.read")).toBe("read");
+		expect(byOperation.get("plugin.config.write")).toBe("mutate");
+	});
+
+	it("routes plugin.config.read to the read port", async () => {
+		const session = composition({
+			read: readPort({ configRead: async () => ({ ok: true, value: { items: [{ packageId: "alpha@local", declared: { theme: { type: "string" } }, values: { theme: "dark" } }] } }) }),
+			mutate: mutatePort([]),
+		});
+		await expect(session.resources.query("plugin.config.read", {}, queryContext())).resolves.toMatchObject({
+			ok: true,
+			value: { items: [{ packageId: "alpha@local", values: { theme: "dark" } }] },
+		});
+	});
+
+	it("validates the write payload before touching the port", async () => {
+		const calls: Array<Record<string, unknown>> = [];
+		const session = composition({ read: readPort(), mutate: mutatePort(calls) });
+		for (const [payload, code] of [
+			[{}, "plugin_id_required"],
+			[{ pluginId: "alpha@local" }, "values_required"],
+			[{ pluginId: "alpha@local", values: "nope" }, "values_required"],
+		] as const) {
+			const result = await mutate(session, "plugin.config.write", payload as Record<string, unknown>);
+			expect(result.ok, code).toBe(false);
+			if (!result.ok) expect(result.code).toBe(code);
+		}
+		expect(calls).toEqual([]);
+
+		await expect(mutate(session, "plugin.config.write", { pluginId: "alpha@local", values: { theme: "dark" } })).resolves.toMatchObject({ ok: true });
+		expect(calls).toEqual([{ method: "configWrite", packageId: "alpha@local", values: { theme: "dark" } }]);
+	});
+
+	it("propagates the settings schema rejection code", async () => {
+		const session = composition({
+			read: readPort(),
+			mutate: mutatePort([], { configWrite: async () => ({ ok: false, code: "invalid_enum", message: "setting value is not one of the declared enum values" }) }),
+		});
+		const result = await mutate(session, "plugin.config.write", { pluginId: "alpha@local", values: { mode: "warp" } });
+		expect(result).toMatchObject({ ok: false, code: "invalid_enum" });
 	});
 });

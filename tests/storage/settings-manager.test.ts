@@ -368,3 +368,58 @@ describe("skills provider policy settings", () => {
 		expect(await loadProjectSettings({ layout })).toEqual({});
 	});
 });
+
+describe("plugin settings value layer", () => {
+	it("round-trips declared plugin setting values", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			await saveProjectSettings({ layout }, {
+				plugins: { values: { "alpha@local": { theme: "dark", retries: 3, strict: true } } },
+			});
+			const loaded = await loadProjectSettings({ layout });
+			expect(loaded.plugins?.values?.["alpha@local"]).toEqual({ theme: "dark", retries: 3, strict: true });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("drops only the invalid entries instead of the whole value layer", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			// 手写 settings：一条合法、一条含非法类型、一条整体不是对象。
+			writeFileSync(layout.settings, JSON.stringify({
+				plugins: { values: {
+					"alpha@local": { theme: "dark", bogus: { nested: true } },
+					"beta@local": "not-an-object",
+					"gamma@local": { flag: false, count: 2 },
+				} },
+			}), "utf8");
+			const loaded = await loadProjectSettings({ layout });
+			expect(loaded.plugins?.values?.["alpha@local"]).toEqual({ theme: "dark" });
+			expect(loaded.plugins?.values?.["beta@local"]).toBeUndefined();
+			expect(loaded.plugins?.values?.["gamma@local"]).toEqual({ flag: false, count: 2 });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the key absent when nothing usable is stored", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			await saveProjectSettings({ layout }, { plugins: { values: {} } });
+			const loaded = await loadProjectSettings({ layout });
+			expect(loaded.plugins).toBeUndefined();
+			// 仍有其它键可写：空值层不应让整个 settings 写入失败。
+			await saveProjectSettings({ layout }, { plugins: { values: { "alpha@local": { theme: "light" } } } });
+			expect((await loadProjectSettings({ layout })).plugins?.values?.["alpha@local"]).toEqual({ theme: "light" });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});

@@ -203,6 +203,52 @@ function readEntrypoints(manifest: unknown): readonly string[] {
 	return Array.isArray(extensions) ? extensions.filter((item): item is string => typeof item === "string") : [];
 }
 
+export interface InstalledRunledgerManifest {
+	readonly packageId: string;
+	readonly installPath: string;
+	readonly scope: "user" | "project";
+	readonly manifest: unknown;
+}
+
+/**
+ * 读取每个已安装包的 `package.json#runledger` manifest（含 `settings` 声明）。
+ * 供 `plugin.config.*` 复用：它需要声明式 schema，而账本只记 digest。
+ */
+export async function loadInstalledRunledgerManifests(input: {
+	readonly registry: ExtensionDistributionRegistry;
+	readonly storage: ExtensionDistributionPort;
+}): Promise<{ readonly manifests: readonly InstalledRunledgerManifest[]; readonly diagnostics: readonly { readonly packageId: string; readonly message: string }[] }> {
+	const loaded = await input.registry.loadRunledgerRegistry();
+	if (!loaded.ok) return { manifests: [], diagnostics: [{ packageId: "-", message: loaded.message }] };
+	const installed = await input.registry.loadInstalledPlugins();
+	const entries = installed.ok ? installed.document.plugins : {};
+	const manifests: InstalledRunledgerManifest[] = [];
+	const diagnostics: Array<{ readonly packageId: string; readonly message: string }> = [];
+	for (const [packageId, record] of Object.entries(loaded.document.plugins)) {
+		const installEntry = (entries[packageId] ?? []).find((item) => item.scope === record.scope && item.version === record.version);
+		const installPath = linkedPathOf(record) ?? installEntry?.installPath;
+		if (installPath === undefined) {
+			diagnostics.push({ packageId, message: "installed content path is unavailable" });
+			continue;
+		}
+		const read = await input.storage.readFile(`${installPath}/package.json`, 256 * 1024);
+		if (!read.ok) {
+			diagnostics.push({ packageId, message: "installed package.json could not be read" });
+			continue;
+		}
+		let parsed: unknown;
+		try { parsed = JSON.parse(new TextDecoder().decode(read.value)) as unknown; }
+		catch { diagnostics.push({ packageId, message: "installed package.json is not valid JSON" }); continue; }
+		const manifest = extractRunledgerManifest(parsed);
+		if (!manifest.ok) {
+			diagnostics.push({ packageId, message: manifest.message });
+			continue;
+		}
+		manifests.push({ packageId, installPath, scope: record.scope, manifest: manifest.manifest });
+	}
+	return { manifests: Object.freeze(manifests), diagnostics: Object.freeze(diagnostics) };
+}
+
 /** 供 CLI/TUI 展示的一行解释；不泄漏 secret，只说明缺什么。 */
 export function describeHostGate(gate: DistributionHostGate): string {
 	if (gate.ok) return `${gate.candidate.packageId}@${gate.candidate.version}: host-ready`;

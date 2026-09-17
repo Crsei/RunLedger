@@ -16,7 +16,9 @@ import { MarketplaceFetcher } from "../../extensions/plugins/marketplace/fetcher
 import { resolveExtensionCachePaths } from "../../extensions/plugins/marketplace/cache.ts";
 import { createManagedGitMaterializer } from "../../extensions/plugins/git-materializer.ts";
 import { distributionPluginRoots } from "../../extensions/plugins/discovery-bridge.ts";
-import { selectDistributionHostCandidates } from "../../extensions/plugins/host-activation.ts";
+import { loadInstalledRunledgerManifests, selectDistributionHostCandidates } from "../../extensions/plugins/host-activation.ts";
+import { applySettingDefaults, resolvePluginSettings, validatePluginSettings } from "../../extensions/plugins/settings-schema.ts";
+import type { ExtensionSettingDescriptor } from "../../contracts/extensions/manifest.ts";
 import type { DistributionHostCandidate, DistributionHostSelection } from "../../extensions/plugins/host-activation.ts";
 import { admitExtensionTools, type ExtensionToolInvoker } from "../../extensions/tools/admission.ts";
 import type { ExtensionRegistrySnapshot } from "../../contracts/extensions/registry.ts";
@@ -306,10 +308,12 @@ const OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object
 	Object.freeze({ operation: "extension.host.inspect", capability: "session.extensions", access: "read" }),
 	Object.freeze({ operation: "plugin.distribution.list", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "plugin.doctor", capability: "session.plugins", access: "read" }),
+	Object.freeze({ operation: "plugin.config.read", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "marketplace.discover", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "plugin.install", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.uninstall", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.link", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "plugin.config.write", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.upgrade", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "marketplace.add", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "marketplace.remove", capability: "session.plugins", access: "mutate" }),
@@ -323,6 +327,8 @@ export interface SessionDistributionReadPort {
 	doctor(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	/** 读取所有已安装 package 的已声明 settings 与当前值；不需要 payload。 */
 	marketplaces(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	/** 每个已安装包的声明式 settings schema 与 user 层已生效值。 */
+	configRead(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 }
 
 /** 分发面变更操作。全部经 attempt barrier 记账后才返回。 */
@@ -335,6 +341,7 @@ export interface SessionDistributionMutationPort {
 	removeMarketplace(input: { readonly name: string }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	updateMarketplace(input: { readonly name: string }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	upgradeFromMarketplace(input: { readonly marketplace: string; readonly scope: "user" | "workspace" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	configWrite(input: { readonly packageId: string; readonly values: Readonly<Record<string, unknown>> }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 }
 
 /**
@@ -435,14 +442,16 @@ async function queryResources(options: SessionExtensionCompositionOptions, opera
 			? { host: "disabled", reason: "this session has no extension host composition" }
 			: await options.hostInspect());
 	}
-	if (operation === "plugin.distribution.list" || operation === "plugin.doctor" || operation === "marketplace.discover") {
+	if (operation === "plugin.distribution.list" || operation === "plugin.doctor" || operation === "marketplace.discover" || operation === "plugin.config.read") {
 		const distribution = options.distribution?.read;
 		if (distribution === undefined) return { ok: false, status: "unavailable", code: "operation_unavailable", operation };
 		const read = operation === "plugin.distribution.list"
 			? await distribution.list()
 			: operation === "plugin.doctor"
 				? await distribution.doctor()
-				: await distribution.marketplaces();
+				: operation === "plugin.config.read"
+					? await distribution.configRead()
+					: await distribution.marketplaces();
 		return read.ok ? ok(operation, options.generation, read.value ?? {}) : { ok: false, status: "failed", code: read.code ?? "distribution_read_failed", operation };
 	}
 	const kind = operation === "plugin.list" ? "plugin" : operation === "skill.list" ? "skill" : operation === "hook.list" ? "hook" : undefined;
@@ -468,6 +477,7 @@ const DISTRIBUTION_MUTATION_OPERATIONS = new Set<string>([
 	"plugin.uninstall",
 	"plugin.link",
 	"plugin.upgrade",
+	"plugin.config.write",
 	"marketplace.add",
 	"marketplace.remove",
 	"marketplace.update",
@@ -501,6 +511,16 @@ async function dispatchDistributionMutation(
 			if (packageId === undefined) return { ok: false, code: "plugin_id_required" };
 			const applied = await port.uninstall({ packageId, scope });
 			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "uninstall_failed" };
+		}
+		case "plugin.config.write": {
+			const packageId = stringValue(payload.pluginId);
+			if (packageId === undefined) return { ok: false, code: "plugin_id_required" };
+			const values = typeof payload.values === "object" && payload.values !== null && !Array.isArray(payload.values)
+				? payload.values as Record<string, unknown>
+				: undefined;
+			if (values === undefined) return { ok: false, code: "values_required" };
+			const applied = await port.configWrite({ packageId, values });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "config_write_failed" };
 		}
 		case "plugin.link": {
 			const packageId = stringValue(payload.pluginId);
@@ -691,6 +711,7 @@ export async function createProductionSessionExtensionComposition(
 		cwd: options.cwd,
 		trustStore,
 		principalId,
+		layout: options.layout,
 	});
 	// 已安装的声明式包回灌到既有 PluginManager 发现面：安装只落盘，是否生效
 	// 仍由既有 enable/trust 决定（§1.2 缺口 #11）。
@@ -1127,6 +1148,15 @@ function createSessionHostAssembly(input: {
 	});
 }
 
+/** 从已读 manifest 里取声明式 settings；未声明返回 undefined。 */
+function declaredSettings(manifest: unknown): Readonly<Record<string, ExtensionSettingDescriptor>> | undefined {
+	if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) return undefined;
+	const settings = (manifest as Record<string, unknown>).settings;
+	if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return undefined;
+	const entries = Object.entries(settings as Record<string, unknown>);
+	return entries.length === 0 ? undefined : settings as Readonly<Record<string, ExtensionSettingDescriptor>>;
+}
+
 function unavailable(action: string): { readonly ok: false; readonly code: string; readonly message: string } {
 	return { ok: false, code: "session_command_unavailable", message: `extension action ${action} is not wired to the session command surface yet` };
 }
@@ -1164,6 +1194,7 @@ function createSessionDistribution(input: {
 	readonly cwd: string;
 	readonly trustStore: TrustStore;
 	readonly principalId: PrincipalId;
+	readonly layout: RunledgerLayout;
 }): {
 	readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
 	/** 已安装声明式包的发现根；注册表不可读时返回空数组（不阻断会话启动）。 */
@@ -1216,6 +1247,25 @@ function createSessionDistribution(input: {
 			const report = await runExtensionDoctor({ storage, registry, scopeRoot: scopeRootForDoctor });
 			return { ok: true, value: { findings: report.findings, counts: report.counts } };
 		},
+		configRead: async () => {
+			const loaded = await loadInstalledRunledgerManifests({ registry, storage });
+			const settings = await loadProjectSettings({ layout: input.layout });
+			const items: Record<string, unknown>[] = [];
+			for (const entry of loaded.manifests) {
+				const declared = declaredSettings(entry.manifest);
+				if (declared === undefined) continue;
+				// D13：值只在 user 层授权；workspace 收窄由 settings 层叠加，这里给出
+				// user 层已生效值 + 默认值，并由 resolvePluginSettings 复核。
+				const stored = settings.plugins?.values?.[entry.packageId] ?? {};
+				const resolved = resolvePluginSettings(declared, [{ scope: "user", values: stored }]);
+				if (!resolved.ok) {
+					items.push({ packageId: entry.packageId, declared, values: {}, error: { code: resolved.code, key: resolved.key } });
+					continue;
+				}
+				items.push({ packageId: entry.packageId, declared, values: applySettingDefaults(declared, resolved.values), narrowed: resolved.narrowed });
+			}
+			return { ok: true, value: { items, diagnostics: loaded.diagnostics } };
+		},
 		marketplaces: async () => {
 			const listed = await manager.listMarketplaces();
 			if (!listed.ok) return { ok: false, code: listed.code, message: listed.message };
@@ -1255,6 +1305,26 @@ function createSessionDistribution(input: {
 		updateMarketplace: async ({ name }) => {
 			const refreshed = await manager.refreshMarketplace(name);
 			return refreshed.ok ? { ok: true, value: { marketplace: refreshed.value } } : { ok: false, code: refreshed.code, message: refreshed.message };
+		},
+		configWrite: async ({ packageId, values }) => {
+			const listed = await loadInstalledRunledgerManifests({ registry, storage });
+			const entry = listed.manifests.find((manifest) => manifest.packageId === packageId);
+			if (entry === undefined) return { ok: false, code: "plugin_not_installed", message: `no installed package matches ${packageId}` };
+			const declared = declaredSettings(entry.manifest);
+			if (declared === undefined) return { ok: false, code: "no_declared_settings", message: `${packageId} declares no settings` };
+			const validated = validatePluginSettings(declared, values);
+			if (!validated.ok) return { ok: false, code: validated.code, message: validated.message };
+			const settings = await loadProjectSettings({ layout: input.layout });
+			const stored = { ...(settings.plugins?.values?.[packageId] ?? {}) };
+			for (const key of validated.accepted) {
+				const value = values[key];
+				if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") stored[key] = value;
+			}
+			await saveProjectSettings({ layout: input.layout }, {
+				...settings,
+				plugins: { values: { ...(settings.plugins?.values ?? {}), [packageId]: stored } },
+			});
+			return { ok: true, value: { packageId, accepted: validated.accepted } };
 		},
 		upgradeFromMarketplace: async ({ marketplace, scope }) => {
 			const updates = await manager.pendingUpdates();
