@@ -14,6 +14,7 @@ import { ExtensionDistributionRegistry, resolveExtensionDistributionPaths } from
 import { ExtensionInstaller, type ExtensionSourceMaterializer } from "../../extensions/plugins/installer.ts";
 import { MarketplaceFetcher } from "../../extensions/plugins/marketplace/fetcher.ts";
 import { resolveExtensionCachePaths } from "../../extensions/plugins/marketplace/cache.ts";
+import { createManagedGitMaterializer } from "../../extensions/plugins/git-materializer.ts";
 import { MarketplaceManager } from "../../extensions/plugins/marketplace/manager.ts";
 import { runExtensionDoctor } from "../../extensions/plugins/doctor.ts";
 import { TrustStore } from "../../extensions/trust/trust-store.ts";
@@ -509,6 +510,8 @@ export async function createProductionSessionExtensionComposition(
 		stateRoot,
 		storageKey,
 		distributionRoot: join(stateRoot, "plugins"),
+		managedProcess: options.managedProcess,
+		cwd: options.cwd,
 	});
 	const extensionStateStore = new ExtensionStateStore(join(stateRoot, "extensions-state.json"), storage);
 	const pluginManager = new PluginManager({
@@ -784,15 +787,21 @@ function createSessionDistribution(input: {
 	readonly stateRoot: string;
 	readonly storageKey: string;
 	readonly distributionRoot: string;
+	readonly managedProcess: ProcessToolClient & Pick<ManagedBackgroundBashOperations, "start">;
+	readonly cwd: string;
 }): { readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort } } {
 	const storage = new NodeExtensionDistributionStorage({ runledgerHome: input.home });
 	const registry = new ExtensionDistributionRegistry({
 		storage,
 		paths: resolveExtensionDistributionPaths({ stateRoot: input.stateRoot, pluginsRoot: input.distributionRoot }),
 	});
-	const materializer: ExtensionSourceMaterializer = {
-		materialize: async () => ({ ok: false, code: "network_denied", message: "governed git materialization is not wired in this build; only local plugin sources can be installed" }),
-	};
+	// git 源经既有 governed managed process 执行（D7）：network policy 仍由该
+	// 会话的 ExecutionEnv 决定，默认拒绝；被拒绝时明确返回而不是静默回退。
+	const materializer: ExtensionSourceMaterializer = createManagedGitMaterializer({
+		managedProcess: input.managedProcess,
+		storage,
+		cwd: input.cwd,
+	});
 	const scopeRoot = (scope: "user" | "workspace"): string => scope === "user"
 		? join(input.distributionRoot, "user")
 		: join(input.distributionRoot, "workspaces", input.storageKey);
