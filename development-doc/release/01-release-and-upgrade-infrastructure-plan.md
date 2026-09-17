@@ -93,7 +93,7 @@ flowchart TD
 | **D6** `update` 的默认行为是**拒绝在活跃会话期间安装**（`--force` 才继续），永不自动迁移数据 | 标准入口是 session-scoped 内嵌 Owner（`src/cli/main.ts:51`），文件替换与运行中进程、`state.db` writer 语义相互独立但风险叠加 | 覆盖安装后继续（现状语义），或自研 drain 编排（本期非目标） |
 | **D7** 升级提示复用已冻结的被动合同（`src/tui/update/types.ts`），`inspect` 保持只读 | `tests/tui/governed-mutations.test.ts:247-252` 已把"no download or activation"钉死为合同 | 在 inspect 内直接下载/激活（违反已冻结合同） |
 | **D8** 第一期"来源"是 GitHub Release 资产，不是 registry | `runledger` 包名在公共 registry 已被占用（00 §2）；资产分发无需 publish 即可端到端可用 | 直接 `npm publish` 同名包（不可能）；改用未被占用的名字并发布（非本期裁定） |
-| **D9** 保留"仓库内静态 leaf 清单"（`npm/syntax-highlighter-<target>/package.json`），**不**改为生成式 | leaf 清单被 `tests/tui/syntax-highlighter-packaging.test.ts:30-42` 从 git 读取；本仓库无 leaf 生成器，且 leaf 发布不在本期通道（§0.3）——引入生成器会同时改动运行时映射测试与 CI 打包脚本，收益仅是消除一个已可用门禁覆盖的手工点 | 照搬 oh-my-pi 的 `gen-npm-packages.ts`（生成 + gitignore + 整体重建，00 §2.1）。若将来 leaf 进入常规发布通道，再评估切换；切换时必须同步把清单断言从"读 git"改为"读生成物" |
+| **D9** leaf 清单采用"**派生但提交**"：新增生成器 + `--check` 门禁，文件仍进 git；**不**采用 oh-my-pi 的"生成 + gitignore + 整体重建" | 值得取的是"目标集合只有一张表"这一性质，而不是它的落地形态。RunLedger 的 leaf 事实目前手抄在 3 处（运行期映射、8 份 leaf 清单、根 `optionalDependencies`），且 `main`/`files` 是手写字符串；生成器能消除这类漂移。保留提交的理由：① 现有合同测试从 git 读清单（`tests/tui/syntax-highlighter-packaging.test.ts:30-42`），改读生成物将要求先跑生成器（需要 cargo 与对应 `.node`，单 runner 拿不到另外 7 个 target）；② 可 diff 审阅符合 `AGENTS.md §4` 对 `package-lock.json` 的同等要求；③ RunLedger 的 leaf 有 **libc 维度**（gnu/musl，8 个 target），而 oh-my-pi 的 `LEAF_TARGETS`（`packages/natives/scripts/gen-npm-packages.ts:51-58`）无该维度，本就不是可直接照搬的形状 | 照搬 oh-my-pi 的 `gen-npm-packages.ts`（生成 + gitignore + `fs.rm` 重建，00 §2.1）。另外**明确不采纳**其载入期完整性模型：oh-my-pi 只校验版本哨兵符号（`packages/natives/native/loader-state.js:707` 的 `containsVersionSentinel`），无摘要校验；RunLedger 现有 sha256 校验（`src/tui/highlight/native-loader.ts:72-77`）更强，必须保留 |
 
 ## 2. 冻结合同
 
@@ -257,16 +257,28 @@ shape 支持 → 目标发现 → 目标 manifest 校验 → 完整性校验 →
   `files` 收录 `LICENSE` 与 `CHANGELOG.md`（npm 对 `LICENSE*` 有自动收录，但显式列出更稳）。
 - R0.4 `CHANGELOG.md` 版本段提升脚本（`scripts/promote-changelog.ts`）：把 `[Unreleased]`
   提升为 `[<version>] - <date>` 并补新的 `[Unreleased]`；无内容时不产生空段。
-- R0.5 leaf 清单一致性门禁（修 G11）：新增 `npm run check:release-leaves`，对每个
-  `npm/syntax-highlighter-<target>/package.json` 断言
-  `name`/`os`/`cpu`/`libc` 与运行期映射（`src/tui/highlight/native-package.ts:11-24`）逐项一致，
-  `main`/`files` 与 `scripts/package-syntax-highlighter-prebuild.ts` 的实际产物一致，
-  且 `license`/`engines` 与根包一致。字段名与取值来源在同一模块内派生，不做第二份手写表。
+- R0.5 leaf 目标表与生成器（修 G11，D9）：新增 `src/release/native-targets.ts` 作为**唯一目标表**
+  （tag / os / cpu / libc / package name / addon 文件名 / Rust triple），
+  `src/tui/highlight/native-package.ts` 的运行期映射改为从该表派生；
+  `scripts/generate-release-leaves.ts [--check]` 从该表重写 8 份
+  `npm/syntax-highlighter-<target>/package.json` 的 `name`/`os`/`cpu`/`libc`/`main`/`files`/`license`/`engines`
+  （**文件仍进 git**，`--check` 漂移即失败）。`scripts/package-syntax-highlighter-prebuild.ts` 的
+  target 正则与 `scripts/build-syntax-highlighter.ts` 的 triple 表改为消费同一张表。
+  新增 `npm run check:release-leaves`、`npm run check:native-targets`。
+- R0.6 法律载荷单一来源：8 份 `npm/syntax-highlighter-*/NOTICE.md` 实测 **md5 完全相同**
+  （416 行重复内容，源为 `development-doc/tui/23-codex-syntax-highlighting-license-manifest.md`，
+  由 `scripts/package-syntax-highlighter-prebuild.ts:19` 在 CI 期拷贝）。这些提交副本没有审阅价值
+  （是逐字节拷贝），从 git 移除并加入 `.gitignore`（与同目录已忽略的 `.node`/`checksums.json`/
+  `THIRD_PARTY_NOTICES.md` 一致）；leaf `files` 中的 `NOTICE.md` 条目保留，由 prebuild 脚本继续写入。
 
 验收：
 
 - `npm run check:release-versions` 在人为改坏任一 pin 后失败，恢复后通过；
-- `npm run check:release-leaves` 在人为把某个 leaf 的 `libc` 改成另一取值后失败（RED 证据），恢复后通过；
+- `npm run check:release-leaves` 在人为把某个 leaf 的 `libc` 改成另一取值、或删除一个 leaf 目录后
+  失败（RED 证据），跑生成器恢复后通过；
+- `src/tui/highlight/native-package.ts:11-24` 的 8 个元组不再是手写副本（改为派生），
+  `tests/tui/syntax-highlighter-packaging.test.ts:7-21` 仍通过（该测试是运行期行为的对外断言，不应被弱化）；
+- `git ls-files npm/ | wc -l` 从 16 降到 8（仅剩 leaf `package.json`）；`NOTICE.md` 不再被跟踪；
 - `npm pack --dry-run --json` 的清单含 `LICENSE`、`CHANGELOG.md`；
 - `tests/tui/syntax-highlighter-packaging.test.ts:30-42` 仍然通过（该测试钉死 leaf 版本 = 根版本，与 R0.2 一致）；
 - `runledger --version` 输出不变。
@@ -457,6 +469,9 @@ shape 支持 → 目标发现 → 目标 manifest 校验 → 完整性校验 →
   另外显式登记外部前置（G12）：`release-publish` 当前只声明 `id-token: write`、
   无 token 回退（`syntax-highlighter-prebuild.yml:92-112`），实测 8 个 leaf 全部 404。
   在该外部配置建立之前，leaf 发布属于 `blocked`，不得在本文档或 CHANGELOG 中写成已可发布。
+  并补一条顺序不变量（来自 oh-my-pi CI 的实践，`ci.yml` 的 `release_native_leaves` 注释）：
+  **leaves 必须先于根 tarball 对用户可见**；否则用户按新版本安装时 optional 依赖尚未存在，
+  npm 会静默跳过，语法高亮降级为 `native_unavailable` 且无任何错误提示。
 - R5.3 `scripts/install.sh`：`--tarball <url>`（下载 + sha256 校验 + `npm install -g`）与
   `--source [--ref <ref>]`（clone + `npm ci` + `npm run build`）；不实现自更新，
   不写用户 `PATH` 以外的位置，失败时不留半成品。

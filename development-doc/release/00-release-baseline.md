@@ -89,6 +89,33 @@ leaf 发布目前**不具备可执行的外部配置**：`.github/workflows/synt
 （grep 无命中），因此它依赖 npm 侧预先配置的 trusted publisher；而实测
 `@runledger/syntax-highlighter-*` 全部 404，说明该配置尚未建立。
 
+### 2.2 与 oh-my-pi 对齐的收益与代价（逐项核实）
+
+"对齐"在两个层面含义不同，结论也不同。
+
+**(a) 生成式 leaf（表驱动 + gitignore + 整体重建）——收益有限，代价实在**
+
+| 主张 | 核实结果 |
+|---|---|
+| "能消除目标集合的多处手抄" | 部分成立。oh-my-pi 除生成器表 `LEAF_TARGETS`（`gen-npm-packages.ts:51-58`）外，仍有 **3 处硬编码目标清单**：loader `SUPPORTED_PLATFORMS`（`packages/natives/native/loader-state.js:35`）、`update-cli.ts` 的 `SUPPORTED_NATIVE_TAGS`（该处注释明确选择重复，理由是"让 update 路径不引入跨包 import"）、CI 发布循环 `ci.yml:781` 的 6 个 tag。所以一致性门禁在两种模型下都需要 |
+| "发布时 `optionalDependencies` 可派生" | **成立，且这是最实的一条**。`ci-release-publish.ts:283-288` 的 `buildNativeOptionalDependencies` 直接遍历 `LEAF_TARGETS`，因此**已发布的**核心清单不可能与 leaf 名字/版本不一致；RunLedger 的根 `optionalDependencies`（`package.json:148-157`）是手抄，只靠测试比对 |
+| "leaf `main`/`files` 与实际产物一致" | 成立。`buildLeafManifest` 从 runner 实际存在的 `.node` 推导 `main`，并在零文件/非 `.node` 时报错；RunLedger 是手写字符串 |
+| "缺失法律载荷会失败" | **不成立**，两边都失败。oh-my-pi `resolveLegalPayload` 返回 undefined 即 throw；RunLedger 的 `copyFile`（`package-syntax-highlighter-prebuild.ts:19`）在源缺失时同样抛错 |
+| "可直接照搬" | **不成立**。oh-my-pi 的 `LEAF_TARGETS` **没有 libc 维度**（6 个 target），RunLedger 需要 glibc/musl（8 个）；其 `files: ["*.node", ...]` 也不覆盖 RunLedger 的 `checksums.json`/`.sigstore.json` |
+| "载入期完整性更强" | **不成立，且方向相反**。oh-my-pi 的 loader 不校验摘要（全仓 grep `checksums`/`sha256`/`createHash` 在 `loader-state.js`、`index.js` 无命中），只校验版本哨兵符号（`loader-state.js:707` 的 `containsVersionSentinel`，符号名由 `version-sentinel.js:17` 从包版本派生）。RunLedger 校验 sha256 并 fail-closed 为 `native_integrity_error`（`native-loader.ts:72-77`），照搬其清单形状会**丢掉**摘要文件 |
+| "leaf 不污染 git / 审阅" | 双向。oh-my-pi 的 leaf 目录被 `.gitignore:66` 忽略，PR 里看不到将发布的内容，本地复现需要"正确 runner + cargo + 对应 `.node`"；RunLedger 静态清单可在单机校验并被 diff 审阅（`AGENTS.md §4` 对 `package-lock.json` 有同等要求） |
+
+**(b) 值得直接采纳的两点**
+
+1. **单一目标表**（同时驱动运行期映射、leaf 清单、CI 矩阵、Rust triple）——
+   但用"生成 + `--check` + 文件仍进 git"落地，而不是"生成 + gitignore"（见 01 §1.1 D9）。
+2. **法律载荷单一来源**：8 份 `NOTICE.md` 实测 md5 相同（416 行重复），
+   从 git 移除后由 CI 脚本写入即可，零信息损失。
+
+**结论**：对齐 oh-my-pi 的价值不在其**形态**（gitignore + 重建 + 6 个无 libc 的 target），
+而在其**性质**（一张表驱动所有派生面）。逐字照搬会换来更弱的载入期校验、
+更差的审阅可见性和一次并不小的迁移，却换不到它自己也没做到的一致门禁。
+
 ## 3. 构建链与产物
 
 `npm run build`（`package.json:79`）是 6 段串行链，**链上没有任何 clean/删除步骤**：
