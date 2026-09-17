@@ -1,12 +1,13 @@
 # Extensions 运行时与 Plugin 分发/Marketplace 完整复刻计划
 
-> 状态:**planned**。P0–P7 均未开始；本文件目前只有基线、决策、阶段与验收口径，没有实现证据。
-> 基线日期:2026-09-17;RunLedger 基线为当前工作树 `rollback/before-composer-shape`(`git status` 含并发未提交改动,HEAD `21ccaa3`;实施前必须重新核对)。
+> 状态:**P0 完成,进入 P1**。P0 已交付 §5.2 契约、§8 事件增量、Q1–Q4 裁定;P1–P7 未开始。
+> 基线日期:2026-09-17;RunLedger 基线为当前工作树 `rollback/before-composer-shape`(`git status` 含并发未提交改动,HEAD `2b046ef`;实施前必须重新核对)。
 > 参考基线:oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`(`packages/coding-agent` v18.1.17,本机 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/oh-my-pi`,工作树干净 0 dirty);下文 omp 行号以该工作树为准,仅为机制参考,不是 RunLedger 完成证据。
 > 适用范围:`src/extensions/**`、`src/runtime/{session-runtime,harness-profiles,protocol,contracts,tools,agent-loop}/**`、`src/security/**`、`src/storage/**`、`src/cli/**`、`src/tui/**`、`src/contracts/**` 与对应 `tests/**`。
 > 上位计划:Runtime 04(公共类型/schema/event catalog、Resource contract)、Runtime 06(Session Owner、owner fence、command/query/subscription)、[`01-implementation-plan.md`](01-implementation-plan.md)(Plugin/MCP/Skill/Hooks 总状态账本)、[`02-skill-registry-discovery-provider-refactor-plan.md`](02-skill-registry-discovery-provider-refactor-plan.md)(Skill Registry/Provider 设计与阶段证据)。
 > 姊妹计划:[`../plan/16-omp-tool-parity-update-plan.md`](../plan/16-omp-tool-parity-update-plan.md)(新工具准入 checklist)、[`../plan/17-omp-loop-goal-mode-adaptation-plan.md`](../plan/17-omp-loop-goal-mode-adaptation-plan.md)(omp 行为移植范式 D1–D15)、[`../plan/13-package-boundary-workspace-refactor-plan.md`](../plan/13-package-boundary-workspace-refactor-plan.md)(Extension host 若独立成包时的边界先例)。
 > 修订记录:2026-09-17 初版。依据三路只读侦察(omp Extensions runtime 接口面、omp Plugin/Marketplace 磁盘与 CLI 契约、RunLedger `src/extensions/**` 现状与缺口)撰写。
+> 修订记录:2026-09-17 P0 收口。Q1–Q4 按推荐项裁定;§5.2 契约落 `src/contracts/extensions/**`;§8 事件增量落 `src/runtime/protocol/events.ts`;`01` §13/M7 同步。
 
 ## 0. 文档定位与执行规则
 
@@ -76,7 +77,7 @@
 | 7 | 进程内无隔离导致的进程级致命性(裸 timer 抛错 → `uncaughtException` → 整个 session 被拆) | `extensions/managed-timers.ts:1-25`、omp docs 限制 #2 | **(a)**(RunLedger 无此风险,因为无扩展运行时) |
 | 8 | Plugin 分发:`PluginManager.install/uninstall/link/doctor/features/config`(bun install、git spec、feature 括号语法、lockfile、rollback) | `plugins/manager.ts:439,654,771,932`、`plugins/parser.ts:36-58` | **(a)** |
 | 9 | Marketplace catalog/registry/cache/source resolver | `plugins/marketplace/{manager,fetcher,cache,registry,source-resolver}.ts` | **(a)**;`01` §8 M7 列为后置 |
-| 10 | Claude 兼容磁盘契约:`installed_plugins.json` v2、`marketplaces.json` v1、`.omp-plugin|.claude-plugin/marketplace.json` | `marketplace/types.ts:137-180`、`fetcher.ts:196-200` | **(a)** |
+| 10 | Claude 兼容磁盘契约:`installed_plugins.json`(登记版本 2)、`marketplaces.json`(登记版本 1)、`.omp-plugin|.claude-plugin/marketplace.json` | `marketplace/types.ts:137-180`、`fetcher.ts:196-200` | **(a)** |
 | 11 | 安装后回灌运行时面(node_modules symlink + lockfile)与 project/user scope 遮蔽 | `marketplace/manager.ts:806-847`、`plugins/loader.ts:197-241` | **(a)** |
 | 12 | 约定目录 provider(`omp-plugins` 90、`claude-plugins` 70、`agent-plugins` 75) | `discovery/omp-plugins.ts:47`、`claude-plugins.ts:34`、`agent-plugins.ts:42` | **(c)** Skill 侧已有等价 provider 分层(`src/extensions/skills/registry.ts`);Plugin 侧只有单一 manifest 容器 |
 | 13 | Marketplace auto-update(`off|notify|auto`) | `plugins/marketplace-auto-update.ts:19-49` | **(a)** |
@@ -131,7 +132,7 @@ ExtensionRunner.initialize(actions, contextActions, commandContextActions?, uiCo
 | 运行时枚举 | `getEnabledPlugins(cwd)` 记忆化;user 根 + 项目根;每根取 `dependencies` ∪ lockfile `plugins`;要求真实 `package.json` 且有 `omp`/`pi`;全局或项目 disabled 直接丢弃;项目按 name 遮蔽 user(`plugins/loader.ts:197-241,77-193`) |
 | catalog | `.omp-plugin/marketplace.json` 优先,`.claude-plugin/marketplace.json` 回退(`marketplace/fetcher.ts:196-200`);`name`+`owner.name`+`plugins[]` 必需,条目 `source` 为 `./path` 或 `{source:"github"|"url"|"git-subdir"|"npm"}` |
 | source 解析 | 相对路径必须 `./` 且经 `pathIsWithin` containment;git 系走 clone;`npm` variant **直接抛错未支持**(`marketplace/source-resolver.ts:37-152`) |
-| 安装落盘 | 版本解析顺序 catalog `version` → `.claude-plugin/plugin.json` → `plugin.json` → `package.json#version` → `sha[:7]` → `0.0.0`;缓存至 `cache/plugins/<mkt>___<plugin>___<version>`(staging + rename);写 `installed_plugins.json` v2;把缓存 symlink 进 scope 的 `node_modules` 并回写 lockfile(`marketplace/manager.ts:241-368,806-847`) |
+| 安装落盘 | 版本解析顺序 catalog `version` → `.claude-plugin/plugin.json` → `plugin.json` → `package.json#version` → `sha[:7]` → `0.0.0`;缓存至 `cache/plugins/<mkt>___<plugin>___<version>`(staging + rename);写 `installed_plugins.json`(登记版本 2);把缓存 symlink 进 scope 的 `node_modules` 并回写 lockfile(`marketplace/manager.ts:241-368,806-847`) |
 | 更新 | 无独立 npm 更新动作,靠重装驱动;`omp update -l` 只升级 marketplace 插件;`marketplace.autoUpdate` = `off|notify|auto`,`notify` 只写 debug 日志(`marketplace-auto-update.ts:19-49`) |
 | CLI | `omp plugin install|uninstall|list|link|doctor|features|config|enable|disable|marketplace|discover|upgrade`(`cli/plugin-cli.ts:27-34`);`omp install` 把本地路径分流到 `link`、其余到 `install`(`cli/classify-install-target.ts:55-79`、`commands/install.ts:34-88`) |
 | 已知缺陷(不复制) | `link` 无 containment;`-l/--local` 解析后无人消费;`installer.ts`/`doctor.ts` 死模块;enable 写 lockfile 缺失时静默跳过;无跨进程锁;marketplace `notify` 模式对用户静默;npm source 解析但拒绝;URL 源不支持相对 source;`.d.ts` 条目永不解析 |
@@ -253,8 +254,8 @@ canonical runledgerHome / workspace-key
   ├─ extensions/state/extensions-state.json   enable 状态
   ├─ extensions/state/trust.json              exact identity+path+digest receipt
   ├─ plugins/{user,workspaces/<key>}/packages 已安装扩展包(staging → 原子激活)
-  ├─ plugins/registry.json                    RunLedger 自有安装注册表(v1)
-  ├─ marketplaces.json                        catalog 注册表(v1,Claude 兼容字段)
+  ├─ plugins/registry.json                    RunLedger 自有安装注册表(登记版本 1)
+  ├─ marketplaces.json                        catalog 注册表(登记版本 1,Claude 兼容字段)
   └─ cache/{marketplaces,plugins}/            只读缓存
 
 Session Owner(每 owned Session)
@@ -271,7 +272,7 @@ Session Owner(每 owned Session)
 |---|---|---|
 | `ExtensionPackageManifest` | `{ name, version, description, capabilities[], extensions[], commands[], skills[], hooks[], mcpServers?, settings? }`;未知字段 error(沿用现有严格性) | `src/contracts/` + `src/extensions/plugins/manager.ts` |
 | `ExtensionCapability` | `events[]`、`tools[]`、`filesystem: none|read|write`、`process: false|governed`、`network: false|governed` | 同上 |
-| `ExtensionHostProtocol` v1 | 双向 JSONL/结构化 RPC:`hello`、`registry`、`event`、`action`、`result`、`error`、`shutdown`;每帧有 `protocolVersion` + `generation` | Runtime 04 contracts |
+| `ExtensionHostProtocol` 协议版本 1 | 双向 JSONL/结构化 RPC:`hello`、`registry`、`event`、`action`、`result`、`error`、`shutdown`;每帧有 `protocolVersion` + `generation` | Runtime 04 contracts |
 | `ExtensionRegistrySnapshot` | `{ generation, hostPid, packageId, digest, tools[], commands[], flags[], subscriptions[], limits }` | `src/extensions/` |
 | `ExtensionEventProjection` | `{ name, payload(裁剪后), cancelable, resultKind }` | Runtime 04 event catalog 增量 |
 | `MarketplaceCatalog` / `MarketplacesRegistry` / `InstalledPluginsRegistry` | 与 Claude 兼容字段(`version:1` / `version:2`),额外字段前缀 `runledger` | `src/extensions/plugins/marketplace/` |
@@ -321,10 +322,13 @@ Session Owner(每 owned Session)
 
 ## 7. 分阶段实施
 
-### P0 — 契约冻结与裁定(无行为变化)
+### P0 — 契约冻结与裁定(无行为变化)——**已完成**
 
 - RED:契约 consumer 测试失败(`ExtensionHostProtocol`/`ExtensionPackageManifest`/`ExtensionEventProjection` 尚不存在)。
 - DoD:`src/contracts/extensions/**` 落地 schema 与 export;Runtime 04 的 event catalog 增量已登记;§12 Q1–Q4 完成裁定并回写本文件;`01` §13/M7 同步。
+- 交付物:`src/contracts/extensions/{common,manifest,events,registry,host-protocol,intent,marketplace,index}.ts`;`src/runtime/protocol/events.ts` 新增 12 个 canonical event 与对应 payload requirement;`tests/runtime-contracts/extensions-contracts.test.ts`;`src/contracts/index.ts` 导出。
+- 行为影响:无。本阶段不装配 supervisor、不改 operation manifest、不改 Profile 门控。
+- 顺带修复的既有缺陷(单独说明):本文件初版引入的内部 generational 措辞(`v` + 数字)触发 `npm run check:current-format` 的 internal generation marker 检查;P0 改写为“登记版本 N / 协议版本 1”。
 
 ### P1 — Extension host 进程与协议骨架
 
@@ -418,7 +422,7 @@ git diff --check
 | 风险 | 影响 | 缓解 |
 |---|---|---|
 | D1 裁定不通过(要求进程内) | 计划回退到 omp 语义,进程级致命性被引入 | §12 Q1 先裁定;若选进程内,必须同时接受 omp docs 限制 #2 并写入 `01` §10 失败语义 |
-| 协议面过早膨胀 | 维护成本与攻击面双增 | P0 冻结 v1 最小帧集;新增事件走 Runtime 04 |
+| 协议面过早膨胀 | 维护成本与攻击面双增 | P0 冻结协议版本 1 最小帧集;新增事件走 Runtime 04 |
 | 扩展工具与 stdlib 命名冲突 | 静默遮蔽 | 准入期强制 runtime name 唯一 + provenance;冲突即拒绝,不自动改名 |
 | 分发引入网络与归档解析 | SSRF/zip-slip/资源耗尽 | 只允许受治理 fetch;staging + containment + 大小/条目上限;不支持 npm 与 install script |
 | trust 与 enable 混淆 | 未审计代码被执行 | 安装不授予执行;host 启动前必须 trusted(沿用现有四层分离) |
@@ -427,14 +431,22 @@ git diff --check
 
 回滚:每阶段独立 PR;P1 起新增能力由 Profile 门控与 settings 开关控制,关闭后回到当前声明式行为,不涉及数据迁移。已安装包与 registry 可在卸载路径清空;trust/state 文件保持向后兼容读取(未知键 passthrough)。
 
-## 12. 待裁定
+## 12. 裁定结果(P0 已收口)
 
-| # | 问题 | 选项 | 影响 |
-|---|---|---|---|
-| Q1 | 扩展执行宿主 | (A) 子进程 host(**推荐**,D1) / (B) 进程内 import(omp 语义,性能好但进程级致命) / (C) 两者都做,进程内为默认、子进程为可选 | 决定 P1 全部实现与 `01` §13 修订;阻塞 P0 收口 |
-| Q2 | 扩展 API 的对外形态 | (A) 独立发布 `runledger/extensions` 子路径 / (B) 仅进程内契约、不对外承诺 | 决定 D12 与扩展作者体验 |
-| Q3 | 分发是否纳入本次范围 | (A) 全量(安装+marketplace) / (B) 只做本地 link 与 git 安装,marketplace 后置 | 决定 P5/P6 是否拆成两个计划 |
-| Q4 | 事件投影粒度 | (A) 白名单子集(~12 个) / (B) 对齐 omp 全量 ~40 | 决定 §8 与 Runtime 04 工作量 |
+下表在 P0 完成时裁定并冻结。选项按原提案记录,裁定理由与后续约束一并写明;改变任一项必须先更新本文件与对应 schema/测试。
+
+| # | 问题 | 选项 | 裁定 | 理由与约束 |
+|---|---|---|---|---|
+| Q1 | 扩展执行宿主 | (A) 子进程 host(**推荐**,D1) / (B) 进程内 import(omp 语义,性能好但进程级致命) / (C) 两者都做 | **(A)** | 进程内 import 等价于把 owner 完整性交出去,与 owner fence / durable receipt / fail-closed 三项核心不变式冲突;D2 的“host 崩溃不影响 session”只有子进程能成立。代价(跨进程延迟、协议版本化、handler 内不能直接触达 owner 内存对象)在 D1/§5.2 已计入 P1 工作量。`01` §13 的“任意 JavaScript/TypeScript 进程内 plugin entrypoint”仍是非目标——本计划不放开进程内执行,而是以 host 子进程承载。 |
+| Q2 | 扩展 API 的对外形态 | (A) 独立发布 `runledger/extensions` 子路径 / (B) 仅进程内契约、不对外承诺 | **(A)** | 扩展作者需要稳定 specifier 与版本;D12 已要求 API 面由 RunLedger 发布与版本化。落地方式:`package.json#exports` 增加 `./extensions` 子路径,指向 `dist/contracts/extensions/**` 的扩展作者面;**不**兼容 `@oh-my-pi/*` 或 legacy `pi` specifier。该子路径在 P2 实现注册面时发布,本节只冻结方向。 |
+| Q3 | 分发是否纳入本次范围 | (A) 全量(安装+marketplace) / (B) 只做本地 link 与 git 安装,marketplace 后置 | **(A)** | 用户明确要求实施本计划全文,P5/P6 包含 marketplace;拆分会把 D10(auto-update 可见出口)与 Claude 兼容磁盘契约留成无验收状态。仍按阶段独立 PR 推进,P5 不依赖 P6 才能验收。 |
+| Q4 | 事件投影粒度 | (A) 白名单子集(~12 个) / (B) 对齐 omp 全量 ~40 | **(A)** | 事件面扩张同时增加维护成本与攻击面(§11)。白名单 12 项在 `src/contracts/extensions/events.ts` 冻结,覆盖现有 5 类 hook 生命周期与 4 个扩展中间件需求;新增事件仍走 Runtime 04。 |
+
+裁定带来的派生事实:
+
+- `01` §13 的两条显式非目标(“任意 JS/TS 进程内 plugin entrypoint”与“marketplace、Git clone/update、签名分发和自动升级”)按本节修订:进程内 entrypoint 仍是**未放开**的非目标(改由 host 子进程承载);marketplace 与受治理 clone/update 转入本计划范围,签名分发与 publisher trust root 仍是非目标(§13)。
+- `01` M7 的 plugin 版本化 store / install / update / uninstall / rollback / marketplace 条目不再作为“第二阶段后置”,改由本计划 P5–P6 交付;M7 保留的两条(签名与 publisher trust root、staged bounded probe 中的最小权限沙箱)按根 `AGENTS.md` 的 sandbox 边界**不实施**。
+- §8 的事件增量已登记进 Runtime 04 的 canonical event catalog;扩展层不得自行扩 catalog。
 
 ## 13. 非目标
 
@@ -474,7 +486,7 @@ git diff --check
 
 | 阶段 | 状态 | 证据 |
 |---|---|---|
-| P0 契约冻结与裁定 | planned | §12 Q1–Q4 未裁定;无代码 |
+| P0 契约冻结与裁定 | **done** | `src/contracts/extensions/**`(8 文件);`src/runtime/protocol/events.ts` 12 个新事件;`tests/runtime-contracts/extensions-contracts.test.ts`(23 用例);§12 Q1–Q4 裁定;`01` §13/M7 同步;`npm run check` 与 `npm test` 见 §15.2 |
 | P1 host 进程与协议骨架 | planned | — |
 | P2 注册面与工具准入 | planned | — |
 | P3 事件桥 | planned | — |
@@ -486,3 +498,4 @@ git diff --check
 ### 15.2 实施记录
 
 - 2026-09-17 初版:依据三路只读侦察建立基线、逐项对照表、D1–D15、P0–P7 与验收口径;未实现任何代码,未提交。
+- 2026-09-17 P0 收口:契约落 `src/contracts/extensions/**`;canonical event catalog 增量落 `src/runtime/protocol/events.ts`(并把 runtime `eventAction` 改为取最后一段,与类型层推断一致);新增 12 项事件投影白名单;marketplace/Claude 兼容磁盘契约成形。验证:`npx vitest run tests/runtime-contracts/extensions-contracts.test.ts` 23 passed;`npm run check:current-format`、`npm run check:runtime-boundaries`、`npx tsc --noEmit -p tsconfig.json` 通过。行为影响为零:未装配 supervisor、未改 operation manifest、未改 Profile 门控。

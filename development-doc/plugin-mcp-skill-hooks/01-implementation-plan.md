@@ -7,7 +7,7 @@
 > grok-build 参考基线:`c68e39f60462f28d9be5e683d9cbe2c57b1a5027` (`main`)
 
 > Skill registry/discovery provider 的结构重构、兼容来源开关、冲突语义与分阶段门禁见 [`02-skill-registry-discovery-provider-refactor-plan.md`](02-skill-registry-discovery-provider-refactor-plan.md)。本文件继续拥有总状态；`02` 只拥有该专题的设计与阶段证据。
-> 可执行扩展运行时(ExtensionAPI/事件桥/工具准入)与 Plugin 安装、scope、Claude 兼容 marketplace 的复刻设计与阶段见 [`03-extensions-runtime-and-plugin-marketplace-replication-plan.md`](03-extensions-runtime-and-plugin-marketplace-replication-plan.md)。该文正面接管本文 §13 的两条显式非目标(“进程内 plugin entrypoint”与“marketplace/Git clone/update/自动升级”)与 M7 的一组后置项,其 D1 属架构边界变更,须先经 03 §12 Q1 裁定;裁定后本文 §13 与 M7 必须同步修订,总状态仍由本文件拥有。
+> 可执行扩展运行时(ExtensionAPI/事件桥/工具准入)与 Plugin 安装、scope、Claude 兼容 marketplace 的复刻设计与阶段见 [`03-extensions-runtime-and-plugin-marketplace-replication-plan.md`](03-extensions-runtime-and-plugin-marketplace-replication-plan.md)。该文正面接管本文 §13 的 marketplace/Git clone/update/自动升级非目标与 M7 的一组后置项;其 D1 属架构边界变更。**2026-09-17 P0 收口:`03` §12 Q1–Q4 已裁定,本文 §13 与 M7 已同步修订**——进程内 plugin entrypoint 仍是未放开的非目标(改由 `03` D1 的 host 子进程承载),签名分发与 publisher trust root 仍是共同非目标,总状态仍由本文件拥有。
 
 ## 0. 输入状态与使用方式
 
@@ -768,11 +768,11 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [ ] legacy SSE transport（仅在真实兼容需求成立时）；
 - [ ] 配置文件 watcher 与 debounce，仍遵守 idle 原子交换；
 - [ ] hook HTTP handler，增加 SSRF、DNS rebinding、redirect、敏感 payload 审批策略；
-- [ ] plugin 版本化 store、install/update/uninstall/rollback 和 marketplace；
-- [ ] 安装只接受 exact package/version/publisher/source locator,禁止模型猜测名称后 fallback 安装；
-- [ ] 安装包 expected digest/signature、publisher trust root、来源 pin、大小上限、离线缓存与 revocation；“存在签名”不等于 publisher 已受信；
-- [ ] 下载经 HTTPS 和 host policy,先进入 staging,再在临时最小权限沙箱做 bounded probe,成功后原子激活；
-- [ ] 新版本支持冷却期、显式批准、revocation 和回滚到上一已验证版本；digest、publisher、command、asset 或 capability 变化全部使旧 receipt stale；
+- [>] plugin 版本化 store、install/update/uninstall/rollback 和 marketplace —— **已移出本文件范围**：由 [`03`](03-extensions-runtime-and-plugin-marketplace-replication-plan.md) P5–P6 交付（该文 §12 Q3 裁定为全量纳入）；总状态仍回写本行；
+- [>] 安装只接受 exact package/version/publisher/source locator,禁止模型猜测名称后 fallback 安装 —— 由 `03` P5 交付（含 `npm` source 显式拒绝）；
+- [ ] 安装包 expected digest/signature、publisher trust root、来源 pin、大小上限、离线缓存与 revocation；“存在签名”不等于 publisher 已受信 —— **仅保留 digest/来源 pin/大小上限/revocation**（`03` P5、D7、D8）；签名分发与 publisher trust root 是 `03` §13 的非目标，未实施；
+- [>] 下载经 HTTPS 和 host policy,先进入 staging,再在临时最小权限沙箱做 bounded probe,成功后原子激活 —— staging 与原子激活由 `03` D7/P5 交付；**“临时最小权限沙箱”不实施**（根 `AGENTS.md` sandbox 边界：不得新增或扩展 OS sandbox / namespace / 进程隔离，隔离强度以既有 governed process 为上限）；
+- [>] 新版本支持冷却期、显式批准、revocation 和回滚到上一已验证版本；digest、publisher、command、asset 或 capability 变化全部使旧 receipt stale —— digest/capability 变化使 receipt stale 与显式回滚由 `03` D8/P5–P6 交付；冷却期与 publisher 维度随签名分发一并后置；
 - [ ] execute/code-mode 资源默认 hidden,只有显式 profile + Runtime approval 才可激活；
 - [ ] 可选 `.agents` / `.claude` / `.grok` 兼容导入器，默认关闭并显示来源；
 - [ ] 扩展资源 metrics/OTel（不得替代 canonical Runtime event 审计）。
@@ -888,9 +888,9 @@ M0–M6 全部完成且满足以下 E2E，才可把本计划标为完成：
 
 MVP 明确不做：
 
-- 任意 JavaScript/TypeScript 进程内 plugin entrypoint；
-- plugin 自定义 Node dependency 注入或自动执行 `npm install`；
-- marketplace、Git clone/update、签名分发和自动升级；
+- 任意 JavaScript/TypeScript 进程内 plugin entrypoint；可执行扩展代码只在 [`03`](03-extensions-runtime-and-plugin-marketplace-replication-plan.md) D1 的 session 私有 extension host 子进程内求值，本进程内执行仍未放开；
+- plugin 自定义 Node dependency 注入或自动执行 `npm install`；`03` D7 同样不使用包管理器、不执行任何 install script；
+- marketplace、Git clone/update、自动升级：**已由 `03` 正面接管**（§12 Q3 裁定全量纳入，见该文 P5–P6）；**签名分发与 publisher trust root 仍是两边共同的非目标**；
 - plugin agents、LSP、apps、browser extension；
 - HTTP hooks、prompt hooks、agent hooks、async hooks；
 - MCP OAuth、legacy SSE、elicitation、sampling、roots 协商；

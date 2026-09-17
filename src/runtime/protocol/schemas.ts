@@ -136,8 +136,14 @@ const RuntimeModelRequestKindSchema = Type.Unsafe<"interactive" | "idle-recap" |
 	enum: ["interactive", "idle-recap", "auto-title", "compaction-summary"],
 });
 
+/**
+ * 事件 action 取**最后一个** dot 之后的子串，与类型层
+ * `RuntimeEventAction<TType>` 的 `${string}.${infer TAction}` 推断一致。
+ * 现有事件都只有一层 domain；两层命名（`extension.host.started`）必须让
+ * action 落在 `started`，否则 payload requirement 与类型声明会漂移。
+ */
 function eventAction(type: RuntimeEventType): string {
-	return type.slice(type.indexOf(".") + 1);
+	return type.slice(type.lastIndexOf(".") + 1);
 }
 
 function payloadRequirements(type: RuntimeEventType): readonly RuntimeEventPayloadRequirement[] {

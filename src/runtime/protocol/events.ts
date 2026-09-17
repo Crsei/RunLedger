@@ -155,6 +155,23 @@ export const RUNTIME_EVENT_TYPES = [
 	"cost.recorded",
 	"cost.reconciled",
 	"telemetry.delivery_recorded",
+	// 扩展运行时与 plugin 分发（development-doc/plugin-mcp-skill-hooks/03 §8）。
+	// 这些事件的 action 段是**最后一个** dot 之后的子串：扩展 host 生命周期、
+	// registry 激活与 action 提交/拒绝推进 extension generation；plugin 与
+	// marketplace 事件推进安装记录 revision。payload 复用既有 envelope
+	// （subject/transition/metadataDigest），不新增字段。
+	"extension.host.started",
+	"extension.host.failed",
+	"extension.host.stopped",
+	"extension.registry.activated",
+	"extension.action.committed",
+	"extension.action.rejected",
+	"plugin.installed",
+	"plugin.uninstalled",
+	"plugin.upgraded",
+	"marketplace.added",
+	"marketplace.removed",
+	"marketplace.updated",
 ] as const;
 
 export type RuntimeEventType = (typeof RUNTIME_EVENT_TYPES)[number];
@@ -236,6 +253,14 @@ export const EVENT_TRANSITION_ACTIONS = [
 	"budget_updated",
 	"budget_exhausted",
 	"continuation_requested",
+	// plugin / marketplace 分发记录的状态推进；`installed`/`added` 属创建语义，
+	// 在 EVENT_IDEMPOTENCY_ACTIONS 中改用 idempotencyKey，其余按 CAS 记 revision。
+	"installed",
+	"uninstalled",
+	"upgraded",
+	"added",
+	"removed",
+	"updated",
 ] as const;
 
 export const EVENT_BINDING_REQUIRED_TYPES = [
@@ -344,6 +369,9 @@ export const EVENT_IDEMPOTENCY_ACTIONS = [
 	"enqueued",
 	"proposed",
 	"intent_recorded",
+	// plugin 安装与 marketplace 注册是创建语义：同 ID 重放必须命中同一 receipt。
+	"installed",
+	"added",
 ] as const;
 
 export const EVENT_REASON_REQUIRED_ACTIONS = [
