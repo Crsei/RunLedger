@@ -175,13 +175,19 @@ describe("Host control command distribution vocabulary", () => {
 			[["marketplace", "remove", "local"], "marketplace.remove", true],
 			[["marketplace", "update", "local"], "marketplace.update", true],
 			[["marketplace", "upgrade", "local"], "marketplace.upgrade", true],
+			[["marketplace", "autoUpdate"], "marketplace.discover", false],
+			[["marketplace", "autoUpdate", "notify"], "marketplace.auto_update", true],
 		];
 		for (const [words, operation, mutation] of cases) {
 			const parsed = parseControlCommand(words as readonly string[]);
 			expect(parsed?.ok, words.join(" ")).toBe(true);
 			if (parsed === undefined || !parsed.ok) continue;
 			expect(parsed.command.mutation, words.join(" ")).toBe(mutation);
-			expect(controlCommandRequest(parsed.command).operation, words.join(" ")).toBe(operation);
+			const request = controlCommandRequest(parsed.command);
+			expect(request.operation, words.join(" ")).toBe(operation);
+			// handshake 的 descriptor pattern 不接受大写：camelCase 的 CLI 动词一旦
+			// 漏进 protocol operation，整个 initialize_response 会变成 frame_malformed。
+			expect(request.operation, words.join(" ")).toMatch(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u);
 		}
 	});
 
@@ -209,6 +215,27 @@ describe("Host control command distribution vocabulary", () => {
 		expect(parseControlCommand(["marketplace", "remove"])).toMatchObject({ ok: false, error: /marketplace name/i });
 		expect(parseControlCommand(["plugin", "install", "alpha", "--scope=root"])).toMatchObject({ ok: false, error: /scope must be user or workspace/i });
 		expect(parseControlCommand(["marketplace", "bogus"])).toMatchObject({ ok: false, error: /unsupported marketplace action/i });
+		expect(parseControlCommand(["marketplace", "autoUpdate", "sometimes"])).toMatchObject({ ok: false, error: /off, notify or auto/i });
+	});
+
+	it("reads the autoUpdate mode without an argument and writes it with one", () => {
+		const read = parseControlCommand(["marketplace", "autoUpdate"]);
+		expect(read?.ok).toBe(true);
+		if (read !== undefined && read.ok) {
+			expect(read.command.mutation).toBe(false);
+			expect(controlCommandRequest(read.command).operation).toBe("marketplace.discover");
+			expect(controlCommandRequest(read.command).body).toEqual({});
+		}
+		for (const mode of ["off", "notify", "auto"] as const) {
+			const set = parseControlCommand(["marketplace", "autoUpdate", mode]);
+			expect(set?.ok).toBe(true);
+			if (set === undefined || !set.ok) continue;
+			expect(set.command.mutation, mode).toBe(true);
+			const request = controlCommandRequest(set.command);
+			expect(request.operation, mode).toBe("marketplace.auto_update");
+			expect(request.body, mode).toEqual({ mode });
+			expect(controlCommandQueryOperation(set.command), mode).toBe("marketplace.discover");
+		}
 	});
 
 	it("takes the mutation revision from the distribution ledger, not the declarative snapshot", () => {

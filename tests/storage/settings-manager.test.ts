@@ -454,3 +454,36 @@ describe("plugin watch setting", () => {
 		}
 	});
 });
+
+describe("marketplace autoUpdate setting", () => {
+	it("round-trips the mode and defaults to absent (off) when unset", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			expect((await loadProjectSettings({ layout })).marketplace).toBeUndefined();
+			await saveProjectSettings({ layout }, { marketplace: { autoUpdate: "notify" } });
+			expect((await loadProjectSettings({ layout })).marketplace?.autoUpdate).toBe("notify");
+			await saveProjectSettings({ layout }, { marketplace: { autoUpdate: "auto" } });
+			expect((await loadProjectSettings({ layout })).marketplace?.autoUpdate).toBe("auto");
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an unknown mode loudly and ignores unknown sibling keys", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			// 非法枚举与 agentMode/compaction 一样 fail loud，而不是静默降级成 off。
+			writeFileSync(layout.settings, JSON.stringify({ marketplace: { autoUpdate: "sometimes" } }), "utf8");
+			await expect(loadProjectSettings({ layout })).rejects.toThrow(/off\|notify\|auto/u);
+			await expect(saveProjectSettings({ layout }, { marketplace: { autoUpdate: "sometimes" as "off" } })).rejects.toThrow(/off\|notify\|auto/u);
+			writeFileSync(layout.settings, JSON.stringify({ marketplace: { autoUpdate: "notify", unknown: 1 } }), "utf8");
+			expect((await loadProjectSettings({ layout })).marketplace?.autoUpdate).toBe("notify");
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});

@@ -108,6 +108,7 @@ function mutatePort(calls: Array<Record<string, unknown>>, overrides: Partial<Se
 		upgradeFromMarketplace: async (input) => record("upgradeFromMarketplace", input),
 		configWrite: async (input) => record("configWrite", input),
 		featuresWrite: async (input) => record("featuresWrite", input),
+		setAutoUpdate: async (input) => record("setAutoUpdate", input),
 		...overrides,
 	};
 }
@@ -119,6 +120,7 @@ describe("session extension distribution domain", () => {
 		const byOperation = new Map(manifest.map((entry) => [entry.operation, entry.access]));
 		expect([...byOperation.keys()].filter((operation) => operation.startsWith("plugin.") || operation.startsWith("marketplace.")).sort()).toEqual([
 			"marketplace.add",
+			"marketplace.auto_update",
 			"marketplace.discover",
 			"marketplace.remove",
 			"marketplace.update",
@@ -143,7 +145,7 @@ describe("session extension distribution domain", () => {
 		expect(byOperation.get("plugin.doctor")).toBe("read");
 		expect(byOperation.get("plugin.distribution.list")).toBe("read");
 		expect(byOperation.get("plugin.features.read")).toBe("read");
-		for (const mutate of ["plugin.install", "plugin.uninstall", "plugin.link", "plugin.upgrade", "plugin.config.write", "plugin.features.write", "marketplace.add", "marketplace.remove", "marketplace.update", "marketplace.upgrade"]) {
+		for (const mutate of ["plugin.install", "plugin.uninstall", "plugin.link", "plugin.upgrade", "plugin.config.write", "plugin.features.write", "marketplace.add", "marketplace.remove", "marketplace.update", "marketplace.auto_update", "marketplace.upgrade"]) {
 			expect(byOperation.get(mutate), mutate).toBe("mutate");
 		}
 	});
@@ -188,6 +190,26 @@ describe("session extension distribution domain", () => {
 			{ method: "updateMarketplace", name: "local" },
 			{ method: "upgradeFromMarketplace", marketplace: "local", scope: "user" },
 		]);
+	});
+
+	it("keeps every operation name inside the handshake descriptor pattern", async () => {
+		const session = composition();
+		// handshake 的 descriptor pattern 不接受大写；一个 `marketplace.autoUpdate`
+		// 这样的名字会让整个 initialize_response 校验失败并变成 frame_malformed。
+		const pattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u;
+		for (const entry of session.resources.operationManifest) {
+			expect(entry.operation, entry.operation).toMatch(pattern);
+			expect(entry.operation.length, entry.operation).toBeLessThanOrEqual(128);
+		}
+	});
+
+	it("routes the autoUpdate mode write and validates the mode", async () => {
+		const calls: Array<Record<string, unknown>> = [];
+		const session = composition({ read: readPort(), mutate: mutatePort(calls) });
+		await expect(mutate(session, "marketplace.auto_update", { mode: "notify" })).resolves.toMatchObject({ ok: true });
+		await expect(mutate(session, "marketplace.auto_update", { mode: "sometimes" })).resolves.toMatchObject({ ok: false, code: "auto_update_mode_required" });
+		await expect(mutate(session, "marketplace.auto_update", {})).resolves.toMatchObject({ ok: false, code: "auto_update_mode_required" });
+		expect(calls).toEqual([{ method: "setAutoUpdate", mode: "notify" }]);
 	});
 
 	it("distinguishes the three feature selections instead of collapsing them", async () => {

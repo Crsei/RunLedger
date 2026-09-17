@@ -85,7 +85,7 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	security: new Set(["inspect"]),
 	worktree: new Set(["list", "inspect", "create", "resume", "release"]),
 	plugin: new Set(["list", "inspect", "reload", "enable", "disable", "trust", "untrust", "distribution", "doctor", "install", "uninstall", "link", "upgrade", "config", "features"]),
-	marketplace: new Set(["discover", "add", "remove", "update", "upgrade"]),
+	marketplace: new Set(["discover", "add", "remove", "update", "upgrade", "autoUpdate"]),
 	skill: new Set(["list", "provider", "trust", "untrust"]),
 	hook: new Set(["list"]),
 	mcp: new Set(["list", "inspect", "doctor", "restart"]),
@@ -144,6 +144,9 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 		}
 	}
 	if (group === "marketplace") {
+		if (rawAction === "autoUpdate" && args[0] !== undefined && args[0] !== "off" && args[0] !== "notify" && args[0] !== "auto") {
+			return { ok: false, error: "autoUpdate requires off, notify or auto" };
+		}
 		if (rawAction === "add" && args.length < 3) return { ok: false, error: "marketplace add requires a name, source type and source uri" };
 		if ((rawAction === "remove" || rawAction === "update" || rawAction === "upgrade") && args.length < 1) {
 			return { ok: false, error: `marketplace ${rawAction} requires a marketplace name` };
@@ -191,13 +194,17 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	// 读/写由子动作决定，因此不能只看动词名是否在 MUTATIONS 里。
 	const pluginConfigAction = group === "plugin" && rawAction === "config" ? args[0] ?? "read" : undefined;
 	const pluginFeaturesAction = group === "plugin" && rawAction === "features" ? args[0] ?? "read" : undefined;
+	// `marketplace autoUpdate` 省略模式是读当前配置，给出模式才是 mutation。
+	const marketplaceAutoUpdateAction = group === "marketplace" && rawAction === "autoUpdate" ? (args[0] === undefined ? "read" : "set") : undefined;
 	const mutation = skillProviderAction === "enable" || skillProviderAction === "disable"
 		? true
 		: pluginConfigAction !== undefined
 			? pluginConfigAction === "set"
 			: pluginFeaturesAction !== undefined
 				? pluginFeaturesAction === "set"
-				: MUTATIONS.has(key);
+				: marketplaceAutoUpdateAction !== undefined
+					? marketplaceAutoUpdateAction === "set"
+					: MUTATIONS.has(key);
 	return { ok: true, command: { group, action: rawAction, args, mutation } };
 }
 
@@ -251,6 +258,10 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 		case "marketplace.upgrade":
 			// `marketplace.upgrade [name]`:省略名字表示对全部已注册 marketplace 生效。
 			if (command.args[0] !== undefined) body.marketplace = command.args[0];
+			break;
+		case "marketplace.autoUpdate":
+			// `marketplace autoUpdate <off|notify|auto>`:省略模式走 discover 读当前值。
+			if (command.args[0] !== undefined) body.mode = command.args[0];
 			break;
 		case "skill.trust":
 		case "skill.untrust":
@@ -342,6 +353,8 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			: key === "plugin.config" ? (command.args[0] === "set" ? "plugin.config.write" : "plugin.config.read")
 			: key === "plugin.features" ? (command.args[0] === "set" ? "plugin.features.write" : "plugin.features.read")
 			: key === "marketplace.discover" ? "marketplace.discover"
+			// `key` 用 CLI 词表里的 camelCase 动作名；协议侧 operation 必须是全小写。
+			: key === "marketplace.autoUpdate" ? (command.args[0] === undefined ? "marketplace.discover" : "marketplace.auto_update")
 			: command.group === "dump" ? "session.request.inspect"
 			: key === "compact.list" ? "compaction.list"
 			: key === "plugin.reload" ? "extension.reload"
@@ -414,6 +427,7 @@ export function controlCommandHelp(): string {
 		"  runledger plugin install <spec>|upgrade <spec>|uninstall <plugin-id>|link <plugin-id> <path> [--scope user|workspace]",
 		"    install/upgrade only write to the package store; enable and trust stay separate decisions.",
 		"  runledger marketplace discover|add <name> <github|git|url|local> <uri>|remove <name>|update <name>|upgrade [name]",
+		"  runledger marketplace autoUpdate [off|notify|auto]   (user settings; auto only refreshes catalogs)",
 		"  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>",
 		"    Standard Sessions currently support user-scoped provider policy; workspace scope is unavailable.",
 		"  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",

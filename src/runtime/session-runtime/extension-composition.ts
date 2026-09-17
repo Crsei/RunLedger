@@ -382,6 +382,7 @@ const OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object
 	Object.freeze({ operation: "marketplace.add", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "marketplace.remove", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "marketplace.update", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "marketplace.auto_update", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "marketplace.upgrade", capability: "session.plugins", access: "mutate" }),
 ]);
 
@@ -407,6 +408,7 @@ export interface SessionDistributionMutationPort {
 	removeMarketplace(input: { readonly name: string }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	updateMarketplace(input: { readonly name: string }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	upgradeFromMarketplace(input: { readonly marketplace: string; readonly scope: "user" | "workspace" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	setAutoUpdate(input: { readonly mode: "off" | "notify" | "auto" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	configWrite(input: { readonly packageId: string; readonly values: Readonly<Record<string, unknown>> }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	featuresWrite(input: { readonly packageId: string; readonly enabledFeatures: readonly string[] | null }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 }
@@ -573,6 +575,7 @@ const DISTRIBUTION_MUTATION_OPERATIONS = new Set<string>([
 	"marketplace.add",
 	"marketplace.remove",
 	"marketplace.update",
+	"marketplace.auto_update",
 	"marketplace.upgrade",
 ]);
 
@@ -647,6 +650,12 @@ async function dispatchDistributionMutation(
 				? await port.removeMarketplace({ name })
 				: await port.updateMarketplace({ name });
 			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "marketplace_operation_failed" };
+		}
+		case "marketplace.auto_update": {
+			const mode = stringValue(payload.mode);
+			if (mode !== "off" && mode !== "notify" && mode !== "auto") return { ok: false, code: "auto_update_mode_required" };
+			const applied = await port.setAutoUpdate({ mode });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "auto_update_failed" };
 		}
 		case "marketplace.upgrade": {
 			const marketplace = stringValue(payload.marketplace);
@@ -1431,8 +1440,20 @@ function createSessionDistribution(input: {
 		marketplaces: async () => {
 			const listed = await manager.listMarketplaces();
 			if (!listed.ok) return { ok: false, code: listed.code, message: listed.message };
-			const updates = await manager.pendingUpdates();
-			return { ok: true, value: { marketplaces: listed.value, pendingUpdates: updates.ok ? updates.value : [] } };
+			// autoUpdate 模式来自 user 层 settings（缺省 off）。`notify`/`auto` 的
+			// 可见出口就是这条 read 的 pendingUpdates 与 TUI notice（D10）；`auto`
+			// 只刷新 catalog 与可见信号，不代替用户安装/启用/信任。
+			const settings = await loadProjectSettings({ layout: input.layout });
+			const configured = settings.marketplace?.autoUpdate ?? "off";
+			const plan = await manager.autoUpdatePlan(configured, { hasVisibleChannel: true });
+			return {
+				ok: true,
+				value: {
+					marketplaces: listed.value,
+					pendingUpdates: plan.updates,
+					autoUpdate: { configured, effective: plan.effective, degraded: plan.degraded, ...(plan.reason === undefined ? {} : { reason: plan.reason }) },
+				},
+			};
 		},
 		featuresRead: async () => {
 			const loaded = await loadInstalledRunledgerManifests({ registry, storage });
@@ -1527,6 +1548,13 @@ function createSessionDistribution(input: {
 				applied.push({ packageId: update.packageId, version: installed.value.receipt.version });
 			}
 			return { ok: true, value: { upgraded: applied } };
+		},
+		setAutoUpdate: async ({ mode }) => {
+			// 只写 user 层 settings 的一个键；`auto` 的刷新动作发生在后续的
+			// `marketplace.discover` read 里（autoUpdatePlan），不在写路径上偷偷联网。
+			const settings = await loadProjectSettings({ layout: input.layout });
+			await saveProjectSettings({ layout: input.layout }, { ...settings, marketplace: { autoUpdate: mode } });
+			return { ok: true, value: { autoUpdate: { configured: mode } } };
 		},
 	};
 	return {

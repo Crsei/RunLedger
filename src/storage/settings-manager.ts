@@ -77,6 +77,17 @@ export interface ProjectSettings {
 	skills?: SkillsSettings;
 	/** plugin settings 的**值层**：声明式 schema 在分发包的 `package.json#runledger` 里。 */
 	plugins?: PluginSettingsValues;
+	/** marketplace 自动更新模式；只有 user 层拥有该 authority（D10）。 */
+	marketplace?: MarketplaceSettings;
+}
+
+/**
+ * marketplace 行为设置。`autoUpdate` 缺省即 `off`；`notify` 需要真实可见出口
+ * （CLI 可查询的 pending 列表或 TUI notice），`auto` 只刷新 catalog 与可见信号，
+ * 绝不代替用户做安装/启用/信任决定（D7/D10）。
+ */
+export interface MarketplaceSettings {
+	readonly autoUpdate?: "off" | "notify" | "auto";
 }
 
 /**
@@ -538,7 +549,23 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (skills !== undefined) out.skills = skills;
 	const plugins = sanitizePluginSettings(raw.plugins);
 	if (plugins !== undefined) out.plugins = plugins;
+	// marketplace 自动更新模式：`auto` 会刷新 catalog，属 user 层 authority
+	// （与 recording/compaction 同一处理），workspace settings 不得改写。
+	if (allowRecording) {
+		const marketplace = sanitizeMarketplaceSettings(raw.marketplace);
+		if (marketplace !== undefined) out.marketplace = marketplace;
+	}
 	return out;
+}
+
+function sanitizeMarketplaceSettings(value: unknown): MarketplaceSettings | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	if (!Object.hasOwn(value, "autoUpdate")) return undefined;
+	const mode = (value as Record<string, unknown>).autoUpdate;
+	if (mode !== "off" && mode !== "notify" && mode !== "auto") {
+		throw new Error("marketplace.autoUpdate must be off|notify|auto");
+	}
+	return Object.freeze({ autoUpdate: mode });
 }
 
 function sanitizeRecapSettings(value: unknown): RecapSettings | undefined {
