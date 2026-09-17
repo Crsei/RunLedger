@@ -51,6 +51,10 @@
     "./contracts": {
       "import": "./dist/contracts/index.js",
       "types": "./dist/contracts/index.d.ts"
+    },
+    "./extensions": {
+      "import": "./dist/extensions/api.js",
+      "types": "./dist/extensions/api.d.ts"
     }
   },
   "files": [
