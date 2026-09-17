@@ -55,6 +55,40 @@ npm view runledger version                                     # 0.5.0（无关�
 
 `runledger` 这个包名在公共 registry 上已被无关项目占用，因此**不可直接作为公共发布名**。
 
+### 2.1 native leaf 包结构与参考实现（oh-my-pi）的差异
+
+本仓库根目录存在 `npm/`（**早于本专题文档**：由 `cbccd13` 于 2026-08-13 引入，
+标题 `feat(tui): make syntax highlighting production-governed`，共 16 个文件 / 424 行；
+本次文档提交 `3fdcbbf` 未触碰其中任何文件）。它是 8 个语法高亮 native 的 **leaf 包目录**，
+与 oh-my-pi 的同用途结构关键差异如下：
+
+| 维度 | RunLedger（实测） | oh-my-pi（参考） |
+|---|---|---|
+| 位置 | 仓库根 `npm/syntax-highlighter-<target>/` | `packages/natives/npm/<tag>/` |
+| 是否进 git | **是**（`package.json` + `NOTICE.md` 已提交） | **否**，`.gitignore:66` 忽略，CI 期生成 |
+| 清单来源 | 手写单行 JSON，无生成器 | `packages/natives/scripts/gen-npm-packages.ts` 的 `buildLeafManifest` 生成 |
+| 每次构建 | 就地补充 `.node`/`checksums.json`/`THIRD_PARTY_NOTICES.md` | `fs.rm(leafDir, {recursive,force})` 后整体重建（`gen-npm-packages.ts:166-175`） |
+| 版本来源 | 手写，与根版本靠测试钉相等 | 从核心包 `packages/natives/package.json` 读取（`gen-npm-packages.ts:141-142`，实测生成 `18.2.4`） |
+| 清单字段 | `license/main/files/os/cpu/libc/engines/publishConfig`；**无** `author`/`repository`/`description` | 含 `author`/`license`/`repository`/`engines`/`files`（dry-run 实测） |
+| workspace 成员 | 否（`workspaces = ["packages/*"]`） | 否（嵌套在 `packages/natives/` 下） |
+| 与主包发布的关系 | leaf 独立发布；根包 `private: true`，**任何流水线都不发布主包** | leaf 与核心包同属一条发布流水线，核心包也发布 |
+
+填充 leaf 目录的脚本是 `scripts/package-syntax-highlighter-prebuild.ts`，它**只写**
+`checksums.json`（`:18`）与 `THIRD_PARTY_NOTICES.md`（`:24`），从不生成或改写 `package.json`；
+`.node`/`checksums.json`/`THIRD_PARTY_NOTICES.md`/`.sigstore.json` 由 `.gitignore:12-16` 忽略。
+因此 8 份清单是**唯一的手工维护点**。
+
+字段一致性没有门禁：`tests/tui/syntax-highlighter-packaging.test.ts:27-42` 只断言 leaf 的
+`name`/`version`/`files` 与"根排除本地 addon"，`:7-21` 断言的是**运行期**映射
+（`src/tui/highlight/native-package.ts:11-24`）；**没有任何断言**把 leaf 清单里的
+`os`/`cpu`/`libc` 与运行期映射比对。手工改错某个 leaf 的 `libc`（如把 `glibc` 写成 `musl`）
+不会被现有检查发现，后果是该平台的 optional 依赖装不上而静默降级为 `native_unavailable`。
+
+leaf 发布目前**不具备可执行的外部配置**：`.github/workflows/syntax-highlighter-prebuild.yml:92-112`
+的 `release-publish` 只声明 `id-token: write`，全文无 `secrets.` / `NODE_AUTH_TOKEN`
+（grep 无命中），因此它依赖 npm 侧预先配置的 trusted publisher；而实测
+`@runledger/syntax-highlighter-*` 全部 404，说明该配置尚未建立。
+
 ## 3. 构建链与产物
 
 `npm run build`（`package.json:79`）是 6 段串行链，**链上没有任何 clean/删除步骤**：
@@ -293,6 +327,8 @@ ls -a "$P2/lib/node_modules"                    # 只有 runledger
 | G8 | 无 `update` 命令、无启动提示生产实现、无安装形态识别 | §6.4 | 升级链路的三个必需要素全缺 |
 | G9 | 无 tag、无发布流水线、无 release notes 生成 | §2、§8 | 升级没有可发现的目标版本 |
 | G10 | `.map` 占 unpacked 的 34.9%，无体积门禁 | §4 | 分发体积不可控 |
+| G11 | leaf 清单的 `os`/`cpu`/`libc` 无门禁，与运行期映射可能不一致 | §2.1、`tests/tui/syntax-highlighter-packaging.test.ts:7-42` | 手工改错即让某平台静默丢失语法高亮，且无检查发现 |
+| G12 | leaf 发布依赖尚未建立的 npm trusted publisher，且无 token 回退 | §2.1、`syntax-highlighter-prebuild.yml:92-112` | tag 上的发布 job 目前必然失败（实测 404） |
 
 ## 8. 现有 CI 与文档面
 

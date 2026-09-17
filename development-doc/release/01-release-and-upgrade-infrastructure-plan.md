@@ -93,6 +93,7 @@ flowchart TD
 | **D6** `update` 的默认行为是**拒绝在活跃会话期间安装**（`--force` 才继续），永不自动迁移数据 | 标准入口是 session-scoped 内嵌 Owner（`src/cli/main.ts:51`），文件替换与运行中进程、`state.db` writer 语义相互独立但风险叠加 | 覆盖安装后继续（现状语义），或自研 drain 编排（本期非目标） |
 | **D7** 升级提示复用已冻结的被动合同（`src/tui/update/types.ts`），`inspect` 保持只读 | `tests/tui/governed-mutations.test.ts:247-252` 已把"no download or activation"钉死为合同 | 在 inspect 内直接下载/激活（违反已冻结合同） |
 | **D8** 第一期"来源"是 GitHub Release 资产，不是 registry | `runledger` 包名在公共 registry 已被占用（00 §2）；资产分发无需 publish 即可端到端可用 | 直接 `npm publish` 同名包（不可能）；改用未被占用的名字并发布（非本期裁定） |
+| **D9** 保留"仓库内静态 leaf 清单"（`npm/syntax-highlighter-<target>/package.json`），**不**改为生成式 | leaf 清单被 `tests/tui/syntax-highlighter-packaging.test.ts:30-42` 从 git 读取；本仓库无 leaf 生成器，且 leaf 发布不在本期通道（§0.3）——引入生成器会同时改动运行时映射测试与 CI 打包脚本，收益仅是消除一个已可用门禁覆盖的手工点 | 照搬 oh-my-pi 的 `gen-npm-packages.ts`（生成 + gitignore + 整体重建，00 §2.1）。若将来 leaf 进入常规发布通道，再评估切换；切换时必须同步把清单断言从"读 git"改为"读生成物" |
 
 ## 2. 冻结合同
 
@@ -256,10 +257,16 @@ shape 支持 → 目标发现 → 目标 manifest 校验 → 完整性校验 →
   `files` 收录 `LICENSE` 与 `CHANGELOG.md`（npm 对 `LICENSE*` 有自动收录，但显式列出更稳）。
 - R0.4 `CHANGELOG.md` 版本段提升脚本（`scripts/promote-changelog.ts`）：把 `[Unreleased]`
   提升为 `[<version>] - <date>` 并补新的 `[Unreleased]`；无内容时不产生空段。
+- R0.5 leaf 清单一致性门禁（修 G11）：新增 `npm run check:release-leaves`，对每个
+  `npm/syntax-highlighter-<target>/package.json` 断言
+  `name`/`os`/`cpu`/`libc` 与运行期映射（`src/tui/highlight/native-package.ts:11-24`）逐项一致，
+  `main`/`files` 与 `scripts/package-syntax-highlighter-prebuild.ts` 的实际产物一致，
+  且 `license`/`engines` 与根包一致。字段名与取值来源在同一模块内派生，不做第二份手写表。
 
 验收：
 
 - `npm run check:release-versions` 在人为改坏任一 pin 后失败，恢复后通过；
+- `npm run check:release-leaves` 在人为把某个 leaf 的 `libc` 改成另一取值后失败（RED 证据），恢复后通过；
 - `npm pack --dry-run --json` 的清单含 `LICENSE`、`CHANGELOG.md`；
 - `tests/tui/syntax-highlighter-packaging.test.ts:30-42` 仍然通过（该测试钉死 leaf 版本 = 根版本，与 R0.2 一致）；
 - `runledger --version` 输出不变。
@@ -444,8 +451,12 @@ shape 支持 → 目标发现 → 目标 manifest 校验 → 完整性校验 →
   4. `publish-npm`（默认关闭，`workflow_dispatch` 输入 `publish=true` 才执行）——
      仅发布根包与 leaves，registry/名称在此之前必须重新裁定（G5）。
 - R5.2 native leaves：复用 `.github/workflows/syntax-highlighter-prebuild.yml`，
-  补两个门禁：leaf 版本 = 根版本（已有测试钉死，需要 CI 也拒绝）、
-  leaves 全部未发布时根 tarball 的安装 smoke 仍必须成功（可选依赖缺失的降级路径）。
+  补三个门禁：leaf 版本 = 根版本（已有测试钉死，需要 CI 也拒绝）、
+  R0.5 的字段一致性、以及 leaves 全部未发布时根 tarball 的安装 smoke 仍必须成功
+  （可选依赖缺失的降级路径）。
+  另外显式登记外部前置（G12）：`release-publish` 当前只声明 `id-token: write`、
+  无 token 回退（`syntax-highlighter-prebuild.yml:92-112`），实测 8 个 leaf 全部 404。
+  在该外部配置建立之前，leaf 发布属于 `blocked`，不得在本文档或 CHANGELOG 中写成已可发布。
 - R5.3 `scripts/install.sh`：`--tarball <url>`（下载 + sha256 校验 + `npm install -g`）与
   `--source [--ref <ref>]`（clone + `npm ci` + `npm run build`）；不实现自更新，
   不写用户 `PATH` 以外的位置，失败时不留半成品。
@@ -581,12 +592,12 @@ shape 支持 → 目标发现 → 目标 manifest 校验 → 完整性校验 →
 
 | 阶段 | 状态 | 交付位置 | 证据 |
 |---|---|---|---|
-| R0 版本单一真相与必要文件 | `planned` | `src/release/package-identity.ts`、`scripts/sync-release-versions.ts`、`LICENSE`、`scripts/promote-changelog.ts` | pending |
+| R0 版本单一真相与必要文件 | `planned` | `src/release/package-identity.ts`、`scripts/sync-release-versions.ts`、`scripts/check-release-leaves.ts`、`LICENSE`、`scripts/promote-changelog.ts` | pending |
 | R1 清洁构建与打包边界门禁 | `planned` | `npm run clean`、`scripts/check-package-contents.ts` | pending |
 | R2 分发身份与安装形态 | `planned` | `src/release/{release-manifest,installation-shape}.ts`、`scripts/generate-release-manifest.ts` | pending |
 | R3 升级命令与委托 | `planned` | `src/cli/update-command.ts`、`src/release/{release-source,update-plan}.ts` | pending |
 | R4 启动升级提示 | `planned` | `src/release/update-check.ts`、`src/cli/update-query-port.ts` | pending |
-| R5 发布流水线 | `planned` | `.github/workflows/release.yml`、`scripts/{install.sh,release-notes.ts,release.ts}` | pending |
+| R5 发布流水线 | `planned`；leaf 发布子项 `blocked`（外部 npm trusted publisher 未建立，G12） | `.github/workflows/release.yml`、`scripts/{install.sh,release-notes.ts,release.ts}` | pending |
 | R6 安装一致性诊断 | `planned` | `doctor` 入口 | pending |
 | R7 验收证据与跨平台边界 | `planned` | `scripts/verify-release-upgrade.ts` | pending |
 
