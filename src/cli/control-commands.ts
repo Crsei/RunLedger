@@ -83,7 +83,7 @@ const DEFAULT_ACTIONS: Readonly<Record<ControlGroup, string>> = {
 const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	security: new Set(["inspect"]),
 	worktree: new Set(["list", "inspect", "create", "resume", "release"]),
-	plugin: new Set(["list", "inspect", "reload", "enable", "disable", "trust", "untrust", "distribution", "doctor", "install", "uninstall", "link", "upgrade"]),
+	plugin: new Set(["list", "inspect", "reload", "enable", "disable", "trust", "untrust", "distribution", "doctor", "install", "uninstall", "link", "upgrade", "config"]),
 	marketplace: new Set(["discover", "add", "remove", "update", "upgrade"]),
 	skill: new Set(["list", "provider", "trust", "untrust"]),
 	hook: new Set(["list"]),
@@ -127,6 +127,11 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	}
 	if (group === "plugin" && rawAction === "link" && args.length < 2) {
 		return { ok: false, error: "link requires a plugin id and a local path" };
+	}
+	if (group === "plugin" && rawAction === "config") {
+		const sub = args[0];
+		if (sub !== undefined && sub !== "read" && sub !== "set") return { ok: false, error: "config requires read|set" };
+		if (sub === "set" && args.length < 4) return { ok: false, error: "config set requires a plugin id, a setting name and a value" };
 	}
 	if (group === "marketplace") {
 		if (rawAction === "add" && args.length < 3) return { ok: false, error: "marketplace add requires a name, source type and source uri" };
@@ -172,7 +177,14 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 		} catch { return { ok: false, error: "context assemble arguments must be valid JSON" }; }
 	}
 	const skillProviderAction = group === "skill" && rawAction === "provider" ? args[0] : undefined;
-	const mutation = skillProviderAction === "enable" || skillProviderAction === "disable" ? true : MUTATIONS.has(key);
+	// `plugin config` 与 `skill provider` 都是带子动作的复合动词：读/写由子动作决定，
+	// 因此不能只看动词名是否在 MUTATIONS 里。
+	const pluginConfigAction = group === "plugin" && rawAction === "config" ? args[0] ?? "read" : undefined;
+	const mutation = skillProviderAction === "enable" || skillProviderAction === "disable"
+		? true
+		: pluginConfigAction !== undefined
+			? pluginConfigAction === "set"
+			: MUTATIONS.has(key);
 	return { ok: true, command: { group, action: rawAction, args, mutation } };
 }
 
@@ -195,6 +207,15 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			body.pluginId = command.args[0];
 			body.localPath = command.args[1];
 			break;
+		case "plugin.config": {
+			// `config set <id> <key> <value>`：值以字符串传入，由声明式 schema 负责
+			// 类型/范围/枚举校验（owner 侧不做第二次解释）。
+			if (command.args[0] === "set") {
+				body.pluginId = command.args[1];
+				body.values = { [command.args[2] ?? ""]: command.args[3] };
+			}
+			break;
+		}
 		case "marketplace.add":
 			body.name = command.args[0];
 			body.sourceType = command.args[1];
@@ -295,6 +316,7 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 		operation: key === "security.inspect" ? "session.security.inspect"
 			: key === "plugin.distribution" ? "plugin.distribution.list"
 			: key === "plugin.doctor" ? "plugin.doctor"
+			: key === "plugin.config" ? (command.args[0] === "set" ? "plugin.config.write" : "plugin.config.read")
 			: key === "marketplace.discover" ? "marketplace.discover"
 			: command.group === "dump" ? "session.request.inspect"
 			: key === "compact.list" ? "compaction.list"
@@ -312,7 +334,11 @@ export function controlCommandQueryOperation(command: ControlCommand): string | 
 	if (!command.mutation) return undefined;
 	if (command.group === "worktree") return "worktree.inspect";
 	// 分发 mutation 的 revision 来源是分发账本视图,而不是声明式快照。
-	if (command.group === "plugin") return command.action === "list" ? "plugin.list" : "plugin.distribution.list";
+	if (command.group === "plugin") {
+		if (command.action === "list") return "plugin.list";
+		// config 的写入以分发账本视图为 revision 来源，和 install/uninstall 一致。
+		return "plugin.distribution.list";
+	}
 	if (command.group === "marketplace") return "marketplace.discover";
 	if (command.group === "skill") return "skill.list";
 	if (command.group === "mcp") return "mcp.list";
@@ -358,7 +384,7 @@ export function controlCommandHelp(): string {
 		"  runledger security inspect",
 		"  runledger worktree list|inspect|create|resume|release confirm",
 		"  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]",
-		"  runledger plugin distribution   plugin doctor",
+		"  runledger plugin distribution   plugin doctor   plugin config [read|set <plugin-id> <key> <value>]",
 		"  runledger plugin install <spec>|upgrade <spec>|uninstall <plugin-id>|link <plugin-id> <path> [--scope user|workspace]",
 		"    install/upgrade only write to the package store; enable and trust stay separate decisions.",
 		"  runledger marketplace discover|add <name> <github|git|url|local> <uri>|remove <name>|update <name>|upgrade [name]",

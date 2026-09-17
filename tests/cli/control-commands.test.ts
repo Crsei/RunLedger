@@ -228,3 +228,36 @@ describe("Host control command distribution vocabulary", () => {
 		expect(help).toContain("enable and trust stay separate decisions");
 	});
 });
+
+describe("Host control command plugin config vocabulary", () => {
+	it("maps config read and set to the two operations", () => {
+		const read = parseControlCommand(["plugin", "config"]);
+		expect(read?.ok).toBe(true);
+		if (read !== undefined && read.ok) {
+			expect(read.command.mutation).toBe(false);
+			expect(controlCommandRequest(read.command).operation).toBe("plugin.config.read");
+		}
+		const explicit = parseControlCommand(["plugin", "config", "read"]);
+		if (explicit !== undefined && explicit.ok) expect(controlCommandRequest(explicit.command).operation).toBe("plugin.config.read");
+
+		const set = parseControlCommand(["plugin", "config", "set", "alpha@local", "theme", "dark"]);
+		expect(set?.ok).toBe(true);
+		if (set !== undefined && set.ok) {
+			expect(set.command.mutation).toBe(true);
+			const request = controlCommandRequest(set.command);
+			expect(request.operation).toBe("plugin.config.write");
+			// 值原样以字符串送出：类型/范围/枚举校验由声明式 schema 负责。
+			expect(request.body).toEqual({ pluginId: "alpha@local", values: { theme: "dark" } });
+		}
+	});
+
+	it("requires the documented config arguments", () => {
+		expect(parseControlCommand(["plugin", "config", "bogus"])).toMatchObject({ ok: false, error: /read\|set/i });
+		expect(parseControlCommand(["plugin", "config", "set", "alpha@local", "theme"])).toMatchObject({ ok: false, error: /setting name and a value/i });
+	});
+
+	it("takes the config mutation revision from the distribution ledger", () => {
+		const set = parseControlCommand(["plugin", "config", "set", "alpha@local", "theme", "dark"]);
+		if (set !== undefined && set.ok) expect(controlCommandQueryOperation(set.command)).toBe("plugin.distribution.list");
+	});
+});
