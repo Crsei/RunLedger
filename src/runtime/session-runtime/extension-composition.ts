@@ -1051,44 +1051,10 @@ function createSessionHostAssembly(input: {
 		});
 	};
 
-	// 动作：intent 是投影（只记审计）；有真实命令面的动作走晚绑定的 controller；
-	// 没有对应能力的动作明确失败并说明原因，不做静默 no-op。
-	const host = (): SessionExtensionActionHost | undefined => input.options.actorHost?.current?.();
-	const actorPort: ExtensionActionActorPort = {
-		sendMessage: async ({ text }) => {
-			const current = host();
-			if (current === undefined) return unavailable("send-message");
-			// origin 固定为 runtime：扩展不得冒充真实用户输入（D4/D9）。
-			await current.prompt(text, "followUp", "runtime");
-			return { ok: true, value: { queued: "follow-up", origin: "runtime" } };
-		},
-		appendEntry: async ({ entry }) => {
-			await audit("extension.action.append_entry", { keys: Object.keys(entry).slice(0, 16) });
-			return { ok: false, code: "session_command_unavailable", message: "append-entry has no session ledger surface yet" };
-		},
-		setActiveTools: async () => unavailable("set-active-tools", "the controller exposes no active-tool setter; use addTools through composition"),
-		setModel: async ({ providerId, modelId }) => {
-			const current = host();
-			if (current === undefined) return unavailable("set-model");
-			const models = await current.getAvailableModels(providerId);
-			const match = models.find((model) => model.id === modelId && model.provider === providerId);
-			if (match === undefined) return { ok: false, code: "model_unavailable", message: `no available model ${providerId}/${modelId}` };
-			await current.selectModel(match);
-			return { ok: true, value: { providerId, modelId } };
-		},
-		setThinkingLevel: async ({ level }) => {
-			const current = host();
-			if (current === undefined) return unavailable("set-thinking-level");
-			const applied = await current.setThinkingLevel(level);
-			return { ok: true, value: { level: applied } };
-		},
-		setSessionName: async () => unavailable("set-session-name", "session title mutation is not wired to the extension action surface yet"),
-		exec: async () => unavailable("exec", "extension exec must go through a governed managed process; that port is not wired yet"),
-		emitIntent: async ({ intent }) => {
-			await audit("extension.intent", { kind: intent.kind, level: intent.level, key: intent.key ?? null, textDigest: runtimeDigest(intent.text).digest });
-			return { ok: true, value: { projected: "audit-only" } };
-		},
-	};
+	const actorPort = createExtensionActionActorPort({
+		host: () => input.options.actorHost?.current?.(),
+		audit: async (eventType, payload) => { await audit(eventType, payload); },
+	});
 	const actions = createExtensionActionHandler({
 		port: actorPort,
 		generation: options.fence.generation,
@@ -1206,6 +1172,61 @@ function declaredSettings(manifest: unknown): Readonly<Record<string, ExtensionS
 	if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return undefined;
 	const entries = Object.entries(settings as Record<string, unknown>);
 	return entries.length === 0 ? undefined : settings as Readonly<Record<string, ExtensionSettingDescriptor>>;
+}
+
+/**
+ * 扩展运行时动作的 actor port（D4）。
+ *
+ * 有真实命令面的动作走**晚绑定**的 controller（见 `SessionExtensionActionHostHolder`）；
+ * 没有对应能力的动作给出各自的具体原因，而不是统一一句“未接线”，更不是静默 no-op。
+ *
+ * 安全选择：`sendMessage` 的 origin 固定为 `runtime`——扩展可以注入消息，但不得冒充
+ * 真实用户输入。
+ */
+export function createExtensionActionActorPort(input: {
+	readonly host: () => SessionExtensionActionHost | undefined;
+	readonly audit: (eventType: string, payload: Record<string, unknown>) => Promise<void>;
+}): ExtensionActionActorPort {
+	const host = input.host;
+	const audit = input.audit;
+	const port: ExtensionActionActorPort = {
+	// 动作：intent 是投影（只记审计）；有真实命令面的动作走晚绑定的 controller；
+	// 没有对应能力的动作明确失败并说明原因，不做静默 no-op。
+		sendMessage: async ({ text }) => {
+			const current = host();
+			if (current === undefined) return unavailable("send-message");
+			// origin 固定为 runtime：扩展不得冒充真实用户输入（D4/D9）。
+			await current.prompt(text, "followUp", "runtime");
+			return { ok: true, value: { queued: "follow-up", origin: "runtime" } };
+		},
+		appendEntry: async ({ entry }) => {
+			await audit("extension.action.append_entry", { keys: Object.keys(entry).slice(0, 16) });
+			return { ok: false, code: "session_command_unavailable", message: "append-entry has no session ledger surface yet" };
+		},
+		setActiveTools: async () => unavailable("set-active-tools", "the controller exposes no active-tool setter; use addTools through composition"),
+		setModel: async ({ providerId, modelId }) => {
+			const current = host();
+			if (current === undefined) return unavailable("set-model");
+			const models = await current.getAvailableModels(providerId);
+			const match = models.find((model) => model.id === modelId && model.provider === providerId);
+			if (match === undefined) return { ok: false, code: "model_unavailable", message: `no available model ${providerId}/${modelId}` };
+			await current.selectModel(match);
+			return { ok: true, value: { providerId, modelId } };
+		},
+		setThinkingLevel: async ({ level }) => {
+			const current = host();
+			if (current === undefined) return unavailable("set-thinking-level");
+			const applied = await current.setThinkingLevel(level);
+			return { ok: true, value: { level: applied } };
+		},
+		setSessionName: async () => unavailable("set-session-name", "session title mutation is not wired to the extension action surface yet"),
+		exec: async () => unavailable("exec", "extension exec must go through a governed managed process; that port is not wired yet"),
+		emitIntent: async ({ intent }) => {
+			await audit("extension.intent", { kind: intent.kind, level: intent.level, key: intent.key ?? null, textDigest: runtimeDigest(intent.text).digest });
+			return { ok: true, value: { projected: "audit-only" } };
+		},
+	};
+	return port;
 }
 
 function unavailable(action: string, reason?: string): { readonly ok: false; readonly code: string; readonly message: string } {
