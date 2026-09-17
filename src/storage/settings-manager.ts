@@ -87,6 +87,12 @@ export interface ProjectSettings {
 export interface PluginSettingsValues {
 	/** `packageId` → setting 名 → 值。 */
 	readonly values?: Readonly<Record<string, Readonly<Record<string, string | number | boolean>>>>;
+	/**
+	 * 可选文件 watcher：观察已安装/声明式 plugin root 的变更并在 **idle 边界**
+	 * 请求交换 snapshot。默认关闭（D13：user 层授权，workspace 不拥有该 authority；
+	 * in-session 变更需重开会话才生效）。
+	 */
+	readonly watch?: boolean;
 }
 
 export interface RecapSettings {
@@ -590,7 +596,11 @@ const SKILLS_PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 function sanitizePluginSettings(value: unknown): PluginSettingsValues | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
 	const rawValues = (value as Record<string, unknown>).values;
-	if (typeof rawValues !== "object" || rawValues === null || Array.isArray(rawValues)) return undefined;
+	const watch = typeof (value as Record<string, unknown>).watch === "boolean" ? (value as Record<string, unknown>).watch as boolean : undefined;
+	if (typeof rawValues !== "object" || rawValues === null || Array.isArray(rawValues)) {
+		// 只声明 watch 也是合法的 settings；此时没有值层。
+		return watch === undefined ? undefined : { watch };
+	}
 	const values: Record<string, Record<string, string | number | boolean>> = {};
 	for (const [packageId, entry] of Object.entries(rawValues as Record<string, unknown>)) {
 		if (packageId.length === 0 || packageId.length > 128) continue;
@@ -603,7 +613,8 @@ function sanitizePluginSettings(value: unknown): PluginSettingsValues | undefine
 		}
 		if (Object.keys(settings).length > 0) values[packageId] = Object.freeze(settings);
 	}
-	return Object.keys(values).length === 0 ? undefined : { values: Object.freeze(values) };
+	if (Object.keys(values).length === 0) return watch === undefined ? undefined : { watch };
+	return { values: Object.freeze(values), ...(watch === undefined ? {} : { watch }) };
 }
 
 /** 结构清洗 skills policy；非法结构整体丢弃（不拒绝整个 settings 文件）。 */

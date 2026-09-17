@@ -423,3 +423,34 @@ describe("plugin settings value layer", () => {
 		}
 	});
 });
+
+describe("plugin watch setting", () => {
+	it("is absent by default and round-trips when set", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			expect((await loadProjectSettings({ layout })).plugins).toBeUndefined();
+			await saveProjectSettings({ layout }, { plugins: { watch: true } });
+			expect((await loadProjectSettings({ layout })).plugins?.watch).toBe(true);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the watch flag when it is the only declared key and drops a non-boolean", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			writeFileSync(layout.settings, JSON.stringify({ plugins: { watch: "yes" } }), "utf8");
+			expect((await loadProjectSettings({ layout })).plugins).toBeUndefined();
+			writeFileSync(layout.settings, JSON.stringify({ plugins: { watch: false, values: { "alpha@local": { theme: "dark" } } } }), "utf8");
+			const loaded = await loadProjectSettings({ layout });
+			expect(loaded.plugins?.watch).toBe(false);
+			expect(loaded.plugins?.values?.["alpha@local"]).toEqual({ theme: "dark" });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});
