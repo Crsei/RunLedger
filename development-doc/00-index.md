@@ -42,6 +42,7 @@
 | 多策略 Compact 适配器 | [接口与 C0–C5 实施方案](plan-compact-memory/01-implementation-plan.md#compact-strategy-adapter) | 策略 registry、single-pass / hierarchical、Owner 提交与恢复、provider 原生扩展边界 | 2026-09-15 已接 Session Owner 的 manual/auto/overflow、fork 回退与 Responses native；实现与本地验收见主计划 §0.5，真实 OpenAI provider 待验收 |
 | Compact × oh-my-pi 压缩服务接入 | [`compact/README.md`](compact/README.md)、[`00 omp 服务事实`](compact/00-oh-my-pi-compaction-services.md)、[`01 接入计划`](compact/01-integration-plan.md) | omp 压缩机制接入现有 compact 适配器的增量方案：token 预算切点、摘要格式 seam 与迭代 update、文件清单、投影剪枝、handoff、provider 原生流式压缩 与 length-stop 恢复 | 2026-09-15 O0 合同冻结、O1–O5 本地验收完成；真实 OpenAI provider 待验收、O6 deferred、O7 blocked，公共契约与 C 阶段状态仍查 `plan-compact-memory/01` |
 | Plugin / MCP / Skill / Hooks | [`plugin-mcp-skill-hooks/01-implementation-plan.md`](plugin-mcp-skill-hooks/01-implementation-plan.md)、[`plugin-mcp-skill-hooks/02-skill-registry-discovery-provider-refactor-plan.md`](plugin-mcp-skill-hooks/02-skill-registry-discovery-provider-refactor-plan.md) | 扩展 discovery/trust/snapshot、Skill、Hook、MCP、Plugin；目标为 SessionRuntime-owned lifecycle 与 managed process 接线 | 本专项里程碑证据、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
+| Extensions 运行时 / Plugin 分发与 Marketplace | [`plugin-mcp-skill-hooks/03-extensions-runtime-and-plugin-marketplace-replication-plan.md`](plugin-mcp-skill-hooks/03-extensions-runtime-and-plugin-marketplace-replication-plan.md) | oh-my-pi `3b3a6dc9bb` 的可执行扩展运行时(ExtensionAPI/事件桥/工具准入)与插件安装、scope、Claude 兼容 marketplace 的复刻设计与阶段 | `planned`；D1–D15 与 P0–P7 见该文；§12 Q1–Q4 未裁定阻塞 P0；总状态仍归 `01` |
 | Worktree / Sandbox / Permission | [`worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[`01-multiplatform-workspace-path-adaptation-plan.md`](worktree-sandbox-permisson/01-multiplatform-workspace-path-adaptation-plan.md)、[`07-three-permission-presets-and-tui-settings-plan.md`](worktree-sandbox-permisson/07-three-permission-presets-and-tui-settings-plan.md) | Workspace/Worktree、Permission/Approval、ExecutionGateway；OS sandbox 扩展已冻结；三种权限预设与 TUI 设置从 `07` 分阶段推进 | `00` 总入口、`01` 当前适配状态、`07` 预设/TUI 状态、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
 | 运行轨迹 / Trajectory | [`trajectory/README.md`](trajectory/README.md)、[实施计划](trajectory/01-runtime-trajectory-implementation-plan.md) | 默认本地记录、配置关闭、Run/Step/Call 查询与 `/trajectory` 面板 | 本地实现已接线；[验证与缺口](trajectory/02-implementation-verification.md)单列自动化/TTY/平台证据 |
 | Runtime Trace / Opik | [`runtime/trace/README.md`](runtime/trace/README.md) | Event Store、Artifact Store、模型/工具/上下文/耗时/Token/费用记录、Opik 投影与父子树 | `runtime/trace/00-opik-agent-observability-plan.md`、当前代码/tests |
@@ -140,7 +141,8 @@ development-doc/
 │   └── 02-oh-my-pi-provider-port-execution-checklist.md
 ├── plugin-mcp-skill-hooks/
 │   ├── 01-implementation-plan.md
-│   └── 02-skill-registry-discovery-provider-refactor-plan.md
+│   ├── 02-skill-registry-discovery-provider-refactor-plan.md
+│   └── 03-extensions-runtime-and-plugin-marketplace-replication-plan.md
 ├── plan-compact-memory/
 │   ├── 00-reference.md
 │   └── 01-implementation-plan.md

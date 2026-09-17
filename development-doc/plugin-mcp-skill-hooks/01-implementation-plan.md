@@ -7,6 +7,7 @@
 > grok-build 参考基线:`c68e39f60462f28d9be5e683d9cbe2c57b1a5027` (`main`)
 
 > Skill registry/discovery provider 的结构重构、兼容来源开关、冲突语义与分阶段门禁见 [`02-skill-registry-discovery-provider-refactor-plan.md`](02-skill-registry-discovery-provider-refactor-plan.md)。本文件继续拥有总状态；`02` 只拥有该专题的设计与阶段证据。
+> 可执行扩展运行时(ExtensionAPI/事件桥/工具准入)与 Plugin 安装、scope、Claude 兼容 marketplace 的复刻设计与阶段见 [`03-extensions-runtime-and-plugin-marketplace-replication-plan.md`](03-extensions-runtime-and-plugin-marketplace-replication-plan.md)。该文正面接管本文 §13 的两条显式非目标(“进程内 plugin entrypoint”与“marketplace/Git clone/update/自动升级”)与 M7 的一组后置项,其 D1 属架构边界变更,须先经 03 §12 Q1 裁定;裁定后本文 §13 与 M7 必须同步修订,总状态仍由本文件拥有。
 
 ## 0. 输入状态与使用方式
 
