@@ -12,6 +12,7 @@
 > 修订记录:2026-09-17 P2 部分收口。工具准入(保留名/跨扩展冲突/声明 capability/有界 schema)与 owner 侧 `setActiveTools` 语义落地;`runledger/extensions` 作者子路径发布。
 > 修订记录:2026-09-17 P3 收口。事件投影裁剪层与事件桥落地;host 侧改为逐 handler 记录 + `SessionEnd` 并行短预算;abort 传播;真实子进程端到端验证 PreToolUse 重写强制重新授权。
 > 修订记录:2026-09-17 P4 收口。owner 侧动作处理器与回执账本落地;逐动作形状校验、同 ID 重放不二次副作用、异体 conflict、不确定结果记 uncertain;真实子进程验证动作往返。
+> 修订记录:2026-09-17 P6 `autoUpdate` 接线收口。settings 新增 user 层 `marketplace.autoUpdate`(`off|notify|auto`,非法值 fail loud);`marketplace.discover` 经 `autoUpdatePlan` 返回 `autoUpdate:{configured,effective,degraded}` 与 `pendingUpdates`;CLI 新增 `marketplace autoUpdate [off|notify|auto]`(协议 operation 全小写 `marketplace.auto_update`)。真实 CLI 验证四种模式、pending→upgrade→清空闭环,并新增"operation 名必须匹配 handshake descriptor pattern"的回归测试——camelCase 的 CLI 动词漏进 operation 会让整个 handshake 变成 `frame_malformed`。
 > 修订记录:2026-09-17 P6 TUI 确认边界与 `notify` 落点收口。新增 `src/tui/components/extension-confirm-modal.ts`(`y`/Enter 确认、`n`/Esc 取消);`/plugins` `/skills` 的 `t` 改为先确认再 mutate,取消回到同一 toggle 视图;打开 `/plugins` 时把 `marketplace.discover` 的待更新项转成可见 notice(D10 的 TUI 出口)。另修正声明式 skill descriptor 命名:按 skills root 的 immediate-child 目录命名,`skill list` 不再把 `./skills` 显示成 `skills`。
 > 修订记录:2026-09-17 P6 `plugin features` 收口。§5.2 契约增补 `features[]` 声明(上限 64);新增 `src/extensions/plugins/features.ts`(声明读取、三态选择合成、只改 `enabledFeatures` 的落账)与 `plugin.features.read|write` 操作、CLI `plugin features [read|set <id> <*|none|a,b>]`;真实 CLI 验证 `*`/`none`/精确集合三态、`feature_unknown` exit 1、用法错误 exit 2,且 enable 位全程保持 false。
 > 修订记录:2026-09-17 P5 安装内核收口。受治理分发端口 + Node 适配器(写入 containment、bounded copyTree)、source 解析(npm 显式拒绝)、三分发账本(未知键 passthrough)、staging→digest→原子激活、卸载/链接/回滚、激活门禁。
@@ -344,7 +345,7 @@ Session Owner(每 owned Session)
 | `src/cli/control-commands.ts` | plugin 动作扩展(P6 已加 `distribution`/`doctor`/`install`/`uninstall`/`link`/`upgrade`/`config`/`features` 与 `marketplace discover|add|remove|update|upgrade`;只剩 TUI 确认边界待做) |
 | `src/cli/{args,main}.ts` | 新子命令与 source 解析;`--network` 等价授权衔接 |
 | `src/tui/interactive/extension-workflow.ts` + modal | 信任/取消信任的确认边界已交付(`ExtensionConfirmModal`);TUI 目前**没有** install/upgrade/config 入口,因此那三个动作的确认边界尚不可达 |
-| `src/storage/settings-manager.ts` | 新增 extensions 相关 settings 键(user 授权、workspace 收窄) |
+| `src/storage/settings-manager.ts` | 新增 extensions 相关 settings 键(user 授权、workspace 收窄):`plugins.values`/`plugins.watch`/`marketplace.autoUpdate` |
 | `src/contracts/index.ts` | 导出扩展契约 |
 | `docs/subsystems/extensions.md`、`docs/cli.md` | 行为与命令面同步 |
 | `development-doc/plugin-mcp-skill-hooks/01-implementation-plan.md` | §13 非目标与 M7 条目按本计划修订 |
@@ -425,7 +426,9 @@ Session Owner(每 owned Session)
 - 已完成(`plugin features`):manifest 增补 `features` 声明形状(§5.2 契约增量,上限 64),`plugins/features.ts` + `plugin.features.read|write` + CLI `plugin features [read|set <id> <*|none|a,b>]` 全链落地。三态语义与安装语法一致:`*` = 声明默认值(`null`)、`none` = 全关(`[]`)、`a,b` = 精确集合;写回只动 `registry.json` 的 `enabledFeatures`,不改变 enable/trust/host 状态;未声明名字返回 `feature_unknown` 且不落盘。
 - 真实 CLI 验证(隔离 `RUNLEDGER_DIR`、构建后 `dist`、PTY):`plugin features` 读为 `selection:null`/`enabled:["bundle"]` → `set audit`(exit 0,`enabled:["audit"]`)→ `set none`(exit 0,`enabled:[]`)→ `set '*'`(exit 0,回到 `null`/`["bundle"]`)→ `set ghost`(**exit 1**,`feature_unknown`,账本保持 `null`)→ `set Audit`(**exit 2**,用法错误)→ `set audit,bundle`(exit 0,精确集合)→ `set beta@local audit`(exit 1,`plugin_not_installed`);全程 `plugin distribution` 保持 `enabled:false`,证明 feature 选择不蕴含启用。
 - 已完成(TUI 确认边界与 `notify` 落点,第十七批):`t` 不再直接改信任,而是先打开 `ExtensionConfirmModal`(`y`/Enter 确认,`n`/Esc 取消;取消后回到同一个 toggle 视图并保留搜索词与选中行),确认后才经 attempt barrier 发 `plugin.trust|untrust` / `skill.trust|untrust`,失败原因仍走 typed notice;打开 `/plugins` 时查询 `marketplace.discover`,有待更新项就转成一条可见 notice(含至多 3 个 packageId 与升级提示),这就是 `notify` 在 TUI 的可见出口(D10)。证据:`tests/tui/extension-selectors.test.ts` 新增/改写 3 用例(t 后未确认不得发 mutation、确认后发送并回到 toggle 视图、取消不发 mutation、pendingUpdates notice),`tests/tui/extension-manager-modal.test.ts` 新增 2 条确认视图用例。
-- 未完成:TUI 的 install/upgrade/config **入口本身**(TUI 尚无这三个动作的发起路径,所以它们的确认边界不可达——不是被绕过);`marketplace.autoUpdate` 还没有 settings 键,当前行为等价 `off`,`notify` 只能由"打开 /plugins"这一次查询触达。
+- 已完成(`autoUpdate` 接线,第十八批):settings 新增 user 层键 `marketplace.autoUpdate`(`off|notify|auto`,缺省 `off`;非法值 fail loud 而不是静默降级)。组合的 `marketplace.discover` read 现在经 `autoUpdatePlan` 返回 `autoUpdate:{configured,effective,degraded,reason?}` 与 `pendingUpdates`——`notify` 的可见出口因此同时有 CLI 查询与 TUI notice 两条;`auto` 只在 read 里刷新 catalog,**不代替**用户安装/启用/信任;写入路径只改 settings 一个键。CLI 新增 `marketplace autoUpdate [off|notify|auto]`(省略模式即读)。
+- 真实 CLI 验证(隔离 `RUNLEDGER_DIR`、构建后 `dist`、PTY):`marketplace discover` 默认 `configured/effective:"off"` → `autoUpdate notify`(exit 0,协议 operation `marketplace.auto_update`)→ `discover` 反映 `notify` → `autoUpdate auto` → `discover` 反映 `auto` 且 catalog `updatedAt` 前移 → `autoUpdate sometimes`(**exit 2** 用法错误)→ `autoUpdate off` → `discover` 回到 `off`。另把 catalog/包内容升到 1.1.0 后:`discover` 给出 `pendingUpdates:[{alpha@local,1.0.0→1.1.0}]`,`marketplace upgrade local` 升到 1.1.0(exit 0)后 `pendingUpdates` 清空;全程 `plugin features` 的选择(`["audit","bundle"]`)在升级后保持不变。
+- 未完成:TUI 的 install/upgrade/config **入口本身**(TUI 尚无这三个动作的发起路径,所以它们的确认边界不可达——不是被绕过);`autoUpdate` 的 TUI/TTY 级人机验证(自动化用例覆盖了 notice 逻辑,但没有真实 TTY 里的按键证据)。
 
 ### P7 — 加固与真实 smoke——**进行中**
 
@@ -445,7 +448,7 @@ Session Owner(每 owned Session)
 - 已完成(第十三批,**可选文件 watcher**):`reload-watcher.ts` + 8 条单测。默认关闭、`start()` 幂等且无 root 时不订阅、变更在窗口内合并成一次请求、`pending` 如实回传(不自行交换正在使用的 generation)、`stop()` 清订阅与 timer、审计只记 outcome、debounce 范围校验。Node 侧订阅实现留在 storage 适配层(扩展域禁 raw fs)。**已接线到生产组合**(2026-09-17 第十五轮):settings `plugins.watch`(默认关闭、user 层授权)控制启用;组合构造期读一次 settings(in-session 变更需重开会话);roots 取声明式 + 分发的 plugin root;`requestReload` **等** `manager.reload()` 的结果,因此 turn 进行中返回 `pending`、idle 边界返回 `ready`——交换与否由既有 snapshot 决定。watcher 经 composition options 传入,便于用 stub 断言 start/stop 顺序。
 - 已完成(第十五批,**watcher 生产接线**):`plugins.watch` settings 键(默认关闭、user 层授权)+ 组合注入(roots 取声明式与分发 plugin root;`requestReload` 等 `manager.reload()` 的真实结果,turn 进行中为 `pending`、idle 边界为 `ready`;watcher 不可用经会话扩展审计上报)。
 - 已完成(第十六批,**descriptor 命名**):`PluginManager` 的声明式 skill descriptor 不再用声明路径的最后一段命名,而是按 `listSkillEntries` 的同一语义枚举 skills root 的 immediate-child 目录、对含 `SKILL.md` 的子目录各发一条 descriptor(名字取子目录名)。`./skills` 现在在 `skill list` 里直接显示 `review`/`audit` 而不是 `skills`;子目录都没有 `SKILL.md` 时退回原命名,保证把单个 skill 目录写进声明的形状仍然可见并另给 `skill.skills_root_empty` warning。证据:`tests/extensions/skill-declaration-shape.test.ts` 断言 descriptor 名为 `review` 且多 skill root 展开为 `["audit","review"]`。
-- 未完成:TUI 的 install/upgrade/config 入口(见 P6);`marketplace.autoUpdate` settings 键未落地。
+- 未完成:TUI 的 install/upgrade/config 入口(见 P6);TUI/TTY 级的人机验证仍缺真实按键证据(自动化覆盖了 notice 与确认边界的分支)。
 
 ## 8. 事件与契约增量
 
@@ -575,8 +578,8 @@ git diff --check
 | P3 事件桥 | **done** | `src/extensions/events/**`;319 用例通过(含真实子进程的 PreToolUse 重写重新授权与 `SessionEnd` 并行证据);`tsc -p tsconfig.json`/`tsconfig.tests.json`、`check:current-format`、`check:runtime-boundaries`、`check:package-boundaries` 通过 |
 | P4 运行时动作 | **done** | `src/extensions/actions/**`(校验、回执账本、同 ID 重放/conflict/uncertain 不重试);actor port 已在 P5 接到真实命令面,并有 `tests/runtime/session-runtime/extension-action-actor.test.ts` 6 条直接单测 |
 | P5 分发:安装/scope/激活 | **done** | 安装内核、activation 门禁、catalog/settings、cache/fetcher/manager、doctor、分发面接线、受治 git materialize、声明式回灌、host 资格判定、host 装配/工具准入调用点、`extension.host.inspect`、`plugin.config.*`(含 settings 键空间)与 actor 命令面(3 个真实动作 + 4 个带原因的显式拒绝)均已交付,并有 6 条直接单测 |
-| P6 CLI/TUI 与 Marketplace | **partial** | CLI 词表与真实闭环已交付(`marketplace add/discover`、`plugin install/distribution/list/doctor/config/features` 全部 exit 0,含 `feature_unknown` exit 1 与用法错误 exit 2,见 §15.2);`autoUpdate` 的可见出口为 CLI 可查询的 `pendingUpdates` **加 TUI notice**(打开 `/plugins` 时提示,见第十七批);TUI 信任确认边界已交付(t 只打开确认视图,确认后才 mutate);剩余 TUI 的 install/upgrade/config 入口本身与 `autoUpdate` settings 键 |
-| P7 加固与真实 smoke | **partial** | 失败语义矩阵(16 用例)、预算/上限矩阵(15 用例)、两份文档同步、真实 TTY 九步闭环(exit 0、`activation:"ready"`)、"调用"段缺口定位与收口(4 用例 + `skill.skills_root_empty` warning)、文件 watcher 全链(协调器 8 + 适配器 5 + 接线 2 用例,默认关闭、`plugins.watch` 启用)、descriptor 命名(按 skills root 的 immediate-child 目录命名,`skill list` 显示真实 skill 名)均已交付;剩余 TUI 的 install/upgrade/config 入口与 `autoUpdate` settings 键 |
+| P6 CLI/TUI 与 Marketplace | **partial** | CLI 词表与真实闭环已交付(`marketplace add/discover/autoUpdate/upgrade`、`plugin install/distribution/list/doctor/config/features` 全部 exit 0,含 `feature_unknown` exit 1 与用法错误 exit 2,见 §15.2);`autoUpdate` 已接线(user 层 settings 键 + `autoUpdatePlan`,可见出口为 CLI `pendingUpdates` **加 TUI notice**,见第十七/十八批);TUI 信任确认边界已交付(t 只打开确认视图,确认后才 mutate);剩余 TUI 的 install/upgrade/config 入口本身 |
+| P7 加固与真实 smoke | **partial** | 失败语义矩阵(16 用例)、预算/上限矩阵(15 用例)、两份文档同步、真实 TTY 九步闭环(exit 0、`activation:"ready"`)、"调用"段缺口定位与收口(4 用例 + `skill.skills_root_empty` warning)、文件 watcher 全链(协调器 8 + 适配器 5 + 接线 2 用例,默认关闭、`plugins.watch` 启用)、descriptor 命名(按 skills root 的 immediate-child 目录命名,`skill list` 显示真实 skill 名)、`autoUpdate` 接线(user 层 settings 键 + `autoUpdatePlan` + 真实 CLI 四模式与 pending→upgrade 闭环)均已交付;剩余 TUI 的 install/upgrade/config 入口 |
 
 ### 15.2 实施记录
 

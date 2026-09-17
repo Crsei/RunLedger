@@ -100,7 +100,7 @@ runledger --session-id <session-id> mcp doctor
 
 省略会话选择参数会走新建流程，不会自动操作最近会话。输出是 JSON 结果；领域操作返回 `ok: false` 时退出码为 1，解析错误通常为 2。能力以认证握手协商结果为准；表内“未接通”表示标准 Session 当前未暴露该操作，不是语法错误。
 
-分发与 marketplace 命令补充说明：安装/升级/链接都只写 canonical `plugins/` 下的版本化 store 与账本，**安装不授予执行**——首次启用仍必须显式 `plugin trust`。`install/upgrade/uninstall/link/marketplace add` 只接受 `--scope user|workspace`，其他取值在解析期拒绝；当前 Session 组合固定把包落到 workspace scope。`git`/`url` 源经会话的受治 managed process 执行 clone/fetch，网络策略默认拒绝，被拒时返回失败而不是回退到本地猜测路径。`plugin features` 的 feature 选择只是**收窄声明集合**：`*`/`none`/`a,b` 三种选择都只写账本的 `enabledFeatures` 字段，既不启用也不授予信任。真实闭环核对见 [Extensions 计划](../development-doc/plugin-mcp-skill-hooks/03-extensions-runtime-and-plugin-marketplace-replication-plan.md) §15.2。
+分发与 marketplace 命令补充说明：安装/升级/链接都只写 canonical `plugins/` 下的版本化 store 与账本，**安装不授予执行**——首次启用仍必须显式 `plugin trust`。`install/upgrade/uninstall/link/marketplace add` 只接受 `--scope user|workspace`，其他取值在解析期拒绝；当前 Session 组合固定把包落到 workspace scope。`git`/`url` 源经会话的受治 managed process 执行 clone/fetch，网络策略默认拒绝，被拒时返回失败而不是回退到本地猜测路径。`plugin features` 的 feature 选择只是**收窄声明集合**：`*`/`none`/`a,b` 三种选择都只写账本的 `enabledFeatures` 字段，既不启用也不授予信任。`marketplace autoUpdate` 只改 user 层 settings 的一个键；`auto` 模式下的联网刷新发生在随后的 `marketplace discover`（`autoUpdatePlan`），写入路径不会偷偷联网。真实闭环核对见 [Extensions 计划](../development-doc/plugin-mcp-skill-hooks/03-extensions-runtime-and-plugin-marketplace-replication-plan.md) §15.2。
 
 | 命令（均加 `runledger [会话选择参数]` 前缀） | 参数与默认动作 | 标准 Session 状态 |
 |---|---|---|
@@ -113,6 +113,7 @@ runledger --session-id <session-id> mcp doctor
 | `plugin config [read] / set <plugin-id> <key> <value>` | 默认 `read`；`set` 的值以字符串传入 | 读返回每个已安装包的声明式 settings schema 与 user 层生效值(补默认值)；写先按声明校验再只合并被接受的键，secret 只在 user 层 |
 | `plugin features [read] / set <plugin-id> <*\|none\|feature,...>` | 默认 `read`；`*` = 声明默认值、`none` = 全关、逗号列表 = 精确集合 | 读返回每个已安装包的 feature 声明、账本选择与生效集合；写只改 `enabledFeatures`，不启用、不信任、不重启 host；未声明名字返回 `feature_unknown`(退出码 1)，非法选择是解析错误(退出码 2) |
 | `marketplace [discover] / add / remove / update / upgrade` | 默认 `discover`；`add <name> <github\|git\|url\|local> <uri>`；`remove`/`update <name>`；`upgrade [name]` | 注册/移除/刷新 catalog 与按 catalog 版本升级；`pendingUpdates` 可在 CLI 查询，并会在 TUI 打开 `/plugins` 时以 notice 提示 |
+| `marketplace autoUpdate [off\|notify\|auto]` | 省略模式时读取当前配置 | 写在 user 层 settings；`notify` 的可见出口是 `discover` 的 `pendingUpdates` 与 TUI notice，`auto` 只刷新 catalog，安装/启用/信任仍是用户的决定 |
 | `skill [list]` | 默认 `list` | 查询 Skill catalog |
 | `skill trust / untrust <skill-id>` | ID 必填 | 修改 Skill trust，仍受领域校验 |
 | `skill provider list` | 显式 `provider list` | 查询 Skill provider |
