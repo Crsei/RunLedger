@@ -7,7 +7,7 @@
 > grok-build 参考基线:`c68e39f60462f28d9be5e683d9cbe2c57b1a5027` (`main`)
 
 > Skill registry/discovery provider 的结构重构、兼容来源开关、冲突语义与分阶段门禁见 [`02-skill-registry-discovery-provider-refactor-plan.md`](02-skill-registry-discovery-provider-refactor-plan.md)。本文件继续拥有总状态；`02` 只拥有该专题的设计与阶段证据。
-> 可执行扩展运行时(ExtensionAPI/事件桥/工具准入)与 Plugin 安装、scope、Claude 兼容 marketplace 的复刻设计与阶段见 [`03-extensions-runtime-and-plugin-marketplace-replication-plan.md`](03-extensions-runtime-and-plugin-marketplace-replication-plan.md)。该文正面接管本文 §13 的 marketplace/Git clone/update/自动升级非目标与 M7 的一组后置项;其 D1 属架构边界变更。**2026-09-17 P0 收口:`03` §12 Q1–Q4 已裁定,本文 §13 与 M7 已同步修订**——进程内 plugin entrypoint 仍是未放开的非目标(改由 `03` D1 的 host 子进程承载),签名分发与 publisher trust root 仍是共同非目标,总状态仍由本文件拥有。
+> 可执行扩展运行时(ExtensionAPI/事件桥/工具准入)与 Plugin 安装、scope、Claude 兼容 marketplace 的复刻设计与阶段见 [`03-extensions-runtime-and-plugin-marketplace-replication-plan.md`](03-extensions-runtime-and-plugin-marketplace-replication-plan.md)。该文正面接管本文 §13 的 marketplace/Git clone/update/自动升级非目标与 M7 的一组后置项;其 D1 属架构边界变更。**2026-09-17 `03` 进度:P0 契约冻结、P1 host 进程与协议骨架、P2 工具准入与作者子路径、P3 事件投影与桥、P4 运行时动作层已完成并各自通过验证;P5 分发/marketplace、P6 CLI/TUI、P7 加固仍进行中,`03` §15 是唯一阶段证据表。** `03` §12 Q1–Q4 已裁定,本文 §13 与 M7 已同步修订——进程内 plugin entrypoint 仍是未放开的非目标(改由 `03` D1 的 host 子进程承载),签名分发与 publisher trust root 仍是共同非目标,总状态仍由本文件拥有。
 
 ## 0. 输入状态与使用方式
 
