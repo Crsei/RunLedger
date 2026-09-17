@@ -192,7 +192,7 @@ describe("TUI extension mutation wiring routes through commandSessionDomain", ()
     expect(requestRender.mock.invocationCallOrder.at(-1)).toBeGreaterThan(update.mock.invocationCallOrder.at(-1)!);
   });
 
-  it("trust toggling routes plugin.trust/untrust with the selected plugin id", async () => {
+  it("trust requires an explicit confirmation before plugin.trust is sent", async () => {
     const controller = stubController({
       "extension.inspect": extensionSnapshot([{ ...plugin, trusted: false }]),
     });
@@ -200,12 +200,53 @@ describe("TUI extension mutation wiring routes through commandSessionDomain", ()
     await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("plugin.list", "plugins", "/plugins");
     await settleFrames();
     const tui = (mode as unknown as { ui: TUI }).ui;
-    const modal = tui.getOverlay() as unknown as { handleInput(data: string): void };
-    modal.handleInput("t");
-    await settleFrames();
-
     const command = controller.commandSessionDomain as ReturnType<typeof vi.fn>;
+
+    // `t` 只打开确认视图：此刻不得发出任何 mutation。
+    const toggle = tui.getOverlay() as unknown as { handleInput(data: string): void };
+    toggle.handleInput("t");
+    await settleFrames();
+    expect(command).not.toHaveBeenCalled();
+    const confirm = tui.getOverlay() as unknown as { handleInput(data: string): void; render(width: number): string[] };
+    expect(confirm).not.toBe(toggle);
+    expect(confirm.render(80).join("\n")).toContain("Trust fixture?");
+
+    confirm.handleInput("enter");
+    await settleFrames();
     expect(command).toHaveBeenCalledWith("plugin.trust", { pluginId: "plugin:fixture" }, expect.objectContaining({ expectedRevision: 0 }));
+    // 确认后回到 toggle 视图（overlay 不再是确认视图）。
+    expect(tui.getOverlay()).toBe(toggle);
+  });
+
+  it("cancelling the trust confirmation sends nothing and restores the toggle view", async () => {
+    const controller = stubController({
+      "extension.inspect": extensionSnapshot([{ ...plugin, trusted: false }]),
+    });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("plugin.list", "plugins", "/plugins");
+    await settleFrames();
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    const toggle = tui.getOverlay() as unknown as { handleInput(data: string): void };
+    toggle.handleInput("t");
+    await settleFrames();
+    const confirm = tui.getOverlay() as unknown as { handleInput(data: string): void };
+    confirm.handleInput("escape");
+    await settleFrames();
+    expect(controller.commandSessionDomain).not.toHaveBeenCalled();
+    expect(tui.getOverlay()).toBe(toggle);
+  });
+
+  it("surfaces queryable pending marketplace updates as a notice when /plugins opens", async () => {
+    const controller = stubController({
+      "extension.inspect": extensionSnapshot([plugin]),
+      "marketplace.discover": { marketplaces: [{ name: "local" }], pendingUpdates: [{ packageId: "alpha@local", name: "alpha", installedVersion: "1.0.0", availableVersion: "1.1.0", marketplace: "local" }] },
+    });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const notice = vi.spyOn(mode as unknown as { showNotice(text: string, kind?: "note" | "error"): void }, "showNotice");
+    await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("plugin.list", "plugins", "/plugins");
+    await settleFrames();
+    expect(controller.querySessionDomain).toHaveBeenCalledWith("marketplace.discover", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
+    expect(notice).toHaveBeenCalledWith(expect.stringContaining("1 plugin update(s) available (alpha@local)"), "note");
   });
 
   it.each([false, true])("trusts a standalone Skill through its exact resource ID (trusted=%s)", async (trusted) => {
@@ -215,14 +256,19 @@ describe("TUI extension mutation wiring routes through commandSessionDomain", ()
     await (mode as unknown as { openExtensionSelector(op: "skill.list", label: string, name: string): Promise<void> }).openExtensionSelector("skill.list", "skills", "/skills");
     await settleFrames();
     const tui = (mode as unknown as { ui: TUI }).ui;
-    const modal = tui.getOverlay() as unknown as { handleInput(data: string): void; update(items: readonly unknown[]): void };
-    const update = vi.spyOn(modal, "update");
+    const toggle = tui.getOverlay() as unknown as { handleInput(data: string): void; update(items: readonly unknown[]): void };
+    const update = vi.spyOn(toggle, "update");
     const render = vi.spyOn(tui, "requestRender");
-    modal.handleInput("t");
+    // 先过确认边界，再检查 mutation、刷新顺序与后续 reload。
+    toggle.handleInput("t");
+    await settleFrames();
+    const confirm = tui.getOverlay() as unknown as { handleInput(data: string): void };
+    confirm.handleInput("y");
     await settleFrames();
     expect(render.mock.invocationCallOrder.at(-1)).toBeGreaterThan(update.mock.invocationCallOrder.at(-1)!);
     expect(controller.commandSessionDomain).toHaveBeenCalledWith(trusted ? "skill.untrust" : "skill.trust", { skillId: "skill:fixture" }, expect.objectContaining({ expectedRevision: 0 }));
-    modal.handleInput("r");
+    expect(tui.getOverlay()).toBe(toggle);
+    toggle.handleInput("r");
     await settleFrames();
     expect(render.mock.invocationCallOrder.at(-1)).toBeGreaterThan(update.mock.invocationCallOrder.at(-1)!);
     expect(controller.commandSessionDomain).toHaveBeenCalledWith("extension.reload", {}, expect.objectContaining({ expectedRevision: 0 }));

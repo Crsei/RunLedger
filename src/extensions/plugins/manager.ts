@@ -12,7 +12,7 @@ import { runtimeDigest } from "../../runtime/protocol/foundation.ts";
 import type { ResourceIdentity } from "../../runtime/resources/types.ts";
 import { DEFAULT_EXTENSION_LIMITS, extensionDiagnostic, sortExtensionDiagnostics, type ExtensionDiagnostic } from "../diagnostics.ts";
 import { createExtensionResourceIdentity, createExtensionResourceProvenance, qualifiedResourceId } from "../identity.ts";
-import { resolveDeclaredPath } from "../paths.ts";
+import { resolveContainedPath, resolveDeclaredPath } from "../paths.ts";
 import type { ExtensionStoragePort } from "../storage-port.ts";
 import type { ExtensionResourceDescriptor, ExtensionRuntimeScope, ExtensionSource, ExtensionSourceRoot } from "../types.ts";
 import { buildResourceManifestDigest, digestDirectory, digestFile, type ExtensionManifestDigest } from "../trust/digest.ts";
@@ -183,6 +183,31 @@ function componentName(path: string, fallback: string): string {
 	return name.length > 0 ? name : fallback;
 }
 
+/**
+ * 声明的 `skills[]` 是 skills **root**（与 `listSkillEntries` 同一语义）：
+ * descriptor 名应取每个 immediate-child skill 目录的名字，而不是 root 自己的
+ * 最后一段——否则 `./skills` 在 `skill list` 里显示成 `skills`，看不到真正的
+ * `review`。子目录里都没有 `SKILL.md` 时退回声明路径的 basename，这样把单个
+ * skill 目录本身写进声明的形状仍然可见（并另有 `skill.skills_root_empty`）。
+ */
+async function declaredSkillNames(storage: ExtensionStoragePort, skillsRoot: string): Promise<readonly string[]> {
+	const listed = await storage.readDirectory(skillsRoot);
+	if (!listed.ok) return [componentName(skillsRoot, "skill")];
+	const directories = listed.value
+		.filter((entry) => entry.kind === "directory")
+		.slice(0, DEFAULT_EXTENSION_LIMITS.maxEntries)
+		.sort((left, right) => left.name.localeCompare(right.name));
+	const names: string[] = [];
+	for (const entry of directories) {
+		const contained = await resolveContainedPath(storage, skillsRoot, entry.name);
+		if (!contained.ok) continue;
+		const skillFile = await storage.stat(`${contained.path}/SKILL.md`);
+		if (!skillFile.ok || skillFile.value.kind !== "file") continue;
+		if (entry.name.length > 0) names.push(entry.name);
+	}
+	return names.length > 0 ? Object.freeze(names) : [componentName(skillsRoot, "skill")];
+}
+
 async function readJson(storage: ExtensionStoragePort, path: string, maxBytes: number): Promise<{ readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly message: string }> {
 	const read = await storage.readFile(path, maxBytes);
 	if (!read.ok) return read;
@@ -284,9 +309,12 @@ export class PluginManager {
 					diagnostics.push(diagnostic);
 					continue;
 				}
-				const name = componentName(path.path, "skill");
 				if (!trustedAndEnabled) {
-					descriptors.push(componentDescriptor({ plugin, kind: "skill", name, path: path.path, digest: binding.combinedDigest, enabled: plugin.descriptor.enabled, trusted: plugin.descriptor.trusted, ready: false }));
+					// 未启用/未信任时只发布声明式 descriptor；名字按 skills root 的
+					// immediate-child skill 目录展开，避免把 root 名当成 skill 名。
+					for (const name of await declaredSkillNames(this.#options.storage, path.path)) {
+						descriptors.push(componentDescriptor({ plugin, kind: "skill", name, path: path.path, digest: binding.combinedDigest, enabled: plugin.descriptor.enabled, trusted: plugin.descriptor.trusted, ready: false }));
+					}
 					continue;
 				}
 				skillContributions.push({

@@ -5,6 +5,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { ExtensionToggleModal, type ExtensionToggleItem } from "../../src/tui/components/extension-toggle-modal.ts";
+import { ExtensionConfirmModal } from "../../src/tui/components/extension-confirm-modal.ts";
 import { McpServersModal, type McpServerViewItem } from "../../src/tui/components/mcp-servers-modal.ts";
 
 function renderLines(component: { render(width: number): string[] }, width = 80): string[] {
@@ -148,5 +149,38 @@ describe("McpServersModal", () => {
 		view.handleInput("down");
 		view.handleInput("r");
 		expect(onRestart).toHaveBeenCalledWith(servers[1]);
+	});
+});
+
+describe("ExtensionConfirmModal", () => {
+	it("renders the title, bounded details and the confirm hint", () => {
+		const view = new ExtensionConfirmModal({
+			title: "Trust fixture?",
+			detailLines: ["Trust binds the current content digest.", "Trust does not enable the resource."],
+			onConfirm: vi.fn(),
+			onCancel: vi.fn(),
+		});
+		const lines = renderLines(view);
+		expect(lines[0]).toContain("Trust fixture?");
+		expect(lines.some((line) => line.includes("binds the current content digest"))).toBe(true);
+		expect(lines.some((line) => line.includes("does not enable"))).toBe(true);
+		expect(lines.some((line) => line.includes("Press Enter or y to confirm; Esc or n to cancel"))).toBe(true);
+	});
+
+	it("confirms only on enter/y and cancels on escape/n", () => {
+		const onConfirm = vi.fn();
+		const onCancel = vi.fn();
+		const view = new ExtensionConfirmModal({ title: "Trust fixture?", onConfirm, onCancel });
+		view.handleInput("x");
+		expect(onConfirm).not.toHaveBeenCalled();
+		expect(onCancel).not.toHaveBeenCalled();
+		view.handleInput("escape");
+		expect(onCancel).toHaveBeenCalledTimes(1);
+		view.handleInput("n");
+		expect(onCancel).toHaveBeenCalledTimes(2);
+		view.handleInput("y");
+		expect(onConfirm).toHaveBeenCalledTimes(1);
+		view.handleInput("enter");
+		expect(onConfirm).toHaveBeenCalledTimes(2);
 	});
 });

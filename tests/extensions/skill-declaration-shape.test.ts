@@ -31,7 +31,7 @@ afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { rec
 
 const principalId = createRuntimeId("principal", "skill-shape-test");
 
-async function environment(skillsDeclaration: string) {
+async function environment(skillsDeclaration: string, extraSkills: readonly string[] = []) {
 	const base = await mkdtemp(join(tmpdir(), "runledger-skill-shape-"));
 	roots.push(base);
 	const home = join(base, "home");
@@ -39,6 +39,7 @@ async function environment(skillsDeclaration: string) {
 	const stateRoot = join(home, "state", "extensions");
 	await mkdir(join(source, ".runledger-plugin"), { recursive: true });
 	await mkdir(join(source, "skills", "review"), { recursive: true });
+	for (const extra of extraSkills) await mkdir(join(source, "skills", extra), { recursive: true });
 	const declaration = [skillsDeclaration];
 	await writeFile(join(source, "package.json"), JSON.stringify({
 		name: "alpha",
@@ -53,6 +54,9 @@ async function environment(skillsDeclaration: string) {
 		name: "alpha", version: "1.0.0", description: "alpha with a skill", skills: declaration,
 	}), "utf8");
 	await writeFile(join(source, "skills", "review", "SKILL.md"), "---\nname: review\ndescription: review things\n---\nbody\n", "utf8");
+	for (const extra of extraSkills) {
+		await writeFile(join(source, "skills", extra, "SKILL.md"), `---\nname: ${extra}\ndescription: ${extra} things\n---\nbody\n`, "utf8");
+	}
 
 	const storage = new NodeExtensionDistributionStorage({ runledgerHome: home });
 	const registry = new ExtensionDistributionRegistry({
@@ -104,6 +108,9 @@ describe("distribution plugin skills declaration shape", () => {
 		if (id === undefined) throw new Error("plugin must be discovered");
 		// enable 之前：只有声明式 descriptor，且是 blocked。
 		expect(discovered.descriptors.filter((descriptor) => descriptor.kind === "skill")).toHaveLength(1);
+		// descriptor 名按 root 的 immediate-child skill 目录给出，而不是取 root 自己
+		// 的最后一段（否则 `./skills` 会显示成 `skills`，看不出真正的 skill）。
+		expect(discovered.descriptors.find((descriptor) => descriptor.kind === "skill")?.displayName).toBe("review");
 		expect(discovered.skillContributions).toEqual([]);
 
 		await env.manager.trust(id);
@@ -119,6 +126,15 @@ describe("distribution plugin skills declaration shape", () => {
 		// trusted+enabled 的插件贡献应当是可激活/可被模型发现的。
 		expect(mine[0]?.descriptor.activation).toBe("ready");
 		expect(snapshot.modelDiscoverable.some((skill) => skill.descriptor.pluginId?.includes("distribution"))).toBe(true);
+	});
+
+	it("lists every immediate-child skill of a declared root in the descriptor view", async () => {
+		const env = await environment("./skills", ["audit"]);
+		const discovered = await env.manager.discover({ publish: true });
+		const names = discovered.descriptors.filter((descriptor) => descriptor.kind === "skill").map((descriptor) => descriptor.displayName);
+		// 声明的 root 名是 `skills`，但两个真实 skill 各自要出现在 descriptor 视图里。
+		expect(names.sort()).toEqual(["audit", "review"]);
+		expect(names).not.toContain("skills");
 	});
 
 	it("produces no skill when the declaration points at the skill directory itself", async () => {

@@ -6,6 +6,7 @@
 
 import { McpServersModal, type McpServerViewItem } from "../components/mcp-servers-modal.ts";
 import { ExtensionToggleModal, type ExtensionToggleItem } from "../components/extension-toggle-modal.ts";
+import { ExtensionConfirmModal } from "../components/extension-confirm-modal.ts";
 import { querySessionController, commandSessionController } from "../adapters/session-domain.ts";
 import type { ExtensionResourceView } from "../extensions/types.ts";
 import type { InteractiveModePorts } from "./types.ts";
@@ -26,6 +27,7 @@ export class ExtensionWorkflow {
 	/** B4+:打开 plugins/skills/hooks 管理视图(/plugins /skills /hooks)。 */
 	public openExtensionSelector(operation: "plugin.list" | "skill.list" | "hook.list", _kindLabel: string, commandName: string): Promise<void> {
 		const kind = operation === "plugin.list" ? "plugin" : operation === "skill.list" ? "skill" : "hook";
+		if (kind === "plugin") void this.notifyPendingMarketplaceUpdates();
 		return this.openExtensionToggleModal(kind, commandName);
 	}
 
@@ -94,6 +96,10 @@ export class ExtensionWorkflow {
 		const showTrust = true;
 		const showReload = kind === "plugin" || kind === "skill";
 		let modal: ExtensionToggleModal | undefined;
+		// 确认/取消之后回到同一个 toggle 视图（保留搜索词与选中行）。
+		const restore = (): void => {
+			if (modal !== undefined) port.showOverlayModal(modal, { anchor: "bottom-left" });
+		};
 		modal = new ExtensionToggleModal({
 			title: `${commandName} (${items.length})`,
 			subtitle: kind === "skill"
@@ -108,7 +114,7 @@ export class ExtensionWorkflow {
 				void this.toggleExtensionItem(kind, item, modal);
 			},
 			onTrust: (item) => {
-				void this.trustExtensionItem(kind, item, modal);
+				void this.trustExtensionItem(kind, item, modal, restore);
 			},
 			onReload: () => {
 				void this.reloadExtensions(kind, commandName, modal);
@@ -132,7 +138,7 @@ export class ExtensionWorkflow {
 		}
 	}
 
-	private async trustExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined): Promise<void> {
+	private async trustExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined, restore: () => void): Promise<void> {
 		if (item.pluginId === undefined && kind !== "skill") {
 			this.port.showNotice(`${kind} ${item.name} has no owning plugin and cannot be re-trusted.`, "error");
 			return;
@@ -140,13 +146,58 @@ export class ExtensionWorkflow {
 		const standaloneSkill = kind === "skill" && item.pluginId === undefined;
 		const operation = standaloneSkill ? (item.trusted ? "skill.untrust" : "skill.trust") : (item.trusted ? "plugin.untrust" : "plugin.trust");
 		const payload = standaloneSkill ? { skillId: item.resourceId } : { pluginId: item.pluginId };
-		const ok = await this.runSessionMutation(operation, payload, `/${kind} trust`);
-		if (!ok || modal === undefined) return;
-		const fresh = await this.queryExtensionResources(kind, `/${kind}`);
-		if (fresh !== undefined) {
-			modal.update(fresh.map(resourceToToggleItem));
-			this.port.uiRequestRender();
+		const granting = operation === "plugin.trust" || operation === "skill.trust";
+		const commandName = `/${kind} trust`;
+		// 确认边界：t 只打开确认视图，真正的 mutation 只在确认后执行。
+		this.port.showOverlayModal(new ExtensionConfirmModal({
+			title: granting ? `Trust ${item.name}?` : `Revoke trust for ${item.name}?`,
+			detailLines: granting
+				? [
+					"Trust binds the current content digest to a receipt for this resource.",
+					"Any content change makes the receipt stale, so trust must be granted again.",
+					"Trust does not enable the resource; enable remains a separate decision.",
+				]
+				: ["Revoking trust immediately disables the host for this content until it is trusted again."],
+			onConfirm: () => {
+				void this.applyTrustChange(kind, operation, payload, commandName, modal, restore);
+			},
+			onCancel: () => restore(),
+		}), { anchor: "bottom-left" });
+	}
+
+	/** 确认后的实际动作；成功或失败都回到 toggle 视图，失败原因走 typed notice。 */
+	private async applyTrustChange(
+		kind: "plugin" | "skill" | "hook",
+		operation: string,
+		payload: Record<string, unknown>,
+		commandName: string,
+		modal: ExtensionToggleModal | undefined,
+		restore: () => void,
+	): Promise<void> {
+		const ok = await this.runSessionMutation(operation, payload, commandName);
+		if (ok && modal !== undefined) {
+			const fresh = await this.queryExtensionResources(kind, commandName);
+			if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
 		}
+		restore();
+		this.port.uiRequestRender();
+	}
+
+	/**
+	 * D10：`autoUpdate` 的 `notify` 需要一个真实可见出口。打开 `/plugins` 时把
+	 * 分发账本里的待更新项转成一条 notice；没有待更新项或该会话未暴露
+	 * `marketplace.discover` 时静默跳过，绝不阻塞视图。
+	 */
+	private async notifyPendingMarketplaceUpdates(): Promise<void> {
+		const port = this.port;
+		const context = { correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}` };
+		const result = await querySessionController(port.controller, "marketplace.discover", {}, context).catch(() => undefined);
+		if (result === undefined || !result.ok) return;
+		const pending = result.value.pendingUpdates;
+		if (!Array.isArray(pending) || pending.length === 0) return;
+		const names = pending.flatMap((item) => (isRecord(item) && typeof item.packageId === "string" ? [item.packageId] : []));
+		const label = names.length > 0 ? names.slice(0, 3).join(", ") : `${pending.length} plugin(s)`;
+		port.showNotice(`${pending.length} plugin update(s) available (${label}); run marketplace upgrade to apply.`, "note");
 	}
 
 	private async reloadExtensions(kind: "plugin" | "skill" | "hook", commandName: string, modal: ExtensionToggleModal | undefined): Promise<void> {
