@@ -62,7 +62,7 @@ export function createSessionSummaryModel(options: {
 				recorder = await options.traceRecorderFactory?.create({ sessionId: options.sessionId, traceId, metadata: { requestKind: "compaction-summary" } });
 				handle = await recorder?.startModel({ turn: call, model: options.model, context });
 				const message = await options.models.completeSimple(options.model, context, {
-					sessionId: options.sessionId, signal: input.signal, maxTokens: input.maxOutputTokens, maxRetries: 0,
+					sessionId: options.sessionId, metadata: { modelCallId: handle?.nodeId ?? requestId }, signal: input.signal, maxTokens: input.maxOutputTokens, maxRetries: 0,
 					timeoutMs: Math.max(1, options.deadlineMs - Date.now()), reasoning: "minimal",
 				});
 				if (handle !== undefined) await recorder?.finishModel(handle, message);

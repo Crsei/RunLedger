@@ -1,7 +1,9 @@
 import type { TrajectoryState } from "../contracts/trajectory.ts";
 import { sanitizeTraceValue } from "../trace/recorder.ts";
 import type { TraceEvent } from "../trace/types.ts";
-import { TrajectoryIndex, type IndexedTrajectoryRecord } from "./index-store.ts";
+import type { TrajectoryIndex, IndexedTrajectoryRecord } from "./index-store.ts";
+
+export type TrajectoryProjectionPort = Pick<TrajectoryIndex, "get" | "set" | "find" | "put">;
 
 export function object(value: unknown): Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 export function numeric(value: unknown): number | undefined { return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined; }
@@ -31,7 +33,7 @@ export function sessionDetail(event: Record<string, unknown>, field: "input" | "
   return safeText(field === "input" ? event.args ?? textContent(event.message) : event.result ?? textContent(event.message), 2 * 1024 * 1024 + 1);
 }
 /** Agent Loop turn 是模型步骤；只有 agent_start/end 形成用户运行轮次。 */
-export function projectSessionEvent(index: TrajectoryIndex, event: Record<string, unknown>, seq: number, generation: number): void {
+export function projectSessionEvent(index: TrajectoryProjectionPort, event: Record<string, unknown>, seq: number, generation: number): void {
   const type = string(event.type);
   if (type === undefined) return;
   const explicitRun = string(event.runId);
@@ -105,7 +107,7 @@ export function projectSessionEvent(index: TrajectoryIndex, event: Record<string
   }
 }
 
-export function projectTraceEvent(index: TrajectoryIndex, event: TraceEvent, run: string, generation: number): void {
+export function projectTraceEvent(index: TrajectoryProjectionPort, event: TraceEvent, run: string, generation: number): void {
   if (event.kind === "agent") return;
   const runId = `run/${run}`;
   const step = numeric(event.metadata?.turn);

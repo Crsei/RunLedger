@@ -1,3 +1,4 @@
+import type { SessionModelCalls } from "./model-call-observer.ts";
 import type { TraceRecorderFactory } from "../trace/composition.ts";
 /** 原生 Responses compact 的受控 provider port；不提供工具执行能力。 */
 import { compactOpenAIResponses, compactOpenAIResponsesStreaming } from "../../api/openai-responses.ts";
@@ -16,6 +17,7 @@ import type { SummaryUsage } from "../context/compaction/budgeted-model.ts";
 
 export function createNativeCompactionPort(options: {
 	readonly models: Models;
+	readonly modelCalls?: Pick<SessionModelCalls, "start" | "finish">;
 	readonly mode: "standalone" | "streaming";
 	readonly model: Model<"openai-responses">;
 	readonly router?: ModelRequestRouter;
@@ -51,16 +53,19 @@ export function createNativeCompactionPort(options: {
 			const model = auth.auth.baseUrl === undefined ? options.model : { ...options.model, baseUrl: auth.auth.baseUrl };
 			const recorder = await options.traceRecorderFactory?.create({ sessionId: options.sessionId, traceId: createRuntimeId("trace", runtimeDigest({ requestId }).digest.slice(0, 48)), metadata: { requestKind: "compaction-summary", strategy: "openai-responses-native" } });
 			const handle = await recorder?.startModel({ turn: 1, model, context: { ...context, tools: [] } });
+			const call = options.modelCalls?.start(handle?.nodeId ?? requestId);
+			let measuredUsage: Usage | undefined;
 			try {
 				const compact = options.mode === "streaming" ? compactOpenAIResponsesStreaming : compactOpenAIResponses;
 				const result = await compact(model, context, { apiKey: auth.auth.apiKey, headers: auth.auth.headers, env: auth.env,
 					signal, maxTokens: outputLimit, sessionId: options.sessionId, timeoutMs: Math.max(1, options.limits.deadlineMs - Date.now()) });
 				const observed = { calls: 1, input: Math.max(inputTokens, result.usage.input_tokens), output: Math.max(outputLimit, result.usage.output_tokens) };
 				options.onUsage(observed);
-				if (observed.input > options.limits.maxTotalInputTokens || observed.output > options.limits.maxTotalOutputTokens) throw new Error("native_compaction_budget_exhausted");
 				const cached = result.usage.input_tokens_details?.cached_tokens ?? 0;
-				const usage: Usage = { input: result.usage.input_tokens - cached, output: result.usage.output_tokens, cacheRead: cached, cacheWrite: 0, totalTokens: result.usage.total_tokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+				const usage: Usage = { input: result.usage.input_tokens - cached, output: result.usage.output_tokens, cacheRead: cached, cacheWrite: 0, totalTokens: result.usage.total_tokens, reported: { input: true, output: true, cacheRead: result.usage.input_tokens_details?.cached_tokens !== undefined, cacheWrite: true }, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 				calculateCost(model, usage);
+				measuredUsage = usage;
+				if (observed.input > options.limits.maxTotalInputTokens || observed.output > options.limits.maxTotalOutputTokens) throw new Error("native_compaction_budget_exhausted");
 				if (handle !== undefined) await recorder?.finishModel(handle, { role: "assistant", content: [], stopReason: "stop", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
 					usage });
 				await recorder?.finishRun({ phase: "finished" });
@@ -69,6 +74,8 @@ export function createNativeCompactionPort(options: {
 				if (handle !== undefined) await recorder?.finishModel(handle).catch(() => undefined);
 				await recorder?.finishRun({ phase: "failed" }).catch(() => undefined);
 				throw error;
+			} finally {
+				if (call) options.modelCalls?.finish(call, measuredUsage);
 			}
 		},
 	};

@@ -349,8 +349,8 @@ export class RuntimeTraceRecorder {
 	}
 
 	/** 在 provider stream 完成后记录 assistant output、usage、cost 和耗时。 */
-	public async finishModel(handle: TraceModelHandle, message?: AssistantMessage): Promise<void> {
-		const phase = message?.stopReason === "aborted"
+	public async finishModel(handle: TraceModelHandle, message?: AssistantMessage, options: { readonly dispatched?: boolean } = {}): Promise<void> {
+		const phase = options.dispatched === false || message?.stopReason === "aborted"
 			? "interrupted"
 			: message?.stopReason === "error" || message === undefined
 				? "failed"
@@ -383,6 +383,8 @@ export class RuntimeTraceRecorder {
 				model: handle.model.id,
 				turn: handle.turn,
 				stopReason: message?.stopReason ?? "error",
+				usagePresenceRecorded: true,
+				...(options.dispatched === undefined ? {} : { modelDispatched: options.dispatched }),
 			},
 		});
 	}
@@ -561,26 +563,25 @@ function durationMs(current: number, started: number): number {
 	return Math.max(0, Math.round(current - started));
 }
 
-function toTraceUsage(usage: Usage | undefined): TraceUsage {
-	if (usage === undefined) return { source: "unavailable" };
-	return {
-		inputTokens: usage.input,
-		outputTokens: usage.output,
-		cacheReadTokens: usage.cacheRead,
-		cacheWriteTokens: usage.cacheWrite,
-		...(usage.reasoning === undefined ? {} : { reasoningTokens: usage.reasoning }),
-		source: "provider_reported",
-	};
+function knownUsage(usage: Usage, field: "input" | "output" | "cacheRead" | "cacheWrite" | "cost"): number | undefined {
+  const value = field === "cost" ? usage.cost.total : usage[field];
+  if (!Number.isFinite(value) || value < 0 || usage.reported?.[field] === false || (value === 0 && usage.reported?.[field] !== true)) return undefined;
+  return value;
 }
-
+function toTraceUsage(usage: Usage | undefined): TraceUsage {
+  if (usage === undefined) return { source: "unavailable" };
+  const input = knownUsage(usage, "input"), output = knownUsage(usage, "output");
+  const cacheRead = knownUsage(usage, "cacheRead"), cacheWrite = knownUsage(usage, "cacheWrite");
+  return {
+    ...(input === undefined ? {} : { inputTokens: input }), ...(output === undefined ? {} : { outputTokens: output }),
+    ...(cacheRead === undefined ? {} : { cacheReadTokens: cacheRead }), ...(cacheWrite === undefined ? {} : { cacheWriteTokens: cacheWrite }),
+    ...(usage.reasoning === undefined ? {} : { reasoningTokens: usage.reasoning }), source: "provider_reported",
+  };
+}
 function toTraceCost(usage: Usage | undefined): TraceCost {
-	if (usage === undefined) return { source: "unavailable", billable: false };
-	const total = usage.cost.total;
-	return {
-		...(Number.isFinite(total) ? { usdMicros: Math.max(0, Math.round(total * 1_000_000)) } : {}),
-		source: "provider",
-		billable: true,
-	};
+  const total = usage === undefined ? undefined : knownUsage(usage, "cost");
+  if (total === undefined) return { source: "unavailable", billable: false };
+  return { usdMicros: Math.round(total * 1_000_000), source: usage?.reported?.cost === true ? "provider" : "pricing_table", billable: true };
 }
 
 function toTraceError(stopReason: AssistantMessage["stopReason"] | undefined, message: string | undefined): TraceError {

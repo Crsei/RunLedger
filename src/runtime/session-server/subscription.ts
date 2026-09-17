@@ -73,7 +73,7 @@ export class SessionSubscriptionRegistry {
 	public ack(connectionId: ConnectionId, cursor: number): AckResult {
 		const entry = this.entries.get(connectionId);
 		if (!entry) return { ok: false, code: "cursor_out_of_order" };
-		if (cursor < entry.cursor || cursor > this.head) return { ok: false, code: "cursor_out_of_order" };
+		if (cursor < entry.cursor || cursor > entry.delivered) return { ok: false, code: "cursor_out_of_order" };
 		entry.cursor = cursor;
 		return { ok: true, cursor };
 	}
@@ -90,9 +90,10 @@ export class SessionSubscriptionRegistry {
 	public replay(connectionId: ConnectionId, fromCursor: number, events: readonly SessionEventRecord[]): DeliverOutcome {
 		const entry = this.entries.get(connectionId);
 		if (!entry) return { ok: false, code: "resync_required" };
-		if (fromCursor < entry.cursor) return { ok: false, code: "resync_required" };
+		if (fromCursor < entry.cursor || this.head - entry.delivered > this.maxReplay) return { ok: false, code: "resync_required" };
 		const candidates = events.filter((candidate) => candidate.sequence > entry.delivered && candidate.sequence > fromCursor);
-		if (candidates.length > this.maxReplay) return { ok: false, code: "resync_required" };
+		if (candidates.length > this.maxReplay || (candidates[0] !== undefined && candidates[0].sequence !== entry.delivered + 1)
+			|| (candidates.length === 0 && this.head > entry.delivered)) return { ok: false, code: "resync_required" };
 		const limit = Math.max(0, this.maxAckWindow - this.unacked(entry));
 		const delivered = candidates.slice(0, limit);
 		entry.delivered = Math.max(entry.delivered, delivered.at(-1)?.sequence ?? entry.delivered);

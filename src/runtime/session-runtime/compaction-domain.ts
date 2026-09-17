@@ -1,4 +1,5 @@
 import { compactionEndpointDigest, isOpenAICompactionState } from "../../api/openai-compaction-state.ts";
+import { SessionModelCalls } from "./model-call-observer.ts";
 import { createNativeCompactionPort } from "./compaction-native-model.ts";
 /** Session Owner 的 compact authority：候选生成、验证、原子提交及请求投影。 */
 import type { SessionControllerEvent } from "../session-server/runtime-server.ts";
@@ -252,7 +253,7 @@ export class SessionCompactionDomain implements SessionResourceDomainPort {
 			this.append(started);
 			startedWritten = true;
 			const previousSummary = loaded.active === undefined || native ? undefined : await this.readSummary(loaded.active);
-			const nativePort = !native || model.api !== "openai-responses" ? undefined : createNativeCompactionPort({
+			const nativePort = !native || model.api !== "openai-responses" ? undefined : createNativeCompactionPort({ modelCalls: new SessionModelCalls(this.options.store, this.options.fence),
 				mode: settings.nativeMode, traceRecorderFactory: this.options.traceRecorderFactory, models: this.options.models, model: model as typeof model & { api: "openai-responses" }, router: this.options.router, sessionId: input.sessionId, inputDigest, limits,
 				context: { ...previousProjection.context, messages: previousProjection.context.messages.slice(0, previousProjection.context.messages.length - (input.context.messages.length - cut.count)), tools: [] },
 				onUsage: (value) => { nativeUsage = value; },

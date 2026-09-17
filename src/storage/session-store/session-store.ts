@@ -16,6 +16,7 @@
 
 import type { SessionDatabase } from "./database.ts";
 import { CatalogRepository } from "./catalog-repository.ts";
+import { readEventRange, type EventRangeRequest } from "./event-range.ts";
 import { AttemptRepository, appendAttemptReceiptInTransaction } from "./attempt-repository.ts";
 import { rowToAttemptReceipt } from "./row-mappers.ts";
 import { SessionStoreError } from "./session-store-error.ts";
@@ -283,6 +284,11 @@ export class SessionStore {
 	/** §4.4 authority replay:按 sequence 返回全部事件(genesis 起),校验 hash 链完整。 */
 	public replaySessionEvents(sessionId: string): SessionEventRecord[] {
 		return replaySessionEvents(this.db, sessionId);
+	}
+
+	/** 有界订阅/历史查询，不执行全量 authority 重放。 */
+	public readEventRange(sessionId: string, request: EventRangeRequest = {}): readonly SessionEventRecord[] {
+		return this.db.withReadTransactionSync(() => readEventRange(this.db, sessionId, request));
 	}
 
 	/** §4.5 写路径的链尾读取：单次倒序查询，不重放事件流。 */

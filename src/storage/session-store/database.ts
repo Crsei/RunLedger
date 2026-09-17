@@ -140,16 +140,21 @@ export class SessionDatabase {
 		this.database = readOnly
 			? new sqliteRuntime.Database(path, sqliteRuntime.readOnlyOption === "readOnly" ? { readOnly: true } : { readonly: true })
 			: new sqliteRuntime.Database(path);
-		this.applyPragmas();
+		try {
+			this.applyPragmas(readOnly);
+		} catch (error) {
+			this.database.close();
+			throw error;
+		}
 	}
 
-	private applyPragmas(): void {
+	private applyPragmas(readOnly: boolean): void {
 		// busy_timeout 必须先于任何可能触锁的 pragma 生效；并行 owner 进程
 		// 可能在本连接读取 journal_mode 前已进入短写事务。
 		this.database.exec(`PRAGMA busy_timeout = ${SESSION_DB_PRAGMAS.busyTimeoutMs}`);
 		// journal_mode 是持久化数据库状态；已处于 WAL 时只读校验，避免多个
 		// Session owner 进程同时 open 时重复执行写性质的 mode switch。
-		if (this.readJournalMode() !== SESSION_DB_PRAGMAS.journalMode.toLowerCase()) {
+		if (!readOnly && this.readJournalMode() !== SESSION_DB_PRAGMAS.journalMode.toLowerCase()) {
 			try {
 				this.database.exec(`PRAGMA journal_mode = ${SESSION_DB_PRAGMAS.journalMode}`);
 			} catch (error) {
@@ -161,6 +166,7 @@ export class SessionDatabase {
 		this.database.exec(`PRAGMA synchronous = ${SESSION_DB_PRAGMAS.synchronous}`);
 		this.database.exec(`PRAGMA foreign_keys = ${SESSION_DB_PRAGMAS.foreignKeys}`);
 		this.database.exec(`PRAGMA trusted_schema = ${SESSION_DB_PRAGMAS.trustedSchema}`);
+		if (readOnly) this.database.exec("PRAGMA query_only = ON");
 	}
 
 	private readJournalMode(): string {

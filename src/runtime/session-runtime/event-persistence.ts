@@ -80,14 +80,14 @@ export class SessionEventPersistence {
 	private persistNormalizedAgentEvent(event: AgentEvent): void {
 		let sequence: number | undefined;
 		try {
-			const tail = this.port.store.replaySessionEvents(this.port.sessionId).at(-1);
+			const tail = this.port.store.latestEventHead(this.port.sessionId);
 			const appended = this.port.store.appendEvent(this.port.fence, {
 				eventId: createRuntimeId("event", `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`),
 				ownerGeneration: this.port.fence.generation,
 				eventType: "agent.event",
 				payloadJson: JSON.stringify(event),
 				createdAtMs: event.timestamp,
-				expectedPreviousEventHash: tail?.currentEventHash ?? null,
+				expectedPreviousEventHash: tail.hash,
 			});
 			sequence = appended.sequence;
 		} catch {

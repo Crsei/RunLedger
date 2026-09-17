@@ -1,3 +1,4 @@
+import { assistantText, assistantThinking } from "../../presentation/message-text.ts";
 /**
  * Timeline event projector：replay / TuiEvent / notice / cleanup -> TimelineEvent。
  *
@@ -351,23 +352,6 @@ export class TimelineEventProjector {
 	}
 }
 
-function assistantText(message: {
-	readonly role?: string;
-	readonly content?: readonly unknown[];
-	readonly stopReason?: string;
-	readonly errorMessage?: string;
-} | undefined): string {
-	if (message?.role !== "assistant" || !Array.isArray(message.content)) return "";
-	const text = message.content
-		.filter((content): content is { type: string; text: string } => isRecord(content) && content.type === "text" && typeof content.text === "string")
-		.map((content) => content.text)
-		.join("");
-	if (text.length > 0) return text;
-	return message.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.length > 0
-		? `Error: ${message.errorMessage}`
-		: "";
-}
-
 /** 把 canonical assistant message 投影为可回放的单 request usage。 */
 export function projectAssistantUsage(
 	message: AssistantAgentMessage,
@@ -402,14 +386,6 @@ function legacyUsage(usage: TimelineAssistantUsage): Pick<SafeToolUsageView, "in
 function legacyQuantity(quantity: TimelineAssistantUsage["input"]): SafeToolUsageView["input"] {
 	if (quantity.state === "exact" || quantity.state === "estimated") return { state: quantity.state, value: quantity.value };
 	return quantity;
-}
-
-function assistantThinking(message: { readonly role?: string; readonly content?: readonly unknown[] } | undefined): string {
-	if (message?.role !== "assistant" || !Array.isArray(message.content)) return "";
-	return message.content
-		.filter((content): content is { type: string; thinking: string } => isRecord(content) && content.type === "thinking" && typeof content.thinking === "string")
-		.map((content) => content.thinking)
-		.join("");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

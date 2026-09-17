@@ -57,6 +57,7 @@ describe("R4 subscription registry", () => {
 		registry.replay(conn("a"), 0, [1, 2, 3].map(event));
 		expect(registry.ack(conn("a"), 3)).toEqual({ ok: true, cursor: 3 });
 		expect(registry.ack(conn("a"), 2)).toEqual({ ok: false, code: "cursor_out_of_order" });
+		expect(registry.ack(conn("a"), 4)).toEqual({ ok: false, code: "cursor_out_of_order" });
 		expect(registry.ack(conn("a"), 11)).toEqual({ ok: false, code: "cursor_out_of_order" });
 		expect(registry.view(conn("a"))?.pending).toBe(0);
 	});

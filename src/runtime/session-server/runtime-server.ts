@@ -388,12 +388,13 @@ export class SessionRuntimeServer implements OwnerTransport {
 					return;
 				}
 				const cursor = numberValue(frame.body.cursor) ?? 0;
+				this.registry.setHead(this.store.latestEventHead(this.fence!.sessionId).sequence);
 				const view = this.registry.subscribe(connection.connectionId, cursor);
 				if (view === undefined) {
 					this.enqueue(connection, this.response(frame, "command_result", { ok: false, code: "subscription_conflict" }));
 					return;
 				}
-				const outcome = this.registry.replay(connection.connectionId, cursor, this.recentEvents());
+				const outcome = this.registry.replay(connection.connectionId, cursor, this.recentEvents(cursor));
 				if (!outcome.ok) {
 					this.enqueue(connection, this.response(frame, "resync_required", { cursor: this.registry.headSequence }));
 					return;
@@ -410,7 +411,11 @@ export class SessionRuntimeServer implements OwnerTransport {
 					this.destroy(connection);
 					return;
 				}
-				this.registry.ack(connection.connectionId, cursor);
+				const ack = this.registry.ack(connection.connectionId, cursor);
+				if (!ack.ok) { this.destroy(connection); return; }
+				const outcome = this.registry.replay(connection.connectionId, cursor, this.recentEvents(cursor));
+				if (!outcome.ok) this.enqueue(connection, this.frameFor("resync_required", { cursor: this.registry.headSequence }));
+				else for (const event of outcome.events) if (!this.enqueueSubscriptionEvent(connection, event)) break;
 				return;
 			}
 			default:
@@ -570,10 +575,10 @@ export class SessionRuntimeServer implements OwnerTransport {
 
 	// ── fan-out 与事件广播 ────────────────────────────────────────────────
 
-	private recentEvents(): readonly SessionEventRecord[] {
+	private recentEvents(cursor: number): readonly SessionEventRecord[] {
 		if (this.fence === undefined) return [];
 		try {
-			return this.store.replaySessionEvents(this.fence.sessionId);
+			return this.store.readEventRange(this.fence.sessionId, { after: cursor, limit: SESSION_PROTOCOL_BOUNDS.maxSubscriptionReplay + 1 });
 		} catch {
 			return [];
 		}
@@ -600,10 +605,13 @@ export class SessionRuntimeServer implements OwnerTransport {
 			return;
 		}
 		if (event.sequence !== undefined) this.registry.setHead(event.sequence);
-		for (const connection of this.connections) {
-			if (!connection.initialized || connection.closed) continue;
-			const cursor = this.registry.view(connection.connectionId)?.cursor ?? 0;
-			const outcome = this.registry.replay(connection.connectionId, cursor, this.recentEvents());
+		const subscribers = [...this.connections].filter((connection) => connection.initialized && !connection.closed && this.registry.isSubscribed(connection.connectionId));
+		if (subscribers.length === 0) return;
+		const oldest = Math.min(...subscribers.map((connection) => { const view = this.registry.view(connection.connectionId)!; return view.cursor + view.pending; }));
+		const recent = this.recentEvents(oldest);
+		for (const connection of subscribers) {
+			const cursor = this.registry.view(connection.connectionId)!.cursor;
+			const outcome = this.registry.replay(connection.connectionId, cursor, recent);
 			if (!outcome.ok) {
 				this.enqueue(connection, this.frameFor("resync_required", { cursor: this.registry.headSequence }));
 				continue;

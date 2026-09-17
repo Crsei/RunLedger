@@ -33,14 +33,14 @@ export class SqliteLedgerSink implements LedgerSink {
 	}
 
 	public append(entry: LedgerEntry): void {
-		const tail = this.store.replaySessionEvents(this.sessionId).at(-1);
+		const tail = this.store.latestEventHead(this.sessionId);
 		this.store.appendEvent(this.fence(), {
 			eventId: createLedgerEventId(this.sessionId, entry.id),
 			ownerGeneration: this.fence().generation,
 			eventType: `ledger.${entry.type}`,
 			payloadJson: JSON.stringify(entry),
 			createdAtMs: entry.timestamp,
-			expectedPreviousEventHash: tail?.currentEventHash ?? null,
+			expectedPreviousEventHash: tail.hash,
 		});
 	}
 

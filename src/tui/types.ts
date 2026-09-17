@@ -15,6 +15,7 @@ import type { FooterSnapshot } from "./footer/field-registry.ts";
 
 /** TUI 主控 switch 标签;对照 03-event-binding.md §1 表。 */
 export type TuiEvent =
+  | Extract<AgentEvent, { type: "model_call" }>
   | { type: "agent_start"; timestamp: number; runId?: string }
   | { type: "agent_end"; timestamp: number; runId?: string; stopReason?: string; elapsedMs?: number; activeDurationMs?: number; messageCountAtEnd?: number; terminationReason?: AgentRunTerminationReason }
   | { type: "agent_work_pause" | "agent_work_resume"; timestamp: number; runId: string; waitId: string; reason: "approval" | "credential"; activeDurationMs: number }
@@ -79,6 +80,8 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
       return { type: ev.type, timestamp: ev.timestamp, runId: ev.runId };
     case "agent_end":
       return { type: ev.type, timestamp: ev.timestamp, runId: ev.runId, stopReason: ev.stopReason, elapsedMs: ev.elapsedMs, activeDurationMs: ev.activeDurationMs, messageCountAtEnd: ev.messageCountAtEnd, terminationReason: ev.terminationReason };
+    case "model_call":
+      return { ...ev };
     case "agent_work_pause":
     case "agent_work_resume":
       return { ...ev };

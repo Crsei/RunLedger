@@ -160,7 +160,7 @@ export async function runAgentLoop(
   };
 
   // inner loop
-  while (true) {
+  turnLoop: while (true) {
     if (signal?.aborted) {
       lastStopReason = "aborted";
       break;
@@ -222,9 +222,6 @@ export async function runAgentLoop(
         await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
       }
       if (config.modelContextAssembler === undefined) observe({ kind: "assembled", requestId, runId, turn, requestKind: config.requestKind ?? "interactive", model: loopModel, thinkingLevel: loopReasoning ?? "off", context: llmContext });
-      if (!signal?.aborted && config.traceRecorder) {
-        traceModel = await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext });
-      }
     } catch (error) {
       await finishUnrequestedTurn(signal?.aborted ? "aborted" : "error");
       throw error;
@@ -232,14 +229,6 @@ export async function runAgentLoop(
 
     if (signal?.aborted) {
       lastStopReason = "aborted";
-      const timestamp = Date.now();
-      if (traceModel && config.traceRecorder) await config.traceRecorder.finishModel(traceModel, {
-        role: "assistant", content: [], stopReason: "aborted", timestamp,
-        api: loopModel.api, provider: loopModel.provider, model: loopModel.id,
-        errorMessage: "Cancelled before provider dispatch.",
-        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-      });
       await finishUnrequestedTurn("aborted");
       break;
     }
@@ -259,13 +248,24 @@ export async function runAgentLoop(
     let streamStartedAt: number | undefined;
     for (let overflowRetry = 0; ; overflowRetry += 1) {
     providerMessage = undefined;
+    try { traceModel = await config.traceRecorder?.startModel({ turn, model: loopModel, context: llmContext }); }
+    catch (error) { await finishUnrequestedTurn(signal?.aborted ? "aborted" : "error"); throw error; }
+    const callId = traceModel?.nodeId ?? requestId, startedAtMs = Date.now();
+    const callRecorded = !signal?.aborted;
+    if (callRecorded) await fire({ type: "model_call", timestamp: startedAtMs, originSessionId: sessionId, callId, startedAtMs, phase: "started" });
+    // Trace 与计量落账都可能异步让出；dispatch 前再次检查取消。
+    if (signal?.aborted) {
+      if (callRecorded) await fire({ type: "model_call", timestamp: Date.now(), originSessionId: sessionId, callId, startedAtMs, phase: "finished", dispatched: false });
+      if (traceModel) await config.traceRecorder?.finishModel(traceModel, undefined, { dispatched: false });
+      lastStopReason = "aborted"; await finishUnrequestedTurn("aborted"); break turnLoop;
+    }
     try {
       const stream = await Promise.resolve(
         fn(loopModel, llmContext, {
           apiKey: config.apiKey,
           env: config.env,
           signal,
-          metadata: { requestKind: config.requestKind ?? "interactive", requestId, runId, turn },
+          metadata: { requestKind: config.requestKind ?? "interactive", requestId, runId, turn, modelCallId: callId },
           ...(config.modelRequestObserver === undefined ? {} : {
             onRequestPrepared: (payloadJson: string, model: typeof loopModel) => observe({ kind: "prepared", requestId, payloadJson, model }),
             onResponse: (response: { status: number }) => observe({ kind: "response", requestId, status: response.status }),
@@ -337,8 +337,11 @@ export async function runAgentLoop(
         }
       }
     } catch (error) {
+      if (traceModel && config.traceRecorder) await config.traceRecorder.finishModel(traceModel);
       observe({ kind: "finished", requestId, stopReason: signal?.aborted ? "aborted" : "error" });
       throw error;
+    } finally {
+      await fire({ type: "model_call", timestamp: Date.now(), originSessionId: sessionId, callId, startedAtMs, phase: "finished", usage: providerMessage?.usage });
     }
     // 仅在 provider 未打开消息、未产生任何内容时重试一次；工具执行在此边界之后。
     if (overflowRetry === 0 && !messageOpen && assistantContent.length === 0 && providerMessage !== undefined
@@ -352,7 +355,6 @@ export async function runAgentLoop(
         llmContext = recovered.context;
         observe({ kind: "assembled", requestId, runId, turn, requestKind: config.requestKind ?? "interactive", model: loopModel, thinkingLevel: loopReasoning ?? "off", context: llmContext });
         await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: recovered.receipt });
-        traceModel = await config.traceRecorder?.startModel({ turn, model: loopModel, context: llmContext });
         continue;
       }
     }
@@ -402,6 +404,7 @@ export async function runAgentLoop(
           role: "assistant",
           stopReason: assistantStopReason,
           message: assistantMessage,
+          modelCallId: traceModel?.nodeId ?? requestId,
         },
         {
           id: newId(),
@@ -413,6 +416,8 @@ export async function runAgentLoop(
             stopReason: assistantStopReason,
             content: serializeAssistant(assistantMessage.content),
             errorMessage: assistantErrorMessage,
+            modelCallId: traceModel?.nodeId ?? requestId,
+            originSessionId: sessionId,
             message: assistantMessage,
           },
         },

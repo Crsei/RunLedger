@@ -1,3 +1,5 @@
+import { assertSafePath } from "./safe-path.ts";
+export { assertSafePath } from "./safe-path.ts";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { lstat, mkdir, opendir, open, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -378,17 +380,6 @@ export class TrajectoryService {
     const value = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Cursor;
     if (value.scope !== scope || !Number.isSafeInteger(value.position) || value.position < 0) throw new Error("invalid_trajectory_cursor");
     return value;
-  }
-}
-export async function assertSafePath(home: string, path: string): Promise<void> {
-  const root = resolve(home), target = resolve(path);
-  if (target !== root && !target.startsWith(`${root}/`) && !target.startsWith(`${root}\\`)) throw new Error("trajectory path outside home");
-  const relative = target.slice(root.length).split(/[\\/]/).filter(Boolean);
-  let current = root;
-  for (const part of ["", ...relative]) {
-    current = part ? join(current, part) : current;
-    try { if ((await lstat(current)).isSymbolicLink()) throw new Error("trajectory symlink rejected"); }
-    catch (error) { if (!isMissing(error)) throw error; }
   }
 }
 function isMissing(error: unknown): boolean { return object(error).code === "ENOENT"; }

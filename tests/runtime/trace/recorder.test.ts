@@ -167,7 +167,7 @@ describe("RuntimeTraceRecorder", () => {
 				reasoningTokens: 2,
 				source: "provider_reported",
 			},
-			cost: { usdMicros: 3000, source: "provider", billable: true },
+			cost: { usdMicros: 3000, source: "pricing_table", billable: true },
 		});
 		expect(finished?.inputContent).toMatchObject({ storage: "artifact" });
 		expect(finished?.outputContent).toMatchObject({ storage: "artifact" });

@@ -135,6 +135,7 @@ const HELP_TEXT = `Usage: runledger [options]
       --no-worktree           显式不使用 worktree(与 --worktree 互斥)
       --experimental-multi-agent
                               开启有界 multi-agent(仍需 user/workspace settings)
+      web [--port <port>]    启动本地只读项目运行看板
       auth-gateway <command>  启动/管理本地前向代理网关
       --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR
       --debug                 RUNLEDGER_DEBUG=1,stderr log

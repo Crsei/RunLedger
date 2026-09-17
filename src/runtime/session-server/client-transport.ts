@@ -10,6 +10,7 @@ import net from "node:net";
 import { SESSION_PROTOCOL_BOUNDS, SESSION_PROTOCOL_VERSION, isSessionFrameEnvelope, type SessionFrameEnvelope } from "./protocol.ts";
 
 export interface SessionClientTransportOptions {
+	readonly connectTimeoutMs?: number;
 	readonly maxFrameBytes?: number;
 	readonly maxPendingRequests?: number;
 	readonly reverseRequestHandler?: (frame: SessionFrameEnvelope, signal: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
@@ -46,11 +47,17 @@ export class SessionClientTransport {
 	public static async connect(port: number, options: SessionClientTransportOptions = {}): Promise<SessionClientTransport> {
 		const socket = net.createConnection({ host: "127.0.0.1", port });
 		await new Promise<void>((resolve, reject) => {
-			socket.once("connect", resolve);
-			socket.once("error", reject);
+			const timeout = options.connectTimeoutMs === undefined ? undefined : setTimeout(() => {
+				socket.destroy(); reject(new Error("connection timeout"));
+			}, options.connectTimeoutMs);
+			socket.once("connect", () => { clearTimeout(timeout); resolve(); });
+			socket.once("error", (error) => { clearTimeout(timeout); reject(error); });
 		});
 		return new SessionClientTransport(socket, options);
 	}
+
+	/** Observer 超时/取消时立即释放 socket，不等待对端 drain。 */
+	public destroy(): void { this.socket.destroy(); this.signalClosed(new Error("connection closed")); }
 
 	/**
 	 * 连接建立后注入 reverse-request handler(TUI 在 SessionClient 连接后才
