@@ -371,3 +371,30 @@ describe("plugin.config read/write domain routing", () => {
 		expect(result).toMatchObject({ ok: false, code: "invalid_enum" });
 	});
 });
+
+describe("session reload watch wiring", () => {
+	it("starts the watcher with the session and stops it on shutdown", async () => {
+		const order: string[] = [];
+		const session = createSessionExtensionComposition({
+			sessionId: "session_watch",
+			generation: 1,
+			manager: hostManager(),
+			mcp: hostMcp(),
+			closeHooks: async () => undefined,
+			closePlugins: async () => undefined,
+			cleanup: async () => undefined,
+			reloadWatch: { start: () => { order.push("watch:start"); }, stop: () => { order.push("watch:stop"); } },
+		});
+		await session.start();
+		expect(order).toEqual(["watch:start"]);
+		await session.shutdown("paused");
+		expect(order).toEqual(["watch:start", "watch:stop"]);
+	});
+
+	it("does not observe anything when no watcher is assembled (default off)", async () => {
+		const session = composition();
+		// 缺省组合没有 watcher：start/shutdown 不应因此失败，也不产生任何观察行为。
+		await expect(session.start()).resolves.toBeUndefined();
+		await expect(session.shutdown("paused")).resolves.toBeUndefined();
+	});
+});

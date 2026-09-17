@@ -16,6 +16,8 @@ import { MarketplaceFetcher } from "../../extensions/plugins/marketplace/fetcher
 import { resolveExtensionCachePaths } from "../../extensions/plugins/marketplace/cache.ts";
 import { createManagedGitMaterializer } from "../../extensions/plugins/git-materializer.ts";
 import { distributionPluginRoots } from "../../extensions/plugins/discovery-bridge.ts";
+import { createExtensionReloadWatcher, type ExtensionReloadOutcome, type ExtensionWatchPort } from "../../extensions/plugins/reload-watcher.ts";
+import { NodeExtensionWatchPort } from "../../storage/extensions/watch-adapter.ts";
 import { loadInstalledRunledgerManifests, selectDistributionHostCandidates } from "../../extensions/plugins/host-activation.ts";
 import { applySettingDefaults, resolvePluginSettings, validatePluginSettings } from "../../extensions/plugins/settings-schema.ts";
 import type { ExtensionSettingDescriptor } from "../../contracts/extensions/manifest.ts";
@@ -115,6 +117,8 @@ export interface SessionExtensionCompositionOptions {
 	readonly hostInspect?: SessionHostInspect;
 	/** 扩展动作的真实命令面;缺省时动作返回 session_command_unavailable。 */
 	readonly actorHost?: SessionExtensionActionHostHolder;
+	/** 可选文件 watcher;缺省时不观察任何 root。 */
+	readonly reloadWatch?: { start(): void; stop(): void };
 	/** P5/P1 可执行扩展 host;缺省(或 Profile 关闭)时扩展工具与事件桥不可用。 */
 	readonly hostExtensions?: SessionExtensionHostPort;
 }
@@ -302,6 +306,36 @@ export interface SessionExtensionActionHostHolder {
 	current?: () => SessionExtensionActionHost | undefined;
 }
 
+/**
+ * 可选文件 watcher 的生产接线（默认关闭）。
+ *
+ * `requestReload` 必须**等** `manager.reload()` 的结果：它在 turn 进行中返回
+ * `pending`、在 idle 边界才真正交换，因此 outcome 由既有 snapshot 决定，watcher
+ * 只是如实上报（D11）。猜会让审计把"没交换"报成 ready。
+ */
+export function createSessionReloadWatch(input: {
+	readonly manager: SessionExtensionManagerPort;
+	readonly roots: () => readonly string[];
+	readonly enabled: () => boolean;
+	readonly watch?: ExtensionWatchPort;
+	readonly debounceMs?: number;
+	readonly audit?: (event: { readonly eventType: string; readonly payload: Record<string, unknown> }) => Promise<void>;
+}) {
+	return createExtensionReloadWatcher({
+		watch: input.watch ?? new NodeExtensionWatchPort({
+			onError: (error) => { void input.audit?.({ eventType: "extension.watch.unavailable", payload: { message: error.message } }); },
+		}),
+		roots: input.roots,
+		requestReload: async (): Promise<ExtensionReloadOutcome> => {
+			const reloaded = await input.manager.reload();
+			return reloaded.status === "ready" ? "ready" : "pending";
+		},
+		enabled: input.enabled,
+		...(input.debounceMs === undefined ? {} : { debounceMs: input.debounceMs }),
+		audit: input.audit,
+	});
+}
+
 export class SessionExtensionStartupError extends Error {
 	public readonly code: "required_extension_startup_failed";
 
@@ -409,6 +443,7 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 				await audit(options, "extension.snapshot.required_failed", { error: loaded.error ?? "extension snapshot load failed" });
 				throw new SessionExtensionStartupError(loaded.error ?? "extension snapshot load failed");
 			}
+			options.reloadWatch?.start();
 			await audit(options, "extension.snapshot.loaded", {
 				snapshotId: options.manager.publicSnapshot()?.snapshotId ?? "unavailable",
 				generation: options.manager.publicSnapshot()?.generation ?? 0,
@@ -440,6 +475,7 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 		},
 		shutdown: (reason) => {
 			shutdownPromise ??= (async () => {
+				options.reloadWatch?.stop();
 				await options.hostExtensions?.shutdown(reason).catch(() => undefined);
 				await options.mcp.close();
 				await options.closeHooks();
@@ -873,6 +909,20 @@ export async function createProductionSessionExtensionComposition(
 	});
 	// 可执行扩展 host：选包 → 起进程 → 准入工具 → 事件桥。没有可执行包时
 	// 整条链路保持惰性（不起进程、不读 trust 之外的任何东西）。
+	// 可选 watcher：默认关闭（settings.plugins.watch）。settings 在构造期读一次，
+	// in-session 变更需重开会话生效。
+	const distributionSettings = await loadProjectSettings({ layout: options.layout });
+	const reloadWatch = createSessionReloadWatch({
+		manager,
+		roots: () => [...declarativeRoots, ...installedDistributionRoots].map((root) => root.rootPath),
+		enabled: () => distributionSettings.plugins?.watch === true,
+		audit: async (event) => appendSessionExtensionAudit(options.store, options.fence, {
+			eventType: event.eventType,
+			sessionId: options.fence.sessionId,
+			ownerGeneration: options.fence.generation,
+			payload: event.payload,
+		}),
+	});
 	const hostExtensions = createSessionHostAssembly({
 		options,
 		distribution,
@@ -887,6 +937,7 @@ export async function createProductionSessionExtensionComposition(
 		distribution: distribution.ports,
 		hostExtensions,
 		hostInspect: () => hostExtensions.inspect(),
+		reloadWatch,
 		contextSources: (modelContextChars) => {
 			const skills = manager.currentSkills().filter((skill) => skill.descriptor.activation === "ready");
 			if (skills.length === 0) return [];
