@@ -15,6 +15,7 @@ import { ExtensionInstaller, type ExtensionSourceMaterializer } from "../../exte
 import { MarketplaceFetcher } from "../../extensions/plugins/marketplace/fetcher.ts";
 import { resolveExtensionCachePaths } from "../../extensions/plugins/marketplace/cache.ts";
 import { createManagedGitMaterializer } from "../../extensions/plugins/git-materializer.ts";
+import { distributionPluginRoots } from "../../extensions/plugins/discovery-bridge.ts";
 import { MarketplaceManager } from "../../extensions/plugins/marketplace/manager.ts";
 import { runExtensionDoctor } from "../../extensions/plugins/doctor.ts";
 import { TrustStore } from "../../extensions/trust/trust-store.ts";
@@ -513,16 +514,21 @@ export async function createProductionSessionExtensionComposition(
 		managedProcess: options.managedProcess,
 		cwd: options.cwd,
 	});
+	// 已安装的声明式包回灌到既有 PluginManager 发现面：安装只落盘，是否生效
+	// 仍由既有 enable/trust 决定（§1.2 缺口 #11）。
+	const installedDistributionRoots = await distribution.declarativeRoots();
 	const extensionStateStore = new ExtensionStateStore(join(stateRoot, "extensions-state.json"), storage);
+	// 声明式发现根 = 既有 user/workspace 根 + 已安装分发包的当前版本目录。
+	const declarativeRoots = await discoverPluginRoots(storage, [
+		{ source: "user", root: join(stateRoot, "user", "plugins"), priority: 100 },
+		{ source: "project", root: join(stateRoot, "workspaces", storageKey, "plugins"), priority: 200 },
+	]);
 	const pluginManager = new PluginManager({
 		storage,
 		trustStore,
 		stateStore: extensionStateStore,
 		scope: { authorityId, tenantId, principalId },
-		roots: await discoverPluginRoots(storage, [
-			{ source: "user", root: join(stateRoot, "user", "plugins"), priority: 100 },
-			{ source: "project", root: join(stateRoot, "workspaces", storageKey, "plugins"), priority: 200 },
-		]),
+		roots: [...declarativeRoots, ...installedDistributionRoots],
 	});
 	const skillRegistry = createSkillRegistry({
 		storage,
@@ -789,7 +795,11 @@ function createSessionDistribution(input: {
 	readonly distributionRoot: string;
 	readonly managedProcess: ProcessToolClient & Pick<ManagedBackgroundBashOperations, "start">;
 	readonly cwd: string;
-}): { readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort } } {
+}): {
+	readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
+	/** 已安装声明式包的发现根；注册表不可读时返回空数组（不阻断会话启动）。 */
+	readonly declarativeRoots: () => Promise<readonly ExtensionSourceRoot[]>;
+} {
 	const storage = new NodeExtensionDistributionStorage({ runledgerHome: input.home });
 	const registry = new ExtensionDistributionRegistry({
 		storage,
@@ -877,7 +887,13 @@ function createSessionDistribution(input: {
 			return { ok: true, value: { upgraded: applied } };
 		},
 	};
-	return { ports: { read, mutate } };
+	return {
+		ports: { read, mutate },
+		declarativeRoots: async () => {
+			const bridged = await distributionPluginRoots({ registry, storageKey: input.storageKey });
+			return bridged.ok ? bridged.roots : [];
+		},
+	};
 }
 
 async function discoverPluginRoots(
