@@ -236,6 +236,78 @@ describe("TUI extension mutation wiring routes through commandSessionDomain", ()
     expect(tui.getOverlay()).toBe(toggle);
   });
 
+  it("/plugins install confirms before plugin.install and sends the user scope", async () => {
+    const controller = stubController({ "extension.inspect": extensionSnapshot([plugin]), "plugin.install": {} });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    await (mode as unknown as { openPluginManager(arg: string): Promise<void> }).openPluginManager("install alpha@local");
+    await settleFrames();
+    const command = controller.commandSessionDomain as ReturnType<typeof vi.fn>;
+    // 确认之前不得发出任何 mutation，也不得先开列表视图。
+    expect(command).not.toHaveBeenCalled();
+    const confirm = tui.getOverlay() as unknown as { handleInput(data: string): void; render(width: number): string[] };
+    expect(confirm.render(80).join("\n")).toContain("Install alpha@local?");
+    confirm.handleInput("enter");
+    await settleFrames();
+    expect(command).toHaveBeenCalledWith("plugin.install", { spec: "alpha@local", scope: "user" }, expect.objectContaining({ expectedRevision: 0 }));
+    expect(tui.hasOverlay()).toBe(false);
+  });
+
+  it("/plugins upgrade confirms and cancels without sending the mutation", async () => {
+    const controller = stubController({ "extension.inspect": extensionSnapshot([plugin]) });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    await (mode as unknown as { openPluginManager(arg: string): Promise<void> }).openPluginManager("upgrade alpha@local");
+    await settleFrames();
+    const confirm = tui.getOverlay() as unknown as { handleInput(data: string): void; render(width: number): string[] };
+    expect(confirm.render(80).join("\n")).toContain("Upgrade alpha@local?");
+    confirm.handleInput("escape");
+    await settleFrames();
+    expect(controller.commandSessionDomain).not.toHaveBeenCalled();
+    expect(tui.hasOverlay()).toBe(false);
+  });
+
+  it("/plugins config confirms before plugin.config.write and passes the value as text", async () => {
+    const controller = stubController({ "extension.inspect": extensionSnapshot([plugin]), "plugin.config.write": {} });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    await (mode as unknown as { openPluginManager(arg: string): Promise<void> }).openPluginManager("config alpha@local theme dark");
+    await settleFrames();
+    const command = controller.commandSessionDomain as ReturnType<typeof vi.fn>;
+    expect(command).not.toHaveBeenCalled();
+    const confirm = tui.getOverlay() as unknown as { handleInput(data: string): void; render(width: number): string[] };
+    expect(confirm.render(80).join("\n")).toContain("Set theme for alpha@local?");
+    confirm.handleInput("y");
+    await settleFrames();
+    expect(command).toHaveBeenCalledWith("plugin.config.write", { pluginId: "alpha@local", values: { theme: "dark" } }, expect.objectContaining({ expectedRevision: 0 }));
+    expect(tui.hasOverlay()).toBe(false);
+  });
+
+  it("/plugins config without all three arguments never opens a confirmation", async () => {
+    const controller = stubController({ "extension.inspect": extensionSnapshot([plugin]) });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    await (mode as unknown as { openPluginManager(arg: string): Promise<void> }).openPluginManager("config alpha@local theme");
+    await settleFrames();
+    expect(tui.hasOverlay()).toBe(false);
+    expect(controller.commandSessionDomain).not.toHaveBeenCalled();
+  });
+
+  it("/plugins rejects an unknown verb or a missing spec without opening a confirmation", async () => {
+    const controller = stubController({ "extension.inspect": extensionSnapshot([plugin]) });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    const notice = vi.spyOn(mode as unknown as { showNotice(text: string, kind?: "note" | "error"): void }, "showNotice");
+    await (mode as unknown as { openPluginManager(arg: string): Promise<void> }).openPluginManager("remove alpha@local");
+    await settleFrames();
+    expect(tui.hasOverlay()).toBe(false);
+    expect(notice).toHaveBeenCalledWith(expect.stringContaining("Use /plugins [install|upgrade <spec>]"), "error");
+    await (mode as unknown as { openPluginManager(arg: string): Promise<void> }).openPluginManager("install");
+    await settleFrames();
+    expect(tui.hasOverlay()).toBe(false);
+    expect(notice).toHaveBeenCalledWith(expect.stringContaining("requires an install spec"), "error");
+  });
+
   it("surfaces queryable pending marketplace updates as a notice when /plugins opens", async () => {
     const controller = stubController({
       "extension.inspect": extensionSnapshot([plugin]),

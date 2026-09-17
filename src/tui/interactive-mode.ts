@@ -598,6 +598,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return this.extensionWorkflow.openExtensionSelector(operation, kindLabel, commandName);
   }
 
+  /** 测试/路由查询暴露:插件管理入口(无参数列表,`install|upgrade <spec>` 走确认边界)。 */
+  public openPluginManager(arg: string): Promise<void> {
+    return this.extensionWorkflow.openPluginManager(arg);
+  }
+
   /** 测试/路由查询暴露:credential reverse-request(委托 ApprovalWorkflow)。 */
   public handleCredentialReverseRequest(frame: SessionFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
     return this.approvalWorkflow.handleCredentialReverseRequest(frame, signal);
@@ -1242,7 +1247,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
         void this.extensionWorkflow.openMcpServerSelector();
         return;
       case "extension.plugins":
-        void this.extensionWorkflow.openExtensionSelector("plugin.list", "plugins", "/plugins");
+        // `/plugins [install|upgrade <spec>]`：无参数是列表，带动词走确认边界。
+        void this.extensionWorkflow.openPluginManager(arg);
         return;
       case "extension.skills":
         void this.extensionWorkflow.openExtensionSelector("skill.list", "skills", "/skills");

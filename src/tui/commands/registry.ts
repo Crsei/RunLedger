@@ -271,7 +271,16 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
     }),
 	    command("quit", "Exit safely", 16, { actionType: "ui.quit", category: "ui", aliases: ["exit"] }),
 	    command("mcp", "List connected MCP servers", 17, { actionType: "extension.mcp", category: "extensions", policy: READONLY_POLICY, requiredOperation: "mcp.list", unavailableHint: "Use /new standard to work with extensions." }),
-	    command("plugins", "List discovered plugins", 18, { actionType: "extension.plugins", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
+	    command("plugins", "List, install or upgrade plugins", 18, {
+			actionType: "extension.plugins",
+			category: "extensions",
+			policy: READONLY_POLICY,
+			requiredOperation: "extension.inspect",
+			unavailableHint: "Use /new standard to work with extensions.",
+			supportsInlineArgs: true,
+			usage: "[install|upgrade <spec>|config <plugin-id> <key> <value>]",
+			argumentSchema: [schema("spec", "Marketplace name, name@marketplace or name[features]", false)],
+		}),
 	    command("skills", "List discovered skills", 19, { aliases: ["skill"], actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
 	    command("hooks", "List configured hooks", 21, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
 	    command("plan", "Inspect or review the current plan", 22, {

@@ -83,6 +83,81 @@ export class ExtensionWorkflow {
 		});
 	}
 
+	/**
+	 * `/plugins [install|upgrade <spec>]`：无参数是列表视图；带动词必须走确认边界
+	 * （安装/升级会落盘并改账本，且**不**等于启用或信任）。
+	 */
+	public openPluginManager(arg: string): Promise<void> {
+		const trimmed = arg.trim();
+		if (trimmed.length === 0) return this.openExtensionToggleModal("plugin", "/plugins");
+		const [verb = "", ...rest] = trimmed.split(/\s+/u);
+		if (verb === "config") {
+			const [pluginId, key, value] = rest;
+			if (pluginId === undefined || key === undefined || value === undefined) {
+				this.port.showNotice("Use /plugins config <plugin-id> <key> <value>.", "error");
+				return Promise.resolve();
+			}
+			return this.openPluginConfig(pluginId, key, value);
+		}
+		if (verb !== "install" && verb !== "upgrade") {
+			this.port.showNotice("Use /plugins [install|upgrade <spec>] or /plugins config <plugin-id> <key> <value>.", "error");
+			return Promise.resolve();
+		}
+		return this.openPluginInstall(verb, rest.join(" "));
+	}
+
+	/** 安装/升级的确认边界：确认后才经 attempt barrier 下发，取消不触碰端口。 */
+	private async openPluginInstall(verb: "install" | "upgrade", spec: string): Promise<void> {
+		const port = this.port;
+		if (spec.trim().length === 0) {
+			port.showNotice(`/plugins ${verb} requires an install spec (name, name@marketplace, name[features]).`, "error");
+			return;
+		}
+		const operation = verb === "install" ? "plugin.install" as const : "plugin.upgrade" as const;
+		port.showOverlayModal(new ExtensionConfirmModal({
+			title: `${verb === "install" ? "Install" : "Upgrade"} ${spec}?`,
+			detailLines: [
+				"This only writes the package store and the distribution ledger.",
+				"It does not enable or trust the plugin; both stay separate decisions.",
+				"Scope: user. The declarative view refreshes in a new session.",
+			],
+			onConfirm: () => {
+				void this.applyPluginInstall(operation, verb, spec);
+			},
+			onCancel: () => port.closeOverlay(),
+		}), { anchor: "bottom-left" });
+	}
+
+	/** 配置写入的确认边界：值以字符串送出，类型/范围/枚举由声明式 schema 校验。 */
+	private async openPluginConfig(pluginId: string, key: string, value: string): Promise<void> {
+		const port = this.port;
+		port.showOverlayModal(new ExtensionConfirmModal({
+			title: `Set ${key} for ${pluginId}?`,
+			detailLines: [
+				`New value: ${value}`,
+				"Values are validated against the declared settings schema; secret keys stay in the user layer.",
+			],
+			onConfirm: () => {
+				void this.applyPluginConfig(pluginId, key, value);
+			},
+			onCancel: () => port.closeOverlay(),
+		}), { anchor: "bottom-left" });
+	}
+
+	private async applyPluginConfig(pluginId: string, key: string, value: string): Promise<void> {
+		const port = this.port;
+		const ok = await this.runSessionMutation("plugin.config.write", { pluginId, values: { [key]: value } }, "/plugins config");
+		port.closeOverlay();
+		if (ok) port.showNotice(`${pluginId}: ${key} updated.`, "note");
+	}
+
+	private async applyPluginInstall(operation: "plugin.install" | "plugin.upgrade", verb: "install" | "upgrade", spec: string): Promise<void> {
+		const port = this.port;
+		const ok = await this.runSessionMutation(operation, { spec, scope: "user" }, `/plugins ${verb}`);
+		port.closeOverlay();
+		if (ok) port.showNotice(`${spec} ${verb === "install" ? "installed" : "upgraded"}; enable and trust remain separate decisions.`, "note");
+	}
+
 	/** /plugins /skills /hooks:codex 风格 toggle 视图,Space/Enter 切换 enable,t 信任。 */
 	private async openExtensionToggleModal(kind: "plugin" | "skill" | "hook", commandName: string): Promise<void> {
 		const port = this.port;
