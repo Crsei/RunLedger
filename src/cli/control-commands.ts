@@ -7,6 +7,7 @@
  */
 
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
+import { parseFeatureSelection } from "../extensions/plugins/features.ts";
 
 export type ControlGroup =
 	| "security"
@@ -83,7 +84,7 @@ const DEFAULT_ACTIONS: Readonly<Record<ControlGroup, string>> = {
 const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	security: new Set(["inspect"]),
 	worktree: new Set(["list", "inspect", "create", "resume", "release"]),
-	plugin: new Set(["list", "inspect", "reload", "enable", "disable", "trust", "untrust", "distribution", "doctor", "install", "uninstall", "link", "upgrade", "config"]),
+	plugin: new Set(["list", "inspect", "reload", "enable", "disable", "trust", "untrust", "distribution", "doctor", "install", "uninstall", "link", "upgrade", "config", "features"]),
 	marketplace: new Set(["discover", "add", "remove", "update", "upgrade"]),
 	skill: new Set(["list", "provider", "trust", "untrust"]),
 	hook: new Set(["list"]),
@@ -133,6 +134,15 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 		if (sub !== undefined && sub !== "read" && sub !== "set") return { ok: false, error: "config requires read|set" };
 		if (sub === "set" && args.length < 4) return { ok: false, error: "config set requires a plugin id, a setting name and a value" };
 	}
+	if (group === "plugin" && rawAction === "features") {
+		const sub = args[0];
+		if (sub !== undefined && sub !== "read" && sub !== "set") return { ok: false, error: "features requires read|set" };
+		if (sub === "set") {
+			if (args.length < 3) return { ok: false, error: "features set requires a plugin id and a selection (* | none | a,b)" };
+			const parsed = parseFeatureSelection(args[2] ?? "");
+			if (!parsed.ok) return { ok: false, error: parsed.message };
+		}
+	}
 	if (group === "marketplace") {
 		if (rawAction === "add" && args.length < 3) return { ok: false, error: "marketplace add requires a name, source type and source uri" };
 		if ((rawAction === "remove" || rawAction === "update" || rawAction === "upgrade") && args.length < 1) {
@@ -177,14 +187,17 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 		} catch { return { ok: false, error: "context assemble arguments must be valid JSON" }; }
 	}
 	const skillProviderAction = group === "skill" && rawAction === "provider" ? args[0] : undefined;
-	// `plugin config` 与 `skill provider` 都是带子动作的复合动词：读/写由子动作决定，
-	// 因此不能只看动词名是否在 MUTATIONS 里。
+	// `plugin config`/`plugin features` 与 `skill provider` 都是带子动作的复合动词：
+	// 读/写由子动作决定，因此不能只看动词名是否在 MUTATIONS 里。
 	const pluginConfigAction = group === "plugin" && rawAction === "config" ? args[0] ?? "read" : undefined;
+	const pluginFeaturesAction = group === "plugin" && rawAction === "features" ? args[0] ?? "read" : undefined;
 	const mutation = skillProviderAction === "enable" || skillProviderAction === "disable"
 		? true
 		: pluginConfigAction !== undefined
 			? pluginConfigAction === "set"
-			: MUTATIONS.has(key);
+			: pluginFeaturesAction !== undefined
+				? pluginFeaturesAction === "set"
+				: MUTATIONS.has(key);
 	return { ok: true, command: { group, action: rawAction, args, mutation } };
 }
 
@@ -213,6 +226,16 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			if (command.args[0] === "set") {
 				body.pluginId = command.args[1];
 				body.values = { [command.args[2] ?? ""]: command.args[3] };
+			}
+			break;
+		}
+		case "plugin.features": {
+			// `features set <id> <selection>`：`*` = 声明默认值、`none` = 全关、
+			// 其余为逗号分隔的精确集合。解析已在词表层校验过。
+			if (command.args[0] === "set") {
+				body.pluginId = command.args[1];
+				const parsed = parseFeatureSelection(command.args[2] ?? "");
+				if (parsed.ok) body.enabledFeatures = parsed.selection;
 			}
 			break;
 		}
@@ -317,6 +340,7 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			: key === "plugin.distribution" ? "plugin.distribution.list"
 			: key === "plugin.doctor" ? "plugin.doctor"
 			: key === "plugin.config" ? (command.args[0] === "set" ? "plugin.config.write" : "plugin.config.read")
+			: key === "plugin.features" ? (command.args[0] === "set" ? "plugin.features.write" : "plugin.features.read")
 			: key === "marketplace.discover" ? "marketplace.discover"
 			: command.group === "dump" ? "session.request.inspect"
 			: key === "compact.list" ? "compaction.list"
@@ -385,6 +409,8 @@ export function controlCommandHelp(): string {
 		"  runledger worktree list|inspect|create|resume|release confirm",
 		"  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]",
 		"  runledger plugin distribution   plugin doctor   plugin config [read|set <plugin-id> <key> <value>]",
+		"  runledger plugin features [read|set <plugin-id> <*|none|feature,...>]",
+		"    feature selection only narrows the declared set; it never enables or trusts a plugin.",
 		"  runledger plugin install <spec>|upgrade <spec>|uninstall <plugin-id>|link <plugin-id> <path> [--scope user|workspace]",
 		"    install/upgrade only write to the package store; enable and trust stay separate decisions.",
 		"  runledger marketplace discover|add <name> <github|git|url|local> <uri>|remove <name>|update <name>|upgrade [name]",

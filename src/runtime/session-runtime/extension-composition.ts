@@ -20,6 +20,7 @@ import { createExtensionReloadWatcher, type ExtensionReloadOutcome, type Extensi
 import { NodeExtensionWatchPort } from "../../storage/extensions/watch-adapter.ts";
 import { loadInstalledRunledgerManifests, selectDistributionHostCandidates } from "../../extensions/plugins/host-activation.ts";
 import { applySettingDefaults, resolvePluginSettings, validatePluginSettings } from "../../extensions/plugins/settings-schema.ts";
+import { applyPluginFeatureSelection, describePluginFeatures } from "../../extensions/plugins/features.ts";
 import type { ExtensionSettingDescriptor } from "../../contracts/extensions/manifest.ts";
 import type { DistributionHostCandidate, DistributionHostSelection } from "../../extensions/plugins/host-activation.ts";
 import { admitExtensionTools, type ExtensionToolInvoker } from "../../extensions/tools/admission.ts";
@@ -370,11 +371,13 @@ const OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object
 	Object.freeze({ operation: "plugin.distribution.list", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "plugin.doctor", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "plugin.config.read", capability: "session.plugins", access: "read" }),
+	Object.freeze({ operation: "plugin.features.read", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "marketplace.discover", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "plugin.install", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.uninstall", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.link", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.config.write", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "plugin.features.write", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.upgrade", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "marketplace.add", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "marketplace.remove", capability: "session.plugins", access: "mutate" }),
@@ -390,6 +393,8 @@ export interface SessionDistributionReadPort {
 	marketplaces(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	/** 每个已安装包的声明式 settings schema 与 user 层已生效值。 */
 	configRead(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	/** 每个已安装包的 feature 声明与账本里的选择/生效集合。 */
+	featuresRead(): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 }
 
 /** 分发面变更操作。全部经 attempt barrier 记账后才返回。 */
@@ -403,6 +408,7 @@ export interface SessionDistributionMutationPort {
 	updateMarketplace(input: { readonly name: string }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	upgradeFromMarketplace(input: { readonly marketplace: string; readonly scope: "user" | "workspace" }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 	configWrite(input: { readonly packageId: string; readonly values: Readonly<Record<string, unknown>> }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
+	featuresWrite(input: { readonly packageId: string; readonly enabledFeatures: readonly string[] | null }): Promise<{ readonly ok: boolean; readonly value?: Record<string, unknown>; readonly code?: string; readonly message?: string }>;
 }
 
 /**
@@ -505,7 +511,7 @@ async function queryResources(options: SessionExtensionCompositionOptions, opera
 			? { host: "disabled", reason: "this session has no extension host composition" }
 			: await options.hostInspect());
 	}
-	if (operation === "plugin.distribution.list" || operation === "plugin.doctor" || operation === "marketplace.discover" || operation === "plugin.config.read") {
+	if (DISTRIBUTION_READ_OPERATIONS.has(operation)) {
 		const distribution = options.distribution?.read;
 		if (distribution === undefined) return { ok: false, status: "unavailable", code: "operation_unavailable", operation };
 		const read = operation === "plugin.distribution.list"
@@ -514,7 +520,9 @@ async function queryResources(options: SessionExtensionCompositionOptions, opera
 				? await distribution.doctor()
 				: operation === "plugin.config.read"
 					? await distribution.configRead()
-					: await distribution.marketplaces();
+					: operation === "plugin.features.read"
+						? await distribution.featuresRead()
+						: await distribution.marketplaces();
 		return read.ok ? ok(operation, options.generation, read.value ?? {}) : { ok: false, status: "failed", code: read.code ?? "distribution_read_failed", operation };
 	}
 	const kind = operation === "plugin.list" ? "plugin" : operation === "skill.list" ? "skill" : operation === "hook.list" ? "hook" : undefined;
@@ -534,6 +542,26 @@ function stringValue(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * payload 里的 feature 选择：`null` = 声明默认值，数组 = 精确集合（`[]` = 全关）。
+ * 其它类型是形状错误，不能当作"全关"或"默认"处理。
+ */
+function parseFeatureSelectionPayload(value: unknown): readonly string[] | null | undefined {
+	if (value === null) return null;
+	if (!Array.isArray(value)) return undefined;
+	if (value.some((item) => typeof item !== "string" || item.length === 0)) return undefined;
+	return [...value] as readonly string[];
+}
+
+/** P5 分发 read 操作名；与 OPERATION_MANIFEST 中的 read 项一一对应。 */
+const DISTRIBUTION_READ_OPERATIONS = new Set<string>([
+	"plugin.distribution.list",
+	"plugin.doctor",
+	"plugin.config.read",
+	"plugin.features.read",
+	"marketplace.discover",
+]);
+
 /** P5 分发 mutate 操作名；与 OPERATION_MANIFEST 中的 mutate 项一一对应。 */
 const DISTRIBUTION_MUTATION_OPERATIONS = new Set<string>([
 	"plugin.install",
@@ -541,6 +569,7 @@ const DISTRIBUTION_MUTATION_OPERATIONS = new Set<string>([
 	"plugin.link",
 	"plugin.upgrade",
 	"plugin.config.write",
+	"plugin.features.write",
 	"marketplace.add",
 	"marketplace.remove",
 	"marketplace.update",
@@ -592,6 +621,15 @@ async function dispatchDistributionMutation(
 			if (packageId === undefined || name === undefined || localPath === undefined) return { ok: false, code: "link_arguments_required" };
 			const applied = await port.link({ packageId, name, localPath, scope });
 			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "link_failed" };
+		}
+		case "plugin.features.write": {
+			const packageId = stringValue(payload.pluginId);
+			if (packageId === undefined) return { ok: false, code: "plugin_id_required" };
+			// `null`（声明默认值）与 `[]`（全关）是两种合法选择，必须与"缺参数"区分。
+			const selection = "enabledFeatures" in payload ? parseFeatureSelectionPayload(payload.enabledFeatures) : undefined;
+			if (selection === undefined) return { ok: false, code: "feature_selection_required" };
+			const applied = await port.featuresWrite({ packageId, enabledFeatures: selection });
+			return applied.ok ? { ok: true, value: applied.value ?? {} } : { ok: false, code: applied.code ?? "feature_write_failed" };
 		}
 		case "marketplace.add": {
 			const name = stringValue(payload.name);
@@ -1396,6 +1434,25 @@ function createSessionDistribution(input: {
 			const updates = await manager.pendingUpdates();
 			return { ok: true, value: { marketplaces: listed.value, pendingUpdates: updates.ok ? updates.value : [] } };
 		},
+		featuresRead: async () => {
+			const loaded = await loadInstalledRunledgerManifests({ registry, storage });
+			const ledger = await registry.loadRunledgerRegistry();
+			if (!ledger.ok) return { ok: false, code: ledger.code, message: ledger.message };
+			const items: Record<string, unknown>[] = [];
+			for (const entry of loaded.manifests) {
+				const record = ledger.document.plugins[entry.packageId];
+				// 只有账本里存在的记录才有选择；账本不一致时报告 diagnostic 而不是编造默认值。
+				if (record === undefined) continue;
+				const state = describePluginFeatures({
+					packageId: entry.packageId,
+					manifest: entry.manifest,
+					selection: record.enabledFeatures,
+				});
+				if (state.declared.length === 0) continue;
+				items.push({ ...state });
+			}
+			return { ok: true, value: { items, diagnostics: loaded.diagnostics } };
+		},
 	};
 	const mutate: SessionDistributionMutationPort = {
 		install: async ({ spec, scope }) => {
@@ -1449,6 +1506,16 @@ function createSessionDistribution(input: {
 				plugins: { values: { ...(settings.plugins?.values ?? {}), [packageId]: stored } },
 			});
 			return { ok: true, value: { packageId, accepted: validated.accepted } };
+		},
+		featuresWrite: async ({ packageId, enabledFeatures }) => {
+			const listed = await loadInstalledRunledgerManifests({ registry, storage });
+			const entry = listed.manifests.find((manifest) => manifest.packageId === packageId);
+			if (entry === undefined) return { ok: false, code: "plugin_not_installed", message: `no installed package matches ${packageId}` };
+			// 只改账本里的选择字段：不启用、不信任、不重启 host（D7）。
+			const applied = await applyPluginFeatureSelection({ registry, packageId, manifest: entry.manifest, selection: enabledFeatures });
+			return applied.ok
+				? { ok: true, value: { ...applied.value } }
+				: { ok: false, code: applied.code, message: applied.message };
 		},
 		upgradeFromMarketplace: async ({ marketplace, scope }) => {
 			const updates = await manager.pendingUpdates();

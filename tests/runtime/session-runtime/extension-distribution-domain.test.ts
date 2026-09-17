@@ -89,6 +89,7 @@ function readPort(overrides: Partial<SessionDistributionReadPort> = {}): Session
 		doctor: async () => ({ ok: true, value: { findings: [{ code: "doctor.completed", severity: "ok" }], counts: { ok: 1, warning: 0, error: 0 } } }),
 		marketplaces: async () => ({ ok: true, value: { marketplaces: [{ name: "local" }], pendingUpdates: [] } }),
 		configRead: async () => ({ ok: true, value: { items: [] } }),
+		featuresRead: async () => ({ ok: true, value: { items: [{ packageId: "alpha@local", enabled: ["bundle"] }] } }),
 		...overrides,
 	};
 }
@@ -106,6 +107,7 @@ function mutatePort(calls: Array<Record<string, unknown>>, overrides: Partial<Se
 		updateMarketplace: async (input) => record("updateMarketplace", input),
 		upgradeFromMarketplace: async (input) => record("upgradeFromMarketplace", input),
 		configWrite: async (input) => record("configWrite", input),
+		featuresWrite: async (input) => record("featuresWrite", input),
 		...overrides,
 	};
 }
@@ -127,6 +129,8 @@ describe("session extension distribution domain", () => {
 			"plugin.distribution.list",
 			"plugin.doctor",
 			"plugin.enable",
+			"plugin.features.read",
+			"plugin.features.write",
 			"plugin.install",
 			"plugin.link",
 			"plugin.list",
@@ -138,7 +142,8 @@ describe("session extension distribution domain", () => {
 		expect(byOperation.get("marketplace.discover")).toBe("read");
 		expect(byOperation.get("plugin.doctor")).toBe("read");
 		expect(byOperation.get("plugin.distribution.list")).toBe("read");
-		for (const mutate of ["plugin.install", "plugin.uninstall", "plugin.link", "plugin.upgrade", "marketplace.add", "marketplace.remove", "marketplace.update", "marketplace.upgrade"]) {
+		expect(byOperation.get("plugin.features.read")).toBe("read");
+		for (const mutate of ["plugin.install", "plugin.uninstall", "plugin.link", "plugin.upgrade", "plugin.config.write", "plugin.features.write", "marketplace.add", "marketplace.remove", "marketplace.update", "marketplace.upgrade"]) {
 			expect(byOperation.get(mutate), mutate).toBe("mutate");
 		}
 	});
@@ -148,6 +153,7 @@ describe("session extension distribution domain", () => {
 		await expect(session.resources.query("plugin.distribution.list", {}, queryContext())).resolves.toMatchObject({ ok: true, value: { items: [{ packageId: "alpha@local" }] } });
 		await expect(session.resources.query("plugin.doctor", {}, queryContext())).resolves.toMatchObject({ ok: true, value: { counts: { ok: 1 } } });
 		await expect(session.resources.query("marketplace.discover", {}, queryContext())).resolves.toMatchObject({ ok: true, value: { marketplaces: [{ name: "local" }] } });
+		await expect(session.resources.query("plugin.features.read", {}, queryContext())).resolves.toMatchObject({ ok: true, value: { items: [{ packageId: "alpha@local", enabled: ["bundle"] }] } });
 	});
 
 	it("reports read failures with the port's code instead of an empty success", async () => {
@@ -184,6 +190,20 @@ describe("session extension distribution domain", () => {
 		]);
 	});
 
+	it("distinguishes the three feature selections instead of collapsing them", async () => {
+		const calls: Array<Record<string, unknown>> = [];
+		const session = composition({ read: readPort(), mutate: mutatePort(calls) });
+		// `*` = 声明默认值（null）、`none` = 全关（[]）、`a,b` = 精确集合。
+		await expect(mutate(session, "plugin.features.write", { pluginId: "alpha@local", enabledFeatures: null })).resolves.toMatchObject({ ok: true });
+		await expect(mutate(session, "plugin.features.write", { pluginId: "alpha@local", enabledFeatures: [] })).resolves.toMatchObject({ ok: true });
+		await expect(mutate(session, "plugin.features.write", { pluginId: "alpha@local", enabledFeatures: ["bundle", "audit"] })).resolves.toMatchObject({ ok: true });
+		expect(calls).toEqual([
+			{ method: "featuresWrite", packageId: "alpha@local", enabledFeatures: null },
+			{ method: "featuresWrite", packageId: "alpha@local", enabledFeatures: [] },
+			{ method: "featuresWrite", packageId: "alpha@local", enabledFeatures: ["bundle", "audit"] },
+		]);
+	});
+
 	it("rejects incomplete mutate payloads without calling the port", async () => {
 		const calls: Array<Record<string, unknown>> = [];
 		const session = composition({ read: readPort(), mutate: mutatePort(calls) });
@@ -191,6 +211,9 @@ describe("session extension distribution domain", () => {
 			["plugin.install", {}, "spec_required"],
 			["plugin.uninstall", {}, "plugin_id_required"],
 			["plugin.link", { pluginId: "dev" }, "link_arguments_required"],
+			["plugin.features.write", { pluginId: "alpha@local" }, "feature_selection_required"],
+			["plugin.features.write", { pluginId: "alpha@local", enabledFeatures: "all" }, "feature_selection_required"],
+			["plugin.features.write", { enabledFeatures: [] }, "plugin_id_required"],
 			["marketplace.add", { name: "local" }, "marketplace_arguments_required"],
 			["marketplace.remove", {}, "marketplace_name_required"],
 			["marketplace.upgrade", {}, "marketplace_name_required"],

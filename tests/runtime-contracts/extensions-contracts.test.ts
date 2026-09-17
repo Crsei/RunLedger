@@ -103,6 +103,18 @@ describe("Extension package manifest contract", () => {
 		const entrypoints = Array.from({ length: EXTENSION_CONTRACT_BOUNDS.entrypointsPerPackage + 1 }, (_value, index) => `./src/mod-${index}.ts`);
 		expect(Value.Check(ExtensionPackageManifestSchema, { ...manifest, extensions: entrypoints })).toBe(false);
 	});
+
+	it("accepts a bounded feature declaration set and rejects malformed entries", () => {
+		expect(Value.Check(ExtensionPackageManifestSchema, {
+			...manifest,
+			features: [{ name: "bundle", default: true, description: "bundled commands" }, { name: "audit" }],
+		})).toBe(true);
+		expect(Value.Check(ExtensionPackageManifestSchema, { ...manifest, features: [{ name: "Bundle" }] })).toBe(false);
+		expect(Value.Check(ExtensionPackageManifestSchema, { ...manifest, features: [{ name: "bundle", unknown: 1 }] })).toBe(false);
+		expect(Value.Check(ExtensionPackageManifestSchema, { ...manifest, features: [{ default: true }] })).toBe(false);
+		const tooMany = Array.from({ length: EXTENSION_CONTRACT_BOUNDS.featuresPerPackage + 1 }, (_value, index) => ({ name: `feature-${index}` }));
+		expect(Value.Check(ExtensionPackageManifestSchema, { ...manifest, features: tooMany })).toBe(false);
+	});
 });
 
 describe("Extension host protocol contract", () => {

@@ -65,6 +65,20 @@ export const ExtensionSettingsSchema = Type.Record(
 	{ maxProperties: 64 },
 );
 
+/**
+ * feature 声明。`name` 与安装语法 `pkg[a,b]` 的选择项同名；`default: true`
+ * 表示 `enabledFeatures === null`（未显式选择）时默认启用。声明是**选择域**，
+ * 不是授权：启用某个 feature 不改变 capability/trust/enable 三层门禁。
+ */
+export const ExtensionFeatureDeclarationSchema = Type.Object(
+	{
+		name: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
+		description: Type.Optional(ExtensionTextSchema),
+		default: Type.Optional(Type.Boolean()),
+	},
+	{ additionalProperties: false },
+);
+
 const ExtensionPathDeclarationListSchema = Type.Array(ExtensionRelativePathSchema, {
 	maxItems: EXTENSION_CONTRACT_BOUNDS.entrypointsPerPackage,
 });
@@ -98,12 +112,17 @@ export const ExtensionPackageManifestSchema = Type.Object(
 		skills: ExtensionPathDeclarationListSchema,
 		hooks: ExtensionPathDeclarationListSchema,
 		mcpServers: Type.Optional(ExtensionRelativePathSchema),
+		/** feature 选择域；安装/后续选择只在这个集合内取值。 */
+		features: Type.Optional(
+			Type.Array(ExtensionFeatureDeclarationSchema, { maxItems: EXTENSION_CONTRACT_BOUNDS.featuresPerPackage }),
+		),
 		settings: Type.Optional(ExtensionSettingsSchema),
 	},
 	{ additionalProperties: false },
 );
 
 export type ExtensionCapability = Static<typeof ExtensionCapabilitySchema>;
+export type ExtensionFeatureDeclaration = Static<typeof ExtensionFeatureDeclarationSchema>;
 export type ExtensionSettingDescriptor = Static<typeof ExtensionSettingDescriptorSchema>;
 export type ExtensionPackageManifest = Static<typeof ExtensionPackageManifestSchema>;
 
@@ -120,6 +139,7 @@ export const EXTENSION_PACKAGE_MANIFEST_KEYS = Object.freeze([
 	"skills",
 	"hooks",
 	"mcpServers",
+	"features",
 	"settings",
 ] as const);
 

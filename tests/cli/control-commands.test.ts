@@ -261,3 +261,51 @@ describe("Host control command plugin config vocabulary", () => {
 		if (set !== undefined && set.ok) expect(controlCommandQueryOperation(set.command)).toBe("plugin.distribution.list");
 	});
 });
+
+describe("Host control command plugin features vocabulary", () => {
+	it("maps features read and set to the two operations", () => {
+		const read = parseControlCommand(["plugin", "features"]);
+		expect(read?.ok).toBe(true);
+		if (read !== undefined && read.ok) {
+			expect(read.command.mutation).toBe(false);
+			expect(controlCommandRequest(read.command).operation).toBe("plugin.features.read");
+			expect(controlCommandRequest(read.command).body).toEqual({});
+		}
+		const explicit = parseControlCommand(["plugin", "features", "read"]);
+		if (explicit !== undefined && explicit.ok) expect(controlCommandRequest(explicit.command).operation).toBe("plugin.features.read");
+	});
+
+	it("keeps the three selections distinct in the mutation body", () => {
+		const cases: readonly (readonly [string, readonly string[] | null])[] = [
+			["*", null],
+			["none", []],
+			["audit,bundle", ["audit", "bundle"]],
+		];
+		for (const [word, selection] of cases) {
+			const parsed = parseControlCommand(["plugin", "features", "set", "alpha@local", word]);
+			expect(parsed?.ok, word).toBe(true);
+			if (parsed === undefined || !parsed.ok) continue;
+			expect(parsed.command.mutation, word).toBe(true);
+			const request = controlCommandRequest(parsed.command);
+			expect(request.operation, word).toBe("plugin.features.write");
+			expect(request.body, word).toEqual({ pluginId: "alpha@local", enabledFeatures: selection });
+		}
+	});
+
+	it("requires the documented features arguments and a valid selection", () => {
+		expect(parseControlCommand(["plugin", "features", "bogus"])).toMatchObject({ ok: false, error: /read\|set/i });
+		expect(parseControlCommand(["plugin", "features", "set", "alpha@local"])).toMatchObject({ ok: false, error: /selection/i });
+		expect(parseControlCommand(["plugin", "features", "set", "alpha@local", "Audit"])).toMatchObject({ ok: false, error: /invalid name/i });
+		expect(parseControlCommand(["plugin", "features", "set", "alpha@local", ""])).toMatchObject({ ok: false, error: /selection/i });
+	});
+
+	it("takes the features mutation revision from the distribution ledger", () => {
+		const set = parseControlCommand(["plugin", "features", "set", "alpha@local", "audit"]);
+		if (set !== undefined && set.ok) expect(controlCommandQueryOperation(set.command)).toBe("plugin.distribution.list");
+	});
+
+	it("documents the features verb as narrowing only", () => {
+		expect(controlCommandHelp()).toContain("runledger plugin features");
+		expect(controlCommandHelp()).toContain("never enables or trusts");
+	});
+});

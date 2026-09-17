@@ -36,6 +36,8 @@ export const EXTENSION_CONTRACT_BOUNDS = Object.freeze({
 	maxInFlightEvents: 4,
 	/** 单个 package 可声明的 executable entrypoint 数量上限。 */
 	entrypointsPerPackage: 32,
+	/** 单个 package 可声明的 feature 数量上限（安装语法 `pkg[a,b]` 的选择域）。 */
+	featuresPerPackage: 64,
 	/** 单个 marketplace catalog 的 plugin 条目上限。 */
 	catalogPlugins: 1_024,
 	/** 单次 fetch 的响应体上限（UTF-8 字节）。 */
