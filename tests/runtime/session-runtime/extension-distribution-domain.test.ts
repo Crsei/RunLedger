@@ -54,6 +54,31 @@ function mutate(
 	return port(operation, payload, ctx);
 }
 
+function hostManager(): Parameters<typeof createSessionExtensionComposition>[0]["manager"] {
+	return {
+		load: async () => readyReload,
+		reload: async () => readyReload,
+		setEnabled: async () => readyReload,
+		trust: async () => readyReload,
+		untrust: async () => readyReload,
+		trustSkill: async () => readyReload,
+		untrustSkill: async () => readyReload,
+		setSkillProviderEnabled: async () => readyReload,
+		publicSnapshot: () => undefined,
+	};
+}
+
+function hostMcp(overrides: Partial<Parameters<typeof createSessionExtensionComposition>[0]["mcp"]> = {}): Parameters<typeof createSessionExtensionComposition>[0]["mcp"] {
+	return {
+		start: async () => ({ ok: true, snapshots: [], requiredFailures: [] }),
+		snapshots: () => [],
+		restart: async (serverId: string) => ({ ok: false, error: { code: "server_not_found" as const, message: serverId, retryable: false } }),
+		tools: () => [],
+		close: async () => undefined,
+		...overrides,
+	};
+}
+
 function context(): SessionDomainMutationContext {
 	return { correlationId: "command_distribution" as SessionDomainMutationContext["correlationId"], effectId: "effect_1", expectedRevision: 1 };
 }
@@ -180,5 +205,79 @@ describe("session extension distribution domain", () => {
 		});
 		const result = await mutate(session, "plugin.install", { spec: "alpha@local" });
 		expect(result).toMatchObject({ ok: false, status: "failed", code: "install_script_forbidden" });
+	});
+});
+
+describe("session extension composition host port", () => {
+	type HostPort = NonNullable<Parameters<typeof createSessionExtensionComposition>[0]["hostExtensions"]>;
+	function hostPort(overrides: Partial<HostPort> = {}) {
+		return {
+			start: async () => ({ ok: true as const, tools: [] as readonly never[] }),
+			tools: () => [] as readonly never[],
+			shutdown: async () => undefined,
+			dispatchEvent: async () => ({ ok: false as const, code: "host_unavailable", message: "none" }),
+			...overrides,
+		};
+	}
+
+	it("starts the host, exposes its tools and audits the admitted count", async () => {
+		const audits: string[] = [];
+		const tool = { name: "fixture_echo", label: "echo", description: "d", parameters: {}, execute: async () => ({ content: [], details: {} }) };
+		const session = createSessionExtensionComposition({
+			sessionId: "session_host",
+			generation: 1,
+			manager: hostManager(),
+			mcp: hostMcp(),
+			closeHooks: async () => undefined,
+			closePlugins: async () => undefined,
+			cleanup: async () => undefined,
+			hostExtensions: hostPort({ start: async () => ({ ok: true, tools: [tool] as never }), tools: () => [tool] as never }),
+			audit: async (event) => { audits.push(event.eventType); },
+		});
+		expect(session.extensionTools()).toEqual([]);
+		await session.start();
+		expect(session.extensionTools().map((entry) => entry.name)).toEqual(["fixture_echo"]);
+		expect(audits).toContain("extension.host.tools_admitted");
+	});
+
+	it("keeps the session alive when the host fails to start", async () => {
+		const audits: string[] = [];
+		const session = createSessionExtensionComposition({
+			sessionId: "session_host_failed",
+			generation: 1,
+			manager: hostManager(),
+			mcp: hostMcp(),
+			closeHooks: async () => undefined,
+			closePlugins: async () => undefined,
+			cleanup: async () => undefined,
+			hostExtensions: hostPort({ start: async () => ({ ok: false, code: "extension_factory_failed", message: "exploded" }) }),
+			audit: async (event) => { audits.push(event.eventType); },
+		});
+		// 不抛错：host 失败只记账，工具集保持为空（D2）。
+		await expect(session.start()).resolves.toBeUndefined();
+		expect(session.extensionTools()).toEqual([]);
+		expect(audits).toContain("extension.host.start_failed");
+	});
+
+	it("reports host_unavailable for event dispatch when no host is assembled", async () => {
+		const session = composition();
+		await expect(session.dispatchExtensionEvent({ name: "PreToolUse", cancelable: true, payload: {} }))
+			.resolves.toMatchObject({ ok: false, code: "host_unavailable" });
+	});
+
+	it("shuts the host down before closing MCP and hooks", async () => {
+		const order: string[] = [];
+		const session = createSessionExtensionComposition({
+			sessionId: "session_host_shutdown",
+			generation: 1,
+			manager: hostManager(),
+			mcp: hostMcp({ close: async () => { order.push("mcp"); } }),
+			closeHooks: async () => { order.push("hooks"); },
+			closePlugins: async () => undefined,
+			cleanup: async () => undefined,
+			hostExtensions: hostPort({ shutdown: async () => { order.push("host"); } }),
+		});
+		await session.shutdown("paused");
+		expect(order).toEqual(["host", "mcp", "hooks"]);
 	});
 });

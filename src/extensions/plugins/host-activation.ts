@@ -37,6 +37,8 @@ export interface DistributionHostCandidate {
 	readonly enabled: boolean;
 	/** manifest `runledger.extensions[]`；空数组表示纯声明式包。 */
 	readonly entrypoints: readonly string[];
+	/** manifest `runledger.capabilities.tools`；准入时用它判断工具是否已声明。 */
+	readonly declaredTools: readonly string[];
 }
 
 export type DistributionHostGate =
@@ -139,6 +141,7 @@ export async function selectDistributionHostCandidates(input: DistributionHostSe
 			scope: record.scope,
 			enabled: record.enabled,
 			entrypoints,
+			declaredTools: readDeclaredTools(manifest.manifest),
 		});
 	}
 
@@ -184,6 +187,14 @@ export async function selectDistributionHostCandidates(input: DistributionHostSe
 function linkedPathOf(record: RunledgerPluginRecord): string | undefined {
 	const value = (record as RunledgerPluginRecord & { readonly runledgerLinkedPath?: unknown }).runledgerLinkedPath;
 	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readDeclaredTools(manifest: unknown): readonly string[] {
+	if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) return [];
+	const capabilities = (manifest as Record<string, unknown>).capabilities;
+	if (typeof capabilities !== "object" || capabilities === null || Array.isArray(capabilities)) return [];
+	const tools = (capabilities as Record<string, unknown>).tools;
+	return Array.isArray(tools) ? tools.filter((item): item is string => typeof item === "string") : [];
 }
 
 function readEntrypoints(manifest: unknown): readonly string[] {

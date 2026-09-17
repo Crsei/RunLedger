@@ -17,6 +17,15 @@ import { resolveExtensionCachePaths } from "../../extensions/plugins/marketplace
 import { createManagedGitMaterializer } from "../../extensions/plugins/git-materializer.ts";
 import { distributionPluginRoots } from "../../extensions/plugins/discovery-bridge.ts";
 import { selectDistributionHostCandidates } from "../../extensions/plugins/host-activation.ts";
+import type { DistributionHostCandidate, DistributionHostSelection } from "../../extensions/plugins/host-activation.ts";
+import { admitExtensionTools, type ExtensionToolInvoker } from "../../extensions/tools/admission.ts";
+import type { ExtensionRegistrySnapshot } from "../../contracts/extensions/registry.ts";
+import { ExtensionHostSupervisor } from "../../extensions/host/supervisor.ts";
+import { EXTENSION_HOST_API_VERSION } from "../../extensions/host/runtime.ts";
+import { createExtensionActionHandler, type ExtensionActionActorPort } from "../../extensions/actions/handler.ts";
+import { ExtensionEventBridge } from "../../extensions/events/bridge.ts";
+import { admitExtensionTools as admitExtensionToolsForHost, type ExtensionToolInvoker as ExtensionToolInvokerForHost } from "../../extensions/tools/admission.ts";
+import { fileURLToPath } from "node:url";
 import { MarketplaceManager } from "../../extensions/plugins/marketplace/manager.ts";
 import { runExtensionDoctor } from "../../extensions/plugins/doctor.ts";
 import { TrustStore } from "../../extensions/trust/trust-store.ts";
@@ -52,6 +61,7 @@ import type { SessionProtocolOperationDescriptor } from "../session-server/proto
 import type { SessionDomainMutationContext, SessionDomainResult } from "./domain-router.ts";
 import type { SessionResourceDomainPort } from "./session-runtime.ts";
 import type { RuntimeContextSource } from "../context/runtime-adapter.ts";
+import type { ExtensionEventOutcome } from "../../extensions/host/client.ts";
 
 export interface SessionExtensionManagerPort {
 	load(): Promise<ExtensionReloadResult>;
@@ -99,6 +109,28 @@ export interface SessionExtensionCompositionOptions {
 	readonly attemptPort?: () => AttemptPort | undefined;
 	/** P5 分发面;缺省时所有分发操作返回 operation_unavailable。 */
 	readonly distribution?: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
+	/** P5/P1 可执行扩展 host;缺省(或 Profile 关闭)时扩展工具与事件桥不可用。 */
+	readonly hostExtensions?: SessionExtensionHostPort;
+}
+
+/**
+ * 扩展 host 的生命周期与查询面（P1–P4 的装配缝）。
+ *
+ * `start` **不得抛错**：host 失败只让该 generation failed，session 必须继续
+ * （D2）。因此失败被表达为 `{ok:false}`，由 composition 记审计并保持空工具集。
+ */
+export interface SessionExtensionHostPort {
+	start(): Promise<{ readonly ok: true; readonly tools: readonly AgentTool[] } | { readonly ok: false; readonly code: string; readonly message: string }>;
+	/** 已准入的扩展工具；start 之前为空。 */
+	tools(): readonly AgentTool[];
+	shutdown(reason: "paused" | "detached" | "error" | "fenced"): Promise<void>;
+	/** 事件桥派发；未装配时返回 host_unavailable，交由调用方 fail-closed 处理。 */
+	dispatchEvent(input: {
+		readonly name: string;
+		readonly cancelable: boolean;
+		readonly payload: Readonly<Record<string, unknown>>;
+		readonly signal?: AbortSignal;
+	}): Promise<ExtensionEventOutcome>;
 }
 
 export interface SessionExtensionComposition {
@@ -107,6 +139,14 @@ export interface SessionExtensionComposition {
 	readonly contextSources: (modelContextChars: number) => readonly RuntimeContextSource[];
 	readonly hookRuntime?: ExtensionHookRuntime;
 	readonly turnLifecycle?: ExtensionTurnLifecycle;
+	/** host 在 `start` 后才公布注册表；调用方在 start 之后用 `addTools` 追加。 */
+	extensionTools(): readonly AgentTool[];
+	dispatchExtensionEvent(input: {
+		readonly name: string;
+		readonly cancelable: boolean;
+		readonly payload: Readonly<Record<string, unknown>>;
+		readonly signal?: AbortSignal;
+	}): Promise<ExtensionEventOutcome>;
 	start(): Promise<void>;
 	shutdown(reason: "paused" | "detached" | "error" | "fenced"): Promise<void>;
 }
@@ -127,6 +167,98 @@ export interface ProductionSessionExtensionCompositionOptions {
 		readonly osUserHome: string;
 		readonly projectBoundary: string;
 	}>;
+}
+
+/**
+ * 可执行扩展 host 的运行时缝：把「选包 → 起进程 → 拿注册表」与「准入 → 工具」
+ * 分开,以便在不起真实进程的情况下测试准入与失败语义。
+ */
+export interface SessionExtensionHostRuntime {
+	readonly start: (candidate: DistributionHostCandidate) => Promise<
+		| { readonly ok: true; readonly snapshot: ExtensionRegistrySnapshot }
+		| { readonly ok: false; readonly code: string; readonly message: string }
+	>;
+	readonly shutdown: () => Promise<void>;
+	readonly dispatch: (input: {
+		readonly name: string;
+		readonly cancelable: boolean;
+		readonly payload: Readonly<Record<string, unknown>>;
+		readonly signal?: AbortSignal;
+	}) => Promise<ExtensionEventOutcome>;
+	/** 已订阅某个投影事件的扩展 id;用于跳过无人订阅的跨进程往返。 */
+	readonly subscribersFor: (name: string) => readonly string[];
+}
+
+export interface SessionExtensionHostPortOptions {
+	readonly selection: () => Promise<DistributionHostSelection>;
+	readonly runtime: SessionExtensionHostRuntime;
+	/** stdlib/base/MCP/Skill 等既有工具名;扩展不得占用。 */
+	readonly reservedNames: () => readonly string[];
+	readonly invoke: ExtensionToolInvoker;
+	readonly audit?: (event: { readonly eventType: string; readonly payload: Record<string, unknown> }) => Promise<void>;
+}
+
+/**
+ * 装配 host 端口。每个 session 最多起 1 个 host（D1）：多个 ready 候选时按
+ * `project` 优先、再按 packageId 排序确定性取第一个,其余**记录为跳过原因**,
+ * 不静默忽略。host 启动失败返回 `{ok:false}`,绝不让 session 启动失败（D2）。
+ */
+export function createSessionExtensionHostPort(options: SessionExtensionHostPortOptions): SessionExtensionHostPort {
+	let active: DistributionHostCandidate | undefined;
+	let admitted: readonly AgentTool[] = [];
+	return {
+		start: async () => {
+			const selection = await options.selection();
+			if (selection.ready.length === 0) {
+				// 没有可执行扩展是正常状态：不记失败,也不起进程。
+				return { ok: true, tools: [] };
+			}
+			const ordered = [...selection.ready].sort((left, right) => {
+				const leftRank = left.candidate.scope === "project" ? 0 : 1;
+				const rightRank = right.candidate.scope === "project" ? 0 : 1;
+				return leftRank - rightRank || left.candidate.packageId.localeCompare(right.candidate.packageId);
+			});
+			const chosen = ordered[0];
+			if (chosen === undefined) return { ok: true, tools: [] };
+			const skipped = ordered.slice(1).map((gate) => gate.candidate.packageId);
+			if (skipped.length > 0) await options.audit?.({ eventType: "extension.host.candidates_skipped", payload: { skipped, reason: "one host per session" } });
+
+			const started = await options.runtime.start(chosen.candidate);
+			if (!started.ok) {
+				active = undefined;
+				admitted = [];
+				return { ok: false, code: started.code, message: started.message };
+			}
+			const result = admitExtensionTools({
+				packages: [{
+					packageId: chosen.candidate.packageId,
+					digest: chosen.candidate.digest,
+					generation: started.snapshot.generation,
+					declaredTools: chosen.candidate.declaredTools,
+					tools: started.snapshot.tools,
+				}],
+				reservedNames: options.reservedNames(),
+				invoke: options.invoke,
+			});
+			active = chosen.candidate;
+			admitted = Object.freeze(result.admitted.map((entry) => entry.tool));
+			if (result.rejected.length > 0) {
+				await options.audit?.({
+					eventType: "extension.host.tools_rejected",
+					payload: { code: result.rejected[0]?.code ?? "unknown", count: result.rejected.length, name: result.rejected[0]?.name ?? "unknown" },
+				});
+			}
+			return { ok: true, tools: admitted };
+		},
+		tools: () => admitted,
+		shutdown: async () => {
+			if (active === undefined) return;
+			active = undefined;
+			admitted = [];
+			await options.runtime.shutdown().catch(() => undefined);
+		},
+		dispatchEvent: (input) => options.runtime.dispatch(input),
+	};
 }
 
 export class SessionExtensionStartupError extends Error {
@@ -199,6 +331,7 @@ export interface SessionDistributionMutationPort {
  */
 export function createSessionExtensionComposition(options: SessionExtensionCompositionOptions): SessionExtensionComposition {
 	let shutdownPromise: Promise<void> | undefined;
+	let hostTools: readonly AgentTool[] = [];
 	const tools: AgentTool[] = [
 		...(options.skillLoader === undefined ? [] : [createSkillTool({ loader: options.skillLoader })]),
 		...options.mcp.tools(),
@@ -210,6 +343,12 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 	};
 	return {
 		tools,
+		extensionTools: () => hostTools,
+		dispatchExtensionEvent: async (input) => {
+			const host = options.hostExtensions;
+			if (host === undefined) return { ok: false, code: "host_unavailable", message: "no extension host is assembled for this session" };
+			return host.dispatchEvent(input);
+		},
 		resources,
 		contextSources: options.contextSources ?? (() => []),
 		start: async () => {
@@ -222,6 +361,17 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 				snapshotId: options.manager.publicSnapshot()?.snapshotId ?? "unavailable",
 				generation: options.manager.publicSnapshot()?.generation ?? 0,
 			});
+			// 可执行扩展 host：失败只记审计并保持空工具集，绝不让 session 启动失败（D2）。
+			if (options.hostExtensions !== undefined) {
+				const hosted = await options.hostExtensions.start();
+				if (hosted.ok) {
+					hostTools = hosted.tools;
+					await audit(options, "extension.host.tools_admitted", { count: hostTools.length, names: hostTools.map((tool) => tool.name) });
+				} else {
+					hostTools = [];
+					await audit(options, "extension.host.start_failed", { code: hosted.code, message: hosted.message });
+				}
+			}
 			const started = await options.mcp.start();
 			for (const snapshot of started.snapshots) {
 				if (snapshot.state === "failed" && !snapshot.required) {
@@ -238,6 +388,7 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 		},
 		shutdown: (reason) => {
 			shutdownPromise ??= (async () => {
+				await options.hostExtensions?.shutdown(reason).catch(() => undefined);
 				await options.mcp.close();
 				await options.closeHooks();
 				await options.closePlugins();
@@ -649,6 +800,13 @@ export async function createProductionSessionExtensionComposition(
 			payload: { status: result.status, snapshotId: manager.publicSnapshot()?.snapshotId ?? "unavailable" },
 		}),
 	});
+	// 可执行扩展 host：选包 → 起进程 → 准入工具 → 事件桥。没有可执行包时
+	// 整条链路保持惰性（不起进程、不读 trust 之外的任何东西）。
+	const hostExtensions = createSessionHostAssembly({
+		options,
+		distribution,
+		reservedNames: [...options.baseToolNames, "Skill", ...mcp.tools().map((tool) => tool.name)],
+	});
 	const composition = createSessionExtensionComposition({
 		sessionId: options.fence.sessionId,
 		generation: options.fence.generation,
@@ -656,6 +814,7 @@ export async function createProductionSessionExtensionComposition(
 		mcp,
 		skillLoader,
 		distribution: distribution.ports,
+		hostExtensions,
 		contextSources: (modelContextChars) => {
 			const skills = manager.currentSkills().filter((skill) => skill.descriptor.activation === "ready");
 			if (skills.length === 0) return [];
@@ -784,6 +943,156 @@ async function loadSessionMcpConfigs(input: {
 	return configs.sort((left, right) => left.serverId.localeCompare(right.serverId));
 }
 
+/** host 程序在构建产物里的位置；src 与 dist 布局相同，因此从 package root 拼。 */
+function extensionHostEntrypoint(): string {
+	return join(fileURLToPath(new URL("../../../", import.meta.url)), "dist", "extensions", "host", "entry.js");
+}
+
+/**
+ * 可执行扩展 host 的完整装配（P1–P5 的汇合点）。
+ *
+ * 顺序：`host-activation` 选包 → supervisor 起进程并握手 → P2 准入把注册表投影为
+ * 带 provenance 的 `AgentTool` → P3 事件桥 → P4 动作处理器。
+ *
+ * 诚实边界：actor port 的真实 Session 命令面尚未接线，因此所有会改变会话状态的
+ * 动作返回 `session_command_unavailable`（明确失败，不是静默 no-op）；`intent` 只记
+ * 审计。工具调用经 `tool:<runtimeName>` 请求名路由到 host 内的 handler。
+ */
+function createSessionHostAssembly(input: {
+	readonly options: ProductionSessionExtensionCompositionOptions;
+	readonly distribution: {
+		readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
+		readonly selectHostCandidates: () => Promise<DistributionHostSelection>;
+	};
+	readonly reservedNames: readonly string[];
+}): SessionExtensionHostPort {
+	const { options } = input;
+	let supervisor: ExtensionHostSupervisor | undefined;
+	let activePackageId: string | undefined;
+
+	const audit = async (eventType: string, payload: Record<string, unknown>): Promise<void> => {
+		await appendSessionExtensionAudit(options.store, options.fence, {
+			eventType,
+			sessionId: options.fence.sessionId,
+			ownerGeneration: options.fence.generation,
+			payload,
+		});
+	};
+
+	// 动作：只有 intent 是投影（记审计）；其余在命令面接线前明确拒绝。
+	const actorPort: ExtensionActionActorPort = {
+		sendMessage: async () => unavailable("send-message"),
+		appendEntry: async () => unavailable("append-entry"),
+		setActiveTools: async () => unavailable("set-active-tools"),
+		setModel: async () => unavailable("set-model"),
+		setThinkingLevel: async () => unavailable("set-thinking-level"),
+		setSessionName: async () => unavailable("set-session-name"),
+		exec: async () => unavailable("exec"),
+		emitIntent: async ({ intent }) => {
+			await audit("extension.intent", { kind: intent.kind, level: intent.level, key: intent.key ?? null, textDigest: runtimeDigest(intent.text).digest });
+			return { ok: true, value: { projected: "audit-only" } };
+		},
+	};
+	const actions = createExtensionActionHandler({
+		port: actorPort,
+		generation: options.fence.generation,
+		admittedTools: () => [],
+		audit: async (event) => { await audit(event.eventType, event.payload); },
+	});
+
+	const runtime: SessionExtensionHostRuntime = {
+		start: async (candidate) => {
+			const relative = candidate.entrypoints[0];
+			if (relative === undefined) return { ok: false, code: "no_entrypoints", message: "candidate declares no entrypoint" };
+			supervisor = new ExtensionHostSupervisor({
+				managedProcess: options.managedProcess,
+				startCommand: { runtimeCommand: process.execPath, runtimeArgs: [], hostEntrypoint: extensionHostEntrypoint() },
+				apiVersion: EXTENSION_HOST_API_VERSION,
+				actionHandler: actions.handle,
+				audit: async (event) => { await audit(event.eventType, event.payload); },
+			});
+			const started = await supervisor.start({
+				generation: options.fence.generation,
+				packageId: candidate.packageId,
+				digest: candidate.digest,
+				rootPath: candidate.installPath,
+				entrypoint: join(candidate.installPath, relative.replace(/^\.\//u, "")),
+			});
+			if (started.status !== "ready") {
+				const code = started.status === "failed" ? started.code : "host_not_ready";
+				const message = started.status === "failed" ? started.message : "extension host did not become ready";
+				supervisor = undefined;
+				return { ok: false, code, message };
+			}
+			const state = supervisor.client()?.state();
+			if (state === undefined || state.status !== "ready") {
+				await supervisor.stop("protocol-violation").catch(() => undefined);
+				supervisor = undefined;
+				return { ok: false, code: "registry_unavailable", message: "extension host did not publish a registry" };
+			}
+			activePackageId = candidate.packageId;
+			return { ok: true, snapshot: state.registry };
+		},
+		shutdown: async () => {
+			const current = supervisor;
+			supervisor = undefined;
+			activePackageId = undefined;
+			await current?.stop("owner-request").catch(() => undefined);
+		},
+		dispatch: async (event) => {
+			if (supervisor === undefined) return { ok: false, code: "host_unavailable", message: "extension host is not running" };
+			return supervisor.dispatchEvent(event);
+		},
+		subscribersFor: (name) => {
+			const state = supervisor?.client()?.state();
+			if (state === undefined || state.status !== "ready" || activePackageId === undefined) return [];
+			return state.registry.subscriptions.some((subscription) => subscription.name === name) ? [activePackageId] : [];
+		},
+	};
+
+	const invoke: ExtensionToolInvokerForHost = async ({ provenance, toolCallId, args, signal }) => {
+		const outcome = await runtime.dispatch({
+			name: `tool:${provenance.runtimeName}`,
+			cancelable: false,
+			payload: { toolCallId, args },
+			...(signal === undefined ? {} : { signal }),
+		});
+		if (!outcome.ok) return toolErrorResult(outcome.code, outcome.message);
+		const handlers = typeof outcome.value === "object" && outcome.value !== null && Array.isArray((outcome.value as { handlers?: unknown }).handlers)
+			? (outcome.value as { handlers: readonly { readonly result?: unknown }[] }).handlers
+			: [];
+		return normalizeHostToolResult(handlers[0]?.result);
+	};
+
+	return createSessionExtensionHostPort({
+		selection: () => input.distribution.selectHostCandidates(),
+		runtime,
+		reservedNames: () => input.reservedNames,
+		invoke,
+		audit: async (event) => { await audit(event.eventType, event.payload); },
+	});
+}
+
+function unavailable(action: string): { readonly ok: false; readonly code: string; readonly message: string } {
+	return { ok: false, code: "session_command_unavailable", message: `extension action ${action} is not wired to the session command surface yet` };
+}
+
+function toolErrorResult(code: string, message: string): AgentToolResult<unknown> {
+	return { content: [{ type: "text", text: JSON.stringify({ code }) ?? "null" }], details: { code, message }, isError: true };
+}
+
+/** host 返回值按 AgentToolResult 形状归一；其它值包成文本结果。 */
+function normalizeHostToolResult(value: unknown): AgentToolResult<unknown> {
+	if (typeof value === "object" && value !== null && !Array.isArray(value) && Array.isArray((value as { content?: unknown }).content)) {
+		const record = value as { content: AgentToolResult<unknown>["content"]; details?: unknown; isError?: boolean };
+		return { content: record.content, details: record.details ?? null, ...(record.isError === true ? { isError: true } : {}) };
+	}
+	let text: string;
+	try { text = JSON.stringify(value) ?? "null"; }
+	catch { text = "[unserializable extension tool result]"; }
+	return { content: [{ type: "text", text }], details: value ?? null };
+}
+
 /**
  * Session 私有分发接线（P5）。
  *
@@ -805,6 +1114,8 @@ function createSessionDistribution(input: {
 	readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
 	/** 已安装声明式包的发现根；注册表不可读时返回空数组（不阻断会话启动）。 */
 	readonly declarativeRoots: () => Promise<readonly ExtensionSourceRoot[]>;
+	/** host 候选选择（enabled + trusted + 有 entrypoint），供 host 装配使用。 */
+	readonly selectHostCandidates: () => Promise<DistributionHostSelection>;
 } {
 	const storage = new NodeExtensionDistributionStorage({ runledgerHome: input.home });
 	const registry = new ExtensionDistributionRegistry({
@@ -909,6 +1220,7 @@ function createSessionDistribution(input: {
 			const bridged = await distributionPluginRoots({ registry, storageKey: input.storageKey });
 			return bridged.ok ? bridged.roots : [];
 		},
+		selectHostCandidates: () => selectDistributionHostCandidates({ registry, storage, trustStore: input.trustStore, principalId: input.principalId }),
 	};
 }
 

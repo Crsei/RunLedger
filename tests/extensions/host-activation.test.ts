@@ -94,6 +94,7 @@ async function grant(env: Awaited<ReturnType<typeof environment>>, digest = env.
 		scope: "user" as const,
 		enabled: true,
 		entrypoints: ["./src/index.ts"],
+		declaredTools: [],
 	};
 	await env.trustStore.grant({
 		identity: distributionHostIdentity(candidate),
@@ -191,7 +192,7 @@ describe("distribution host activation", () => {
 		await env.registry.saveRunledgerRegistry({ ...registry.document, plugins: { ...registry.document.plugins, "exec-plugin@local": { ...record, enabled: true } } });
 		const candidate = {
 			packageId: "exec-plugin@local", name: "exec-plugin", version: "1.0.0", digest: env.receipt.digest,
-			installPath: env.receipt.installPath, scope: "user" as const, enabled: true, entrypoints: ["./src/index.ts"],
+			installPath: env.receipt.installPath, scope: "user" as const, enabled: true, entrypoints: ["./src/index.ts"], declaredTools: [],
 		};
 		await env.trustStore.revoke(distributionHostIdentity(candidate));
 		const selection = await selectDistributionHostCandidates({ registry: env.registry, storage: env.storage, trustStore: env.trustStore, principalId });

@@ -16,6 +16,12 @@ import type { ExtensionHostBootstrap } from "./bootstrap.ts";
 import { encodeExtensionHostFrame } from "./protocol.ts";
 import { createExtensionApi, type ExtensionApi, type ExtensionActionResult, type ExtensionActionRequest } from "./runtime-api.ts";
 
+/**
+ * host 侧实现自己的 API 版本。owner 在 bootstrap 里给出**期望值**，host 上报
+ * **自身值**——两者必须比较才有意义；让 host 回显期望值会让版本检查变成空操作。
+ */
+export const EXTENSION_HOST_API_VERSION = "1.0.0";
+
 /** 与 omp 的 `ExtensionFactory` 同形态；可同步可异步。 */
 export type ExtensionFactory = (api: ExtensionApi) => void | Promise<void>;
 
@@ -174,7 +180,7 @@ export async function runExtensionHost(options: RunExtensionHostOptions): Promis
 		hostPid: options.pid,
 		packageId: options.bootstrap.packageId,
 		digest: options.bootstrap.digest,
-		apiVersion: options.bootstrap.apiVersion,
+		apiVersion: EXTENSION_HOST_API_VERSION,
 		limits,
 	});
 
@@ -227,7 +233,88 @@ export async function runExtensionHost(options: RunExtensionHostOptions): Promis
 		}
 	};
 
+	/**
+	 * owner 发起的工具调用：请求名固定为 `tool:<runtimeName>`。handler 只存在于
+	 * host 进程内，payload 里的 args 直接透传；未注册的工具返回明确失败，让 owner
+	 * 看到“注册表与调用不一致”而不是空结果。
+	 */
+	const handleToolCallFrame = async (frame: Extract<ExtensionHostFrame, { kind: "event" }>): Promise<boolean> => {
+		const runtimeName = frame.name.slice("tool:".length);
+		const handler = runtime.toolHandlerFor(runtimeName);
+		if (handler === undefined) {
+			send({
+				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
+				generation: options.bootstrap.generation,
+				frameId: nextFrameId("frame"),
+				kind: "result",
+				requestId: frame.requestId,
+				ok: false,
+				error: { code: "tool_not_registered", message: `extension has no handler for tool:${runtimeName}` },
+			});
+			return true;
+		}
+		const budgetMs = Math.max(1, Math.min(frame.deadlineMs, limits.handlerTimeoutMs));
+		const startedAt = Date.now();
+		const controller = new AbortController();
+		const args = frame.payload.args;
+		const toolCallId = typeof frame.payload.toolCallId === "string" ? frame.payload.toolCallId : "";
+		try {
+			const raced = await withTimeout(Promise.resolve(handler({ toolCallId, args, signal: controller.signal })), budgetMs, () => controller.abort());
+			if (raced === "timeout") {
+				record(extensionDiagnostic({ code: "extension.tool_timeout", severity: "warning", message: `tool:${runtimeName} exceeded ${budgetMs}ms`, source: "extension-host" }));
+				send({
+					protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
+					generation: options.bootstrap.generation,
+					frameId: nextFrameId("frame"),
+					kind: "result",
+					requestId: frame.requestId,
+					ok: false,
+					error: { code: "tool_timeout", message: `tool:${runtimeName} exceeded its budget` },
+				});
+				return true;
+			}
+			const value = { handlers: [{ index: 0, outcome: "result", durationMs: Date.now() - startedAt, result: raced ?? null }] };
+			if (byteLength(value) > MAX_HANDLER_RESULT_BYTES) {
+				send({
+					protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
+					generation: options.bootstrap.generation,
+					frameId: nextFrameId("frame"),
+					kind: "result",
+					requestId: frame.requestId,
+					ok: false,
+					error: { code: "tool_result_oversize", message: `tool:${runtimeName} result exceeds ${MAX_HANDLER_RESULT_BYTES} bytes` },
+				});
+				return true;
+			}
+			send({
+				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
+				generation: options.bootstrap.generation,
+				frameId: nextFrameId("frame"),
+				kind: "result",
+				requestId: frame.requestId,
+				ok: true,
+				value,
+			});
+		} catch (error) {
+			record(extensionDiagnostic({ code: "extension.tool_failed", severity: "warning", message: `tool:${runtimeName} failed: ${error instanceof Error ? error.message : "unknown"}`, source: "extension-host" }));
+			send({
+				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
+				generation: options.bootstrap.generation,
+				frameId: nextFrameId("frame"),
+				kind: "result",
+				requestId: frame.requestId,
+				ok: false,
+				error: { code: "tool_failed", message: `tool:${runtimeName} failed` },
+			});
+		}
+		return true;
+	};
+
 	const handleEventFrame = async (frame: Extract<ExtensionHostFrame, { kind: "event" }>): Promise<void> => {
+		if (frame.name.startsWith("tool:")) {
+			await handleToolCallFrame(frame);
+			return;
+		}
 		const respond = (value: Record<string, unknown> | undefined, error?: { readonly code: string; readonly message: string }): void => {
 			send({
 				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,

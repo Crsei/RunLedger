@@ -563,6 +563,11 @@ export async function assembleSessionDomain(
 		start: async () => {
 			await planDomain.start();
 			await extensions?.start();
+			// 扩展 host 的注册表要握手之后才知道，因此准入工具在 start 之后追加。
+			// 复用既有的 Session-owned 工具通道：`addTools` 同时更新 authorization
+			// policy 的动态基准（`controller.composedTools`），所以新工具不会被静默拒绝。
+			const hostTools = extensions?.extensionTools() ?? [];
+			if (hostTools.length > 0) controller.addTools([...hostTools]);
 		},
 		shutdown: async (reason) => {
 			compaction.cancel();

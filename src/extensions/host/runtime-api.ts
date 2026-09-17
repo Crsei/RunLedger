@@ -56,6 +56,21 @@ export interface ExtensionEventDelivery {
 export type ExtensionEventHandlerResult = Record<string, unknown> | undefined | void;
 export type ExtensionEventHandler = (event: ExtensionEventDelivery) => ExtensionEventHandlerResult | Promise<ExtensionEventHandlerResult>;
 
+/**
+ * 工具 handler 留在 host 进程内：注册时只有 `definition`（schema/描述/审批类）
+ * 会序列化给 owner，handler 本身跨不过去。owner 调用时用
+ * `tool:<runtimeName>` 作为请求名，payload 带 `{toolCallId, args}`。
+ */
+export type ExtensionToolHandler = (input: {
+	readonly toolCallId: string;
+	readonly args: unknown;
+	readonly signal?: AbortSignal;
+}) => unknown | Promise<unknown>;
+
+export interface ExtensionToolDefinition extends ExtensionToolRegistration {
+	readonly handler: ExtensionToolHandler;
+}
+
 export interface ExtensionRegistrations {
 	readonly tools: readonly ExtensionToolRegistration[];
 	readonly commands: readonly ExtensionCommandRegistration[];
@@ -83,7 +98,7 @@ export interface ExtensionApiOptions {
 
 export interface ExtensionApi {
 	readonly registrations: ExtensionRegistrations;
-	registerTool(definition: ExtensionToolRegistration): void;
+	registerTool(definition: ExtensionToolDefinition): void;
 	registerCommand(definition: ExtensionCommandRegistration): void;
 	registerFlag(definition: ExtensionFlagRegistration): void;
 	on(name: string, handler: ExtensionEventHandler): void;
@@ -105,6 +120,8 @@ export interface ExtensionApiRuntime {
 	/** 绑定动作分发器；重复绑定不是错误，最后一次生效（用于换 generation）。 */
 	initialize(dispatcher: ExtensionActionDispatcher): void;
 	handlersFor(name: string): readonly ExtensionEventHandler[];
+	/** 取一个已注册工具的 handler；未注册返回 undefined（owner 会收到明确失败）。 */
+	toolHandlerFor(name: string): ExtensionToolHandler | undefined;
 }
 
 const MAX_TEXT = 64 * 1024;
@@ -122,6 +139,7 @@ export function createExtensionApi(options: ExtensionApiOptions = {}): Extension
 	const tools: ExtensionToolRegistration[] = [];
 	const commands: ExtensionCommandRegistration[] = [];
 	const flags: ExtensionFlagRegistration[] = [];
+	const toolHandlers = new Map<string, ExtensionToolHandler>();
 	const handlersByEvent = new Map<ExtensionEventName, ExtensionEventHandler[]>();
 	const subscriptionNames: ExtensionEventName[] = [];
 	let dispatcher: ExtensionActionDispatcher | undefined;
@@ -145,9 +163,14 @@ export function createExtensionApi(options: ExtensionApiOptions = {}): Extension
 		registrations,
 		registerTool: (definition) => {
 			if (tools.length >= limits.maxRegistrationsPerKind) throw new Error(`tool registration limit reached: ${limits.maxRegistrationsPerKind}`);
-			if (!Value.Check(ExtensionToolRegistrationSchema, definition)) throw new Error("tool registration does not match the extension contract");
-			if (tools.some((tool) => tool.name === definition.name)) throw new Error(`duplicate tool registration: ${definition.name}`);
-			tools.push(Object.freeze({ ...definition, parameters: Object.freeze({ ...definition.parameters }) }));
+			if (typeof definition.handler !== "function") throw new Error(`tool registration requires a handler: ${definition.name}`);
+			// handler 只留在本进程；上线给 owner 的定义里不含它，因此 schema 校验
+			// 必须针对剥离后的 registration（契约是 additionalProperties: false）。
+			const { handler, ...registration } = definition;
+			if (!Value.Check(ExtensionToolRegistrationSchema, registration)) throw new Error("tool registration does not match the extension contract");
+			if (tools.some((tool) => tool.name === registration.name)) throw new Error(`duplicate tool registration: ${registration.name}`);
+			toolHandlers.set(registration.name, handler);
+			tools.push(Object.freeze({ ...registration, parameters: Object.freeze({ ...registration.parameters }) }));
 		},
 		registerCommand: (definition) => {
 			if (commands.length >= limits.maxRegistrationsPerKind) throw new Error(`command registration limit reached: ${limits.maxRegistrationsPerKind}`);
@@ -206,5 +229,6 @@ export function createExtensionApi(options: ExtensionApiOptions = {}): Extension
 		api,
 		initialize: (next) => { dispatcher = next; },
 		handlersFor: (name) => (isExtensionEventName(name) ? handlersByEvent.get(name) ?? [] : []),
+		toolHandlerFor: (name) => toolHandlers.get(name),
 	};
 }

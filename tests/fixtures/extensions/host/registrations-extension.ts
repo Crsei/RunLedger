@@ -13,6 +13,7 @@ export default function registrationsExtension(api: ExtensionApi): void {
 		description: "echoes bounded input",
 		parameters: { type: "object", properties: { value: { type: "string" } } },
 		approvalClass: "read-only",
+		handler: () => ({ echoed: true }),
 	});
 	api.registerCommand({ name: "fixture_command", description: "runs a fixture command" });
 	api.registerFlag({ name: "fixture-flag", description: "toggles a fixture", type: "boolean" });

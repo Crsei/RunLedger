@@ -40,8 +40,8 @@ describe("extension host handshake and registry", () => {
 
 	it("publishes registrations the extension declared and keeps them sorted", async () => {
 		const { result } = await connected((api) => {
-			api.registerTool({ name: "zeta", description: "z", parameters: {}, approvalClass: "read-only" });
-			api.registerTool({ name: "alpha", description: "a", parameters: {}, approvalClass: "read-only" });
+			api.registerTool({ name: "zeta", description: "z", parameters: {}, approvalClass: "read-only", handler: () => "z" });
+			api.registerTool({ name: "alpha", description: "a", parameters: {}, approvalClass: "read-only", handler: () => "a" });
 			api.registerFlag({ name: "dry-run", description: "no writes", type: "boolean" });
 			api.on("PreToolUse", () => undefined);
 		});

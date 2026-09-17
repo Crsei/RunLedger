@@ -60,10 +60,13 @@ describe("extension runtime API registration/action split", () => {
 
 	it("validates and bounds registrations at registration time", () => {
 		const runtime = apiWithLimits();
-		runtime.api.registerTool({ name: "sample_tool", description: "reads", parameters: { type: "object" }, approvalClass: "read-only" });
+		runtime.api.registerTool({ name: "sample_tool", description: "reads", parameters: { type: "object" }, approvalClass: "read-only", handler: () => ({ ok: true }) });
 		expect(runtime.api.registrations.tools.map((tool) => tool.name)).toEqual(["sample_tool"]);
-		expect(() => runtime.api.registerTool({ name: "sample_tool", description: "again", parameters: {}, approvalClass: "read-only" })).toThrow(/duplicate tool registration/u);
-		expect(() => runtime.api.registerTool({ name: "9bad", description: "x", parameters: {}, approvalClass: "read-only" })).toThrow(/does not match the extension contract/u);
+		expect(() => runtime.api.registerTool({ name: "sample_tool", description: "again", parameters: {}, approvalClass: "read-only", handler: () => undefined })).toThrow(/duplicate tool registration/u);
+		expect(() => runtime.api.registerTool({ name: "9bad", description: "x", parameters: {}, approvalClass: "read-only", handler: () => undefined })).toThrow(/does not match the extension contract/u);
+		// handler 是必需的：没有它 owner 侧永远调不动这个工具。
+		expect(() => runtime.api.registerTool({ name: "no_handler", description: "x", parameters: {}, approvalClass: "read-only" } as never)).toThrow(/requires a handler/u);
+		expect(runtime.toolHandlerFor("sample_tool")).toBeTypeOf("function");
 		expect(() => runtime.api.registerCommand({ name: "cmd", description: "x", argumentHint: "y" })).not.toThrow();
 		expect(() => runtime.api.registerFlag({ name: "flag", description: "x", type: "string" })).not.toThrow();
 	});
