@@ -77,6 +77,7 @@
 | Idle Recap | [`plan/07-idle-recap-replication-plan.md`](plan/07-idle-recap-replication-plan.md) | oh-my-pi 空闲 recap 的 ephemeral side-channel、当前模型复用、工具调用丢弃、owner/activity fencing、可配置 idle delay 与 fail-closed 接线 | 本文 §0 配置结论、§2 RunLedger 基线、§11 状态表 |
 | Usage Status Line | [`plan/08-usage-status-line-replication-plan.md`](plan/08-usage-status-line-replication-plan.md) | 参考 oh-my-pi 在输入框下方展示累计 input/output/cache/cost、cache hit、output tok/s 与 context usage；复用 RunLedger 多行结构化 OpenTUI footer | 本文 §0 目标与结论、§3 冻结合同、§7 状态表 |
 | Plugin / Tree-sitter Bash AST | [`plugin/01-tree-sitter-bash-ast-port-plan.md`](plugin/01-tree-sitter-bash-ast-port-plan.md) | Tree-sitter Bash AST 安全分类移植：WASM worker、allowlist walker、语义规则、fail-closed 授权与 rollout | B0–B4 `implemented`；B5 `planned`，Node/Bun、pack、PTY、审计与 human gate 仍按计划闭合 |
+| 版本升级与发布设施 | [`release/README.md`](release/README.md)、[`release/01 实施计划`](release/01-release-and-upgrade-infrastructure-plan.md) | 版本真相与发布单元、清洁构建与打包边界、发布产物与完整性、安装形态识别、`runledger update` 委托升级、启动升级提示 | `planned`；现状实测基线与阻塞项见 [`release/00`](release/00-release-baseline.md)，阶段状态以 `release/01` §8 为唯一来源 |
 
 ## 2026-08-04 当前实现批次
 
@@ -183,6 +184,10 @@ development-doc/
 │   ├── 00-oh-my-pi-metaharness-reference.md
 │   ├── 01-bench-platform-implementation-plan.md
 │   └── 02-task-pack-and-scoring-contract.md
+├── release/
+│   ├── README.md
+│   ├── 00-release-baseline.md
+│   └── 01-release-and-upgrade-infrastructure-plan.md
 └── tui/
     ├── 00-overview.md
     ├── 01-architecture.md
