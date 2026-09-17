@@ -69,7 +69,12 @@ async function assertPackageManifest(): Promise<void> {
 }
 
 async function assertPackedAssets(): Promise<void> {
-	const result = await execFileAsync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: root });
+	// `dist/**` 也进包，清单随构建产物增长；默认 1 MiB stdout 上限会在 dist
+	// 变大后误报 "stdout maxBuffer length exceeded"。这里只解析清单，不需要限流。
+	const result = await execFileAsync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+		cwd: root,
+		maxBuffer: 64 * 1024 * 1024,
+	});
 	const reports = JSON.parse(result.stdout) as readonly { readonly files?: readonly { readonly path: string }[] }[];
 	const files = reports.flatMap((report) => report.files ?? []).map((file) => file.path);
 	for (const name of Object.keys(expectedAssets)) {
