@@ -30,6 +30,13 @@ Read/grep/glob/ls 经 governed filesystem/shell 读取（`glob` 的 `.gitignore`
 
 `read` 接受内联行选择器（`file:A-B`、`file:-N`、多段、`:raw` 复合）。**未实现的模式**（`:conflicts`、`:img`）与非法选择器一律报错，而不是静默放宽成整文件读取。
 
+`read` 还有两类**非文本分支**，它们必须在行选择器解析**之前**分流——`db.sqlite:users` 与 `a.zip:inner` 的 `:users`/`:inner` 会被选择器解析吞掉：
+
+- **SQLite**（`src/runtime/tools/read-sqlite.ts`）：按扩展名形状 + 16 字节魔数判定。selector 语法 `空=表清单`、`table`=建表 SQL+抽样、`table:key`=单行、`table?limit=&offset=&order=&where=`=分页、`?q=SELECT …`=原始 SQL（与表选择器互斥）。只读打开并 `PRAGMA query_only = ON`；库字节由 `read` 经 governed fs 读入，驱动适配器在 `src/storage/readonly-sqlite.ts`（该层才允许 `node:fs`，Node 下需临时文件才能反序列化）。
+- **归档**（`src/runtime/tools/read-archive.ts`）：解码器是 `src/websource/internal/ar/**`（纯 TS 移植）。`a.zip` 列目录、`a.zip:member/path` 读成员。只接受内存字节，不做解压写盘（上游的 `extractArchive` 未移植）。
+
+两条分支都在形状命中后做**字节嗅探**：恰好叫 `notes.db`/`notes.zip` 的文本文件会回落普通文本路径。
+
 ### web 检索与站点抓取（`src/websource/`）
 
 `src/websource/` 是从 oh-my-pi `packages/coding-agent/src/web`（+`src/exa`）移植的库层，包含检索管线、站点 handler 与共享 API client。它只依赖注入的 port，不持有全局设置或凭据单例，也不得直接出站：

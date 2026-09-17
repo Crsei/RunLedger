@@ -34,6 +34,8 @@ import {
   truncateHead,
   type TruncationResult,
 } from "./tool-support.ts";
+import { looksLikeArchiveBytes, parseArchiveReadTarget, readArchiveBytes } from "./read-archive.ts";
+import { looksLikeSqlite, parseSqliteReadTarget, readSqliteBytes } from "./read-sqlite.ts";
 
 export const readSchema = Type.Object({
   path: Type.String({
@@ -64,6 +66,8 @@ export interface ReadToolDetails {
   selector?: string;
   /** 选择器生效时被忽略的 offset/limit 参数名,便于模型纠正调用。 */
   ignoredParams?: readonly string[];
+  /** 本次走的是非文本分支(sqlite 库 / 归档);缺省为普通文本读取。 */
+  media?: "sqlite" | "archive";
 }
 
 /** 可替换 IO;默认走 node:fs。便于测试注入 / 远端代理。 */
@@ -168,6 +172,67 @@ export function createReadTool(
     async execute(_toolCallId, params, _signal?): Promise<AgentToolResult<ReadToolDetails>> {
       const { path: rawPath, offset, limit } = params;
       const noCache = params.noCache === true;
+
+      // 类型分派必须先于行选择器解析：`a.zip:inner` 与 `db.sqlite:users` 里的
+      // `inner`/`users` 会被 splitPathAndSel 当成选择器语法吞掉（见 read-selector
+      // 的 isRangeOrTailChunk）。命中则整串交给对应分支，否则走既有文本路径。
+      // `parseArchiveReadTarget` 自身就是形状判定（按归档扩展名切出成员路径），
+      // 不要再用「整串是否以归档扩展名结尾」做前置门：`a.zip:inner` 的末尾是
+      // 成员名，那样的门会把所有带成员的读取挡掉。
+      // 形状命中后还要做字节嗅探：一个恰好叫 `notes.zip` 的文本文件必须回落文本，
+      // 而不是被当成归档报错（与 sqlite 的魔数判定同款纪律）。未命中时**不 return**，
+      // 让控制流继续走下面的文本路径。
+      const archiveTarget = parseArchiveReadTarget(rawPath);
+      const archiveBytes = archiveTarget === null
+        ? undefined
+        : await (async () => {
+            const archivePath = resolveToCwd(archiveTarget.archivePath, cwd);
+            await ops.access(archivePath);
+            return ops.readFile(archivePath);
+          })();
+      if (archiveTarget !== null && archiveBytes !== undefined && looksLikeArchiveBytes(archiveBytes)) {
+        const rendered = await readArchiveBytes(archiveBytes, archiveTarget.subPath);
+        const { text: archiveText, truncation: archiveTruncation } = truncateHead(rendered.text, {
+          maxLines: DEFAULT_MAX_LINES,
+          maxBytes: DEFAULT_MAX_BYTES,
+        });
+        return {
+          content: [{ type: "text", text: archiveText }],
+          details: {
+            truncation: archiveTruncation,
+            lineCount: archiveTruncation.outputLines,
+            media: "archive",
+          },
+        };
+      }
+
+      // sqlite 也有自有冒号语法（`db.sqlite:users`、`db.sqlite:users:1`、
+      // `db.sqlite?q=SELECT 1`），同样必须先于行选择器解析切分——否则
+      // `users:1` 会被 `splitPathAndSel` 拆成 path=`db.sqlite:users`。
+      const sqliteTarget = parseSqliteReadTarget(rawPath);
+      if (sqliteTarget !== null) {
+        const sqlitePath = resolveToCwd(sqliteTarget.dbPath, cwd);
+        await ops.access(sqlitePath);
+        const raw = await ops.readFile(sqlitePath);
+        // 后缀命中但魔数不符（例如一个恰好叫 `notes.db` 的文本文件）→ 回落到
+        // 普通文本路径，绝不因为扩展名就把文本当数据库打开。
+        if (looksLikeSqlite(raw)) {
+          const rendered = readSqliteBytes(raw, sqliteTarget.selector);
+          const { text: sqliteText, truncation: sqliteTruncation } = truncateHead(rendered.text, {
+            maxLines: DEFAULT_MAX_LINES,
+            maxBytes: DEFAULT_MAX_BYTES,
+          });
+          return {
+            content: [{ type: "text", text: sqliteText }],
+            details: {
+              truncation: sqliteTruncation,
+              lineCount: sqliteTruncation.outputLines,
+              media: "sqlite",
+            },
+          };
+        }
+      }
+
       const split = splitPathAndSel(rawPath);
       const parsed = parseSel(split.sel);
       const hasSelector = parsed.kind !== "none";
@@ -183,6 +248,7 @@ export function createReadTool(
       // mtime 去重缓存
       let text: string;
       let cacheHit = false;
+      let bytes: Buffer | undefined;
       if (enableCache && !noCache) {
         const stat = await ops.stat(absolutePath);
         const cached = cacheGet(absolutePath);
@@ -190,13 +256,13 @@ export function createReadTool(
           text = cached.text;
           cacheHit = true;
         } else {
-          const buf = await ops.readFile(absolutePath);
-          text = buf.toString("utf8");
+          bytes = await ops.readFile(absolutePath);
+          text = bytes.toString("utf8");
           cacheSet(absolutePath, { mtimeMs: stat.mtimeMs, text });
         }
       } else {
-        const buf = await ops.readFile(absolutePath);
-        text = buf.toString("utf8");
+        bytes = await ops.readFile(absolutePath);
+        text = bytes.toString("utf8");
       }
 
       const allLines = splitAddressableLines(text);
