@@ -437,7 +437,8 @@ Session Owner(每 owned Session)
 - 另一项需要处理的既有环境问题:同一 `skill list` 返回 **48 条**来自运行者 OS 用户目录的真实 skill(兼容 provider),与 `extensions-domain.test.ts` 的既有失败同源。它不阻塞本计划,但会让任何"按内容断言 skill 列表"的验证不可靠;`03` 的 TTY 证据因此按 **code/字段**断言,不按列表长度。
 - 已完成(第十四批,**watcher Node 适配**):`src/storage/extensions/watch-adapter.ts` + 5 条单测;`requestReload` 改为可异步(生产接线要 `await manager.reload()` 才能拿到 ready/pending,猜会把"没换"报成 ready 或反之)。
 - 已完成(第十三批,**可选文件 watcher**):`reload-watcher.ts` + 8 条单测。默认关闭、`start()` 幂等且无 root 时不订阅、变更在窗口内合并成一次请求、`pending` 如实回传(不自行交换正在使用的 generation)、`stop()` 清订阅与 timer、审计只记 outcome、debounce 范围校验。Node 侧订阅实现留在 storage 适配层(扩展域禁 raw fs)。**已接线到生产组合**(2026-09-17 第十五轮):settings `plugins.watch`(默认关闭、user 层授权)控制启用;组合构造期读一次 settings(in-session 变更需重开会话);roots 取声明式 + 分发的 plugin root;`requestReload` **等** `manager.reload()` 的结果,因此 turn 进行中返回 `pending`、idle 边界返回 `ready`——交换与否由既有 snapshot 决定。watcher 经 composition options 传入,便于用 stub 断言 start/stop 顺序。
-- 未完成:TUI 确认边界与 `autoUpdate` 通知落点(`marketplace discover` 已提供 CLI 可查询的 pending 列表,即 D10 的 CLI 可见出口;TUI 通知落点待做)。
+- 已完成(第十五批,**watcher 生产接线**):`plugins.watch` settings 键(默认关闭、user 层授权)+ 组合注入(roots 取声明式与分发 plugin root;`requestReload` 等 `manager.reload()` 的真实结果,turn 进行中为 `pending`、idle 边界为 `ready`;watcher 不可用经会话扩展审计上报)。
+- 未完成:TUI 确认边界与 `autoUpdate` 的 TUI 通知落点(`marketplace discover` 已提供 CLI 可查询的 pending 列表,即 D10 的 CLI 可见出口);`plugin features`(需先给 manifest 增补 `features` 声明形状,属 §5.2 契约增量);descriptor 命名观感问题。
 
 ## 8. 事件与契约增量
 
@@ -563,12 +564,12 @@ git diff --check
 |---|---|---|
 | P0 契约冻结与裁定 | **done** | `src/contracts/extensions/**`(8 文件);`src/runtime/protocol/events.ts` 12 个新事件;`tests/runtime-contracts/extensions-contracts.test.ts`(23 用例);§12 Q1–Q4 裁定;`01` §13/M7 同步;`npm run check` 与 `npm test` 见 §15.2 |
 | P1 host 进程与协议骨架 | **done** | `src/extensions/host/**`(9 文件);`tests/extensions/host/**` 38 用例全部通过(含真实 Node 子进程的 factory 失败与裸 timer 崩溃隔离);`tsc -p tsconfig.json`/`tsconfig.tests.json` 通过 |
-| P2 注册面与工具准入 | **partial** | 工具准入 `src/extensions/tools/admission.ts`(10 用例通过)与 `runledger/extensions` 子路径已交付;composition root 接线与 `extension.host.inspect` 查询待 P3(串行窗口 + 当前工作树并发占用)|
+| P2 注册面与工具准入 | **done** | 工具准入 `src/extensions/tools/admission.ts`(10 用例)与 `runledger/extensions` 作者子路径已交付;准入结果已在 P5 的 host 装配后经既有 `controller.addTools` 进入 Agent 面(见 P5 行);`extension.host.inspect` 列出注册表工具数 |
 | P3 事件桥 | **done** | `src/extensions/events/**`;319 用例通过(含真实子进程的 PreToolUse 重写重新授权与 `SessionEnd` 并行证据);`tsc -p tsconfig.json`/`tsconfig.tests.json`、`check:current-format`、`check:runtime-boundaries`、`check:package-boundaries` 通过 |
-| P4 运行时动作 | **done**(动作层) | `src/extensions/actions/**`;330 用例通过(含真实子进程动作往返与回执);actor port 的 Session 接线待 P5/P6;`tsc`(src/tests)、`check:current-format`、`test:inventory` 通过 |
+| P4 运行时动作 | **done** | `src/extensions/actions/**`(校验、回执账本、同 ID 重放/conflict/uncertain 不重试);actor port 已在 P5 接到真实命令面,并有 `tests/runtime/session-runtime/extension-action-actor.test.ts` 6 条直接单测 |
 | P5 分发:安装/scope/激活 | **done** | 安装内核、activation 门禁、catalog/settings、cache/fetcher/manager、doctor、分发面接线、受治 git materialize、声明式回灌、host 资格判定、host 装配/工具准入调用点、`extension.host.inspect`、`plugin.config.*`(含 settings 键空间)与 actor 命令面(3 个真实动作 + 4 个带原因的显式拒绝)均已交付,并有 6 条直接单测 |
-| P6 CLI/TUI 与 Marketplace | **partial** | CLI 词表与真实闭环已交付(6 个动词 exit 0,见 §15.2);TUI 确认边界、autoUpdate 可见信号、`plugin features|config` 待做 |
-| P7 加固与真实 smoke | **partial** | 失败语义矩阵(16 用例)、预算/上限矩阵(15 用例)、两份文档同步、真实 TTY 的安装→信任→启用→禁用→取消信任→卸载(九步 exit 0,`activation:"ready"`)、"调用"段缺口定位与收口(4 用例 + `skill.skills_root_empty` warning)已交付;文件 watcher(协调器 8 + 适配器 5 + 接线 2 用例,默认关闭、经 `plugins.watch` 启用)已全部交付;TUI 确认边界、`autoUpdate` 通知落点待做 |
+| P6 CLI/TUI 与 Marketplace | **partial** | CLI 词表与真实闭环已交付(`marketplace add/discover`、`plugin install/distribution/list/doctor/config` 全部 exit 0,见 §15.2);`autoUpdate` 的可见出口为 CLI 可查询的 `pendingUpdates`(D10 的 CLI 侧已满足);TUI 确认边界、TUI 通知落点、`plugin features` 待做 |
+| P7 加固与真实 smoke | **partial** | 失败语义矩阵(16 用例)、预算/上限矩阵(15 用例)、两份文档同步、真实 TTY 九步闭环(exit 0、`activation:"ready"`)、"调用"段缺口定位与收口(4 用例 + `skill.skills_root_empty` warning)、文件 watcher 全链(协调器 8 + 适配器 5 + 接线 2 用例,默认关闭、`plugins.watch` 启用)均已交付;TUI 确认边界、descriptor 命名观感问题待做 |
 
 ### 15.2 实施记录
 
