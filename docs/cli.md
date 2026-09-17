@@ -100,7 +100,7 @@ runledger --session-id <session-id> mcp doctor
 
 省略会话选择参数会走新建流程，不会自动操作最近会话。输出是 JSON 结果；领域操作返回 `ok: false` 时退出码为 1，解析错误通常为 2。能力以认证握手协商结果为准；表内“未接通”表示标准 Session 当前未暴露该操作，不是语法错误。
 
-分发与 marketplace 命令补充说明：安装/升级/链接都只写 canonical `plugins/` 下的版本化 store 与账本，**安装不授予执行**——首次启用仍必须显式 `plugin trust`。`install/upgrade/uninstall/link/marketplace add` 只接受 `--scope user|workspace`，其他取值在解析期拒绝；当前 Session 组合固定把包落到 workspace scope。`git`/`url` 源经会话的受治 managed process 执行 clone/fetch，网络策略默认拒绝，被拒时返回失败而不是回退到本地猜测路径。真实闭环核对见 [Extensions 计划](../development-doc/plugin-mcp-skill-hooks/03-extensions-runtime-and-plugin-marketplace-replication-plan.md) §15.2。
+分发与 marketplace 命令补充说明：安装/升级/链接都只写 canonical `plugins/` 下的版本化 store 与账本，**安装不授予执行**——首次启用仍必须显式 `plugin trust`。`install/upgrade/uninstall/link/marketplace add` 只接受 `--scope user|workspace`，其他取值在解析期拒绝；当前 Session 组合固定把包落到 workspace scope。`git`/`url` 源经会话的受治 managed process 执行 clone/fetch，网络策略默认拒绝，被拒时返回失败而不是回退到本地猜测路径。`plugin features` 的 feature 选择只是**收窄声明集合**：`*`/`none`/`a,b` 三种选择都只写账本的 `enabledFeatures` 字段，既不启用也不授予信任。真实闭环核对见 [Extensions 计划](../development-doc/plugin-mcp-skill-hooks/03-extensions-runtime-and-plugin-marketplace-replication-plan.md) §15.2。
 
 | 命令（均加 `runledger [会话选择参数]` 前缀） | 参数与默认动作 | 标准 Session 状态 |
 |---|---|---|
@@ -110,6 +110,8 @@ runledger --session-id <session-id> mcp doctor
 | `plugin distribution / doctor` | 默认动作即 `distribution` | `distribution` 列出分发账本（含 `enabled`、`marketplace`、`hostEligibility`）；`doctor` 只报告账本/目录/digest/lifecycle/trust/孤立目录问题，不自动修复 |
 | `plugin install / upgrade <spec>` | spec 为 `name`、`name@marketplace` 或 `name[features]`；可选 `--scope user\|workspace` | 从已注册 marketplace 安装或升级到版本化 store；**不**启用、**不**授予信任 |
 | `plugin uninstall <plugin-id>` / `plugin link <plugin-id> <path>` | 可选 `--scope user\|workspace` | `uninstall` 移除版本目录与账本；`link` 只记录本地目录，不伪造 marketplace 来源 |
+| `plugin config [read] / set <plugin-id> <key> <value>` | 默认 `read`；`set` 的值以字符串传入 | 读返回每个已安装包的声明式 settings schema 与 user 层生效值(补默认值)；写先按声明校验再只合并被接受的键，secret 只在 user 层 |
+| `plugin features [read] / set <plugin-id> <*\|none\|feature,...>` | 默认 `read`；`*` = 声明默认值、`none` = 全关、逗号列表 = 精确集合 | 读返回每个已安装包的 feature 声明、账本选择与生效集合；写只改 `enabledFeatures`，不启用、不信任、不重启 host；未声明名字返回 `feature_unknown`(退出码 1)，非法选择是解析错误(退出码 2) |
 | `marketplace [discover] / add / remove / update / upgrade` | 默认 `discover`；`add <name> <github\|git\|url\|local> <uri>`；`remove`/`update <name>`；`upgrade [name]` | 注册/移除/刷新 catalog 与按 catalog 版本升级；`notify` 自动更新尚无 TUI 通知落点 |
 | `skill [list]` | 默认 `list` | 查询 Skill catalog |
 | `skill trust / untrust <skill-id>` | ID 必填 | 修改 Skill trust，仍受领域校验 |

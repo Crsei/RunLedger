@@ -66,6 +66,7 @@ shutdown 是幂等 promise。fenced Runtime 也执行资源终止，但不能在
 - **安装**：`staging → digest → 同设备原子激活`，任一步失败清 staging。不运行包管理器，也不执行任何 lifecycle script——声明了 `preinstall`/`install`/`postinstall`/`prepare`/`publish` 的包在安装期直接拒绝。`git`/`url` 源经该会话的受治 managed process 执行 clone/fetch，网络策略默认拒绝；`git-subdir` 用 containment 校验的存储适配器落位。
 - **安装、启用、信任三者分离**：安装只落盘 + 记 digest；启用只改账本位；host 只在 `enabled + 当前内容的 trust receipt + 有 entrypoint + host 未 failed` 全满足时才启动。内容变化会让旧 receipt 变 stale，缺失/stale/revoked 分别有独立诊断码。
 - **回灌**：已安装的**声明式**包会被投影为既有 `PluginManager` 的发现根，因此安装后 `plugin.list` 立刻可见，但仍是 `disabled` + `untrusted`，直到用户显式信任并启用。分发包的权威 manifest 是 `package.json#runledger`；`.runledger-plugin/plugin.json` 只是发现容器。
+- **feature 选择域**：`package.json#runledger.features[]` 声明 `{name, description?, default?}`（上限 64），是 plugin 内部可选能力的**选择域**，不是权限来源。`enabledFeatures: null` 表示只启用 `default: true` 的声明，`[]` 表示全关，非空数组是精确集合；安装语法 `name[a,b]`/`name[*]`/`name[]` 与 `plugin features set` 写的是同一个字段。切换 feature 只改账本这一处，既不启用也不信任 plugin；选择未声明的名字返回 `feature_unknown` 而不是静默裁剪。
 
 ## Extension host
 
@@ -74,7 +75,7 @@ shutdown 是幂等 promise。fenced Runtime 也执行资源终止，但不能在
 - 扩展工具经准入投影为带 provenance 的 `AgentTool`；未在 `capabilities.tools` 声明、与 stdlib 保留名冲突、与其它扩展冲突、runtime name 非法或参数 schema 超界（含 `$ref`/`$defs`/`pattern`）的注册一律拒绝，不自动改名、不静默遮蔽。准入后的工具在 host 握手完成后经既有 Session-owned 工具通道追加，authorization policy 动态读取当前工具集，因此新工具不会被静默拒绝。
 - 工具 handler 只存在于 host 进程内，经 `tool:<runtimeName>` 请求调用；未注册/抛错/超时各自返回明确失败码，host 不因单次工具失败退出。
 - 事件是 canonical event 的**投影**：按事件白名单裁剪载荷，凭据形状键额外硬拒绝，超限整条拒绝而不截断。`PreToolUse` 的 `updatedInput` 只在该事件合法且强制要求重新授权。
-- 运行时动作（`sendMessage`/`setModel`/`setActiveTools`/`exec` 等）在 owner 侧按 `(generation, action, requestId)` 记回执：同 ID 同体重放命中回执、异体是 conflict、结果不确定记 `uncertain_outcome` 且不重试。**当前组合尚未把动作接到 Session 命令面**，因此这些动作返回 `session_command_unavailable`，`intent` 只记审计。
+- 运行时动作（`sendMessage`/`setModel`/`setActiveTools`/`exec` 等）在 owner 侧按 `(generation, action, requestId)` 记回执：同 ID 同体重放命中回执、异体是 conflict、结果不确定记 `uncertain_outcome` 且不重试。生产组合经晚绑定的 actor 持有者接通了 `sendMessage`（以 `origin:"runtime"` 入 follow-up 队列，不冒充真实用户输入）、`setModel`（按 provider/model 精确匹配可用模型）与 `setThinkingLevel`；`setActiveTools`/`setSessionName`/`exec`/`appendEntry` 仍**各自带原因**返回 `session_command_unavailable`，`intent` 只记审计。
 
 ## 稳定边界
 

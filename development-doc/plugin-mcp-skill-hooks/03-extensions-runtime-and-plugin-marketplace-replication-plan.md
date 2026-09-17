@@ -12,6 +12,7 @@
 > 修订记录:2026-09-17 P2 部分收口。工具准入(保留名/跨扩展冲突/声明 capability/有界 schema)与 owner 侧 `setActiveTools` 语义落地;`runledger/extensions` 作者子路径发布。
 > 修订记录:2026-09-17 P3 收口。事件投影裁剪层与事件桥落地;host 侧改为逐 handler 记录 + `SessionEnd` 并行短预算;abort 传播;真实子进程端到端验证 PreToolUse 重写强制重新授权。
 > 修订记录:2026-09-17 P4 收口。owner 侧动作处理器与回执账本落地;逐动作形状校验、同 ID 重放不二次副作用、异体 conflict、不确定结果记 uncertain;真实子进程验证动作往返。
+> 修订记录:2026-09-17 P6 `plugin features` 收口。§5.2 契约增补 `features[]` 声明(上限 64);新增 `src/extensions/plugins/features.ts`(声明读取、三态选择合成、只改 `enabledFeatures` 的落账)与 `plugin.features.read|write` 操作、CLI `plugin features [read|set <id> <*|none|a,b>]`;真实 CLI 验证 `*`/`none`/精确集合三态、`feature_unknown` exit 1、用法错误 exit 2,且 enable 位全程保持 false。
 > 修订记录:2026-09-17 P5 安装内核收口。受治理分发端口 + Node 适配器(写入 containment、bounded copyTree)、source 解析(npm 显式拒绝)、三分发账本(未知键 passthrough)、staging→digest→原子激活、卸载/链接/回滚、激活门禁。
 > 修订记录:2026-09-17 P5 catalog/settings 收口。marketplace catalog 按 Claude 兼容顺序读取且“第一个存在的候选即权威”;plugin settings 的类型/边界校验与 user→workspace 收窄(secret 仅 user 层)。
 > 修订记录:2026-09-17 P5 分发管理收口。marketplace cache/fetcher/manager(add/remove/list/refresh/install/pendingUpdates/autoUpdatePlan)与 doctor 落地;`notify` 无可见出口时降级为 off。
@@ -292,7 +293,7 @@ Session Owner(每 owned Session)
 
 | 契约 | 形状(摘要) | 归属 |
 |---|---|---|
-| `ExtensionPackageManifest` | `{ name, version, description, capabilities[], extensions[], commands[], skills[], hooks[], mcpServers?, settings? }`;未知字段 error(沿用现有严格性) | `src/contracts/` + `src/extensions/plugins/manager.ts` |
+| `ExtensionPackageManifest` | `{ name, version, description, capabilities[], extensions[], commands[], skills[], hooks[], mcpServers?, features[]?, settings? }`;`features[]` 是选择域(上限 `featuresPerPackage`),未知字段 error(沿用现有严格性) | `src/contracts/` + `src/extensions/plugins/manager.ts` |
 | `ExtensionCapability` | `events[]`、`tools[]`、`filesystem: none|read|write`、`process: false|governed`、`network: false|governed` | 同上 |
 | `ExtensionHostProtocol` 协议版本 1 | 双向 JSONL/结构化 RPC:`hello`、`registry`、`event`、`action`、`result`、`error`、`shutdown`;每帧有 `protocolVersion` + `generation` | Runtime 04 contracts |
 | `ExtensionRegistrySnapshot` | `{ generation, hostPid, packageId, digest, tools[], commands[], flags[], subscriptions[], limits }` | `src/extensions/` |
@@ -339,7 +340,7 @@ Session Owner(每 owned Session)
 | `src/extensions/manager.ts` / `snapshot.ts` | registry generation 与 host generation 绑定;失败回退 last-known-good |
 | `src/runtime/session-runtime/extension-composition.ts` | 装配 supervisor/bridge/admission;operation manifest 增量(P5 已装配分发栈、`plugin.*`/`marketplace.*` 操作与 **host 装配**;两者均已落地) |
 | `src/runtime/harness-profiles/types.ts` | 不新增字段;确认扩展运行时映射到既有 `extensions.*` 门控 |
-| `src/cli/control-commands.ts` | plugin 动作扩展(P6 已加 `distribution`/`doctor`/`install`/`uninstall`/`link`/`upgrade` 与 `marketplace discover|add|remove|update|upgrade`;`features`/`config` 与 TUI 确认边界待做) |
+| `src/cli/control-commands.ts` | plugin 动作扩展(P6 已加 `distribution`/`doctor`/`install`/`uninstall`/`link`/`upgrade`/`config`/`features` 与 `marketplace discover|add|remove|update|upgrade`;只剩 TUI 确认边界待做) |
 | `src/cli/{args,main}.ts` | 新子命令与 source 解析;`--network` 等价授权衔接 |
 | `src/tui/interactive/extension-workflow.ts` + modal | 安装/升级/配置/信任的确认边界 |
 | `src/storage/settings-manager.ts` | 新增 extensions 相关 settings 键(user 授权、workspace 收窄) |
@@ -400,6 +401,7 @@ Session Owner(每 owned Session)
 - DoD:`plugin install|uninstall|link|upgrade|doctor|features|config` 可用;staging→digest→原子激活;user/workspace scope 与遮蔽;`marketplaces.json`/install registry 磁盘契约与 Claude 兼容字段一致。
 - 已完成:`distribution-port.ts` + `src/storage/extensions/distribution-storage.ts`(所有变更操作 containment、bounded `copyTree`、同设备 rename);`marketplace/source-resolver.ts`(相对源 containment、git 简写、npm 显式拒绝、install spec/feature 语法);`marketplace/registry.ts`(三分发账本、未知顶层键 passthrough、损坏 fail closed、scope 遮蔽);`installer.ts`(staging→digest→原子激活、lifecycle script 拒绝、digest 不匹配拒绝、版本保留与显式回滚、卸载、link);`activation.ts`(enabled + trusted + digest 一致 + 有 entrypoint + host 未 failed 才允许启动)。
 - 已完成(第二批):`marketplace/catalog.ts`(`.runledger-plugin` → `.omp-plugin` → `.claude-plugin` 顺序,**第一个存在的候选即权威**,损坏不回退;`pluginRoot` 前置后仍过 containment;catalog 版本优先于 manifest)、`settings-schema.ts`(string/number/boolean/enum 的类型与边界校验、user→workspace 收窄并显式标记 `narrowed`、secret 仅 user 层、默认值补齐、`plugin config validate` 形状)。
+- 已完成(第十六批,**feature 选择域**):§5.2 契约增补——manifest 新增有界 `features` 声明(`{name, description?, default?}`,上限 `featuresPerPackage = 64`),`EXTENSION_PACKAGE_MANIFEST_KEYS` 同步;`plugins/features.ts` 负责声明读取(重名/非法项逐条报告)、三态选择的合成与落账;`plugin.features.read|write` 进入 §8 operation manifest,`plugin features [read|set <id> <*|none|a,b>]` 进入 CLI 词表。写入只改 `registry.json` 的 `enabledFeatures` 一个字段,不启用、不信任、不重启 host;未声明名字 `feature_unknown` fail closed,损坏账本不重置。
 - 已完成(第三批):`marketplace/cache.ts`(collision-safe 缓存键)、`fetcher.ts`(本地 marketplace 原地读取;git/url 走受治 materializer,staging→catalog 校验→原子激活到 cache,**无网络即失败**)、`manager.ts`(`addMarketplace`/`removeMarketplace`/`listMarketplaces`/`refreshMarketplace`/`installPlugin`/`listInstalled`/`pendingUpdates`/`autoUpdatePlan`,含版本比较与 `notify` 降级)、`doctor.ts`(账本可读性、目录存在、digest 复核、lifecycle script 复核、trust 缺失/stale、孤立版本目录;只报告不自动修复)。
 - 已完成(第四批,**分发面接线**):`extension-composition.ts` 新增 session 私有分发栈(`NodeExtensionDistributionStorage` + `ExtensionDistributionRegistry` + `ExtensionInstaller` + `MarketplaceFetcher` + `MarketplaceManager`),并把 §8 的 operation manifest 增量落地:`plugin.distribution.list`/`plugin.doctor`/`marketplace.discover`(read),`plugin.install`/`plugin.uninstall`/`plugin.link`/`plugin.upgrade`/`marketplace.add`/`marketplace.remove`/`marketplace.update`/`marketplace.upgrade`(mutate)。所有 mutate 经既有 attempt barrier 记账后才返回,payload 逐项校验,缺参数不触碰端口。
 - 已完成(第五批,**受治 git materialize**):`git-materializer.ts` —— 不 import `node:child_process`、不接受 raw spawn,只调注入的 governed managed process;https-only、ref/sha/subdir 字符集校验、命令行 shell 引用;输出按字节有界,超限即停进程;有 sha 时用 `git init` + `fetch --depth 1 origin <sha>` + `checkout --detach FETCH_HEAD` 拿**确切提交**而不是可能前进的分支头;`git-subdir` 用受治理存储适配器 rename 落位并清理临时 worktree。`createSessionDistribution` 已把它接到会话的 managed process 上。
@@ -419,7 +421,9 @@ Session Owner(每 owned Session)
 - DoD:`marketplace add|remove|update|list`、`discover`、`upgrade`、`autoUpdate` 接线;TUI 安装/升级/信任确认边界;运行中 mutation 的 pending 语义与 `01` §10 一致。
 - 已完成(CLI 词表与真实闭环):`control-commands.ts` 的 `plugin` 动作集扩展到 `distribution|doctor|install|uninstall|link|upgrade`,`marketplace` 成为独立 group(`discover|add|remove|update|upgrade`);每个动词有独立参数校验,`--scope` 只接受 user/workspace;分发 mutation 的 revision 查询走 `plugin.distribution.list` / `marketplace.discover`(不再借用声明式 `plugin.list`)。退出码:成功 0、失败 1、用法错误 2。控制命令沿用既有 JSON-only 输出约定(不新增 `--json` 开关)。
 - 真实 CLI 闭环(隔离 `RUNLEDGER_DIR`、`npm run build:typescript` 后):`marketplace add` → `marketplace discover` → `plugin install alpha@local`(拿到 version/digest/installPath receipt)→ `plugin distribution`(显示 `enabled:false` 与 `hostEligibility:"no-entrypoints"`)→ `plugin list`(**声明式回灌生效**:已安装包以 `activation:"disabled"`、`trust:"untrusted"` 出现)→ `plugin doctor`(账本一致 + `trust.not_checked`)。六个动词全部 exit 0。
-- 未完成:TUI 安装/升级/信任确认边界、`autoUpdate` 的 TUI/CLI 可见信号接线收敛到统一出口、`notify` 模式的端到端验证(`pendingUpdates` 已可查询,但还没有 TUI 通知落点)、`plugin features|config`。
+- 已完成(`plugin features`):manifest 增补 `features` 声明形状(§5.2 契约增量,上限 64),`plugins/features.ts` + `plugin.features.read|write` + CLI `plugin features [read|set <id> <*|none|a,b>]` 全链落地。三态语义与安装语法一致:`*` = 声明默认值(`null`)、`none` = 全关(`[]`)、`a,b` = 精确集合;写回只动 `registry.json` 的 `enabledFeatures`,不改变 enable/trust/host 状态;未声明名字返回 `feature_unknown` 且不落盘。
+- 真实 CLI 验证(隔离 `RUNLEDGER_DIR`、构建后 `dist`、PTY):`plugin features` 读为 `selection:null`/`enabled:["bundle"]` → `set audit`(exit 0,`enabled:["audit"]`)→ `set none`(exit 0,`enabled:[]`)→ `set '*'`(exit 0,回到 `null`/`["bundle"]`)→ `set ghost`(**exit 1**,`feature_unknown`,账本保持 `null`)→ `set Audit`(**exit 2**,用法错误)→ `set audit,bundle`(exit 0,精确集合)→ `set beta@local audit`(exit 1,`plugin_not_installed`);全程 `plugin distribution` 保持 `enabled:false`,证明 feature 选择不蕴含启用。
+- 未完成:TUI 安装/升级/信任确认边界、`autoUpdate` 的 TUI/CLI 可见信号接线收敛到统一出口、`notify` 模式的端到端验证(`pendingUpdates` 已可查询,但还没有 TUI 通知落点)。
 
 ### P7 — 加固与真实 smoke——**进行中**
 
@@ -438,7 +442,7 @@ Session Owner(每 owned Session)
 - 已完成(第十四批,**watcher Node 适配**):`src/storage/extensions/watch-adapter.ts` + 5 条单测;`requestReload` 改为可异步(生产接线要 `await manager.reload()` 才能拿到 ready/pending,猜会把"没换"报成 ready 或反之)。
 - 已完成(第十三批,**可选文件 watcher**):`reload-watcher.ts` + 8 条单测。默认关闭、`start()` 幂等且无 root 时不订阅、变更在窗口内合并成一次请求、`pending` 如实回传(不自行交换正在使用的 generation)、`stop()` 清订阅与 timer、审计只记 outcome、debounce 范围校验。Node 侧订阅实现留在 storage 适配层(扩展域禁 raw fs)。**已接线到生产组合**(2026-09-17 第十五轮):settings `plugins.watch`(默认关闭、user 层授权)控制启用;组合构造期读一次 settings(in-session 变更需重开会话);roots 取声明式 + 分发的 plugin root;`requestReload` **等** `manager.reload()` 的结果,因此 turn 进行中返回 `pending`、idle 边界返回 `ready`——交换与否由既有 snapshot 决定。watcher 经 composition options 传入,便于用 stub 断言 start/stop 顺序。
 - 已完成(第十五批,**watcher 生产接线**):`plugins.watch` settings 键(默认关闭、user 层授权)+ 组合注入(roots 取声明式与分发 plugin root;`requestReload` 等 `manager.reload()` 的真实结果,turn 进行中为 `pending`、idle 边界为 `ready`;watcher 不可用经会话扩展审计上报)。
-- 未完成:TUI 确认边界与 `autoUpdate` 的 TUI 通知落点(`marketplace discover` 已提供 CLI 可查询的 pending 列表,即 D10 的 CLI 可见出口);`plugin features`(需先给 manifest 增补 `features` 声明形状,属 §5.2 契约增量);descriptor 命名观感问题。
+- 未完成:TUI 确认边界与 `autoUpdate` 的 TUI 通知落点(`marketplace discover` 已提供 CLI 可查询的 pending 列表,即 D10 的 CLI 可见出口);descriptor 命名观感问题(`componentName` 用声明 skills root 的最后一段命名,如 `skills` 而不是真实 skill `review`)。
 
 ## 8. 事件与契约增量
 
@@ -568,7 +572,7 @@ git diff --check
 | P3 事件桥 | **done** | `src/extensions/events/**`;319 用例通过(含真实子进程的 PreToolUse 重写重新授权与 `SessionEnd` 并行证据);`tsc -p tsconfig.json`/`tsconfig.tests.json`、`check:current-format`、`check:runtime-boundaries`、`check:package-boundaries` 通过 |
 | P4 运行时动作 | **done** | `src/extensions/actions/**`(校验、回执账本、同 ID 重放/conflict/uncertain 不重试);actor port 已在 P5 接到真实命令面,并有 `tests/runtime/session-runtime/extension-action-actor.test.ts` 6 条直接单测 |
 | P5 分发:安装/scope/激活 | **done** | 安装内核、activation 门禁、catalog/settings、cache/fetcher/manager、doctor、分发面接线、受治 git materialize、声明式回灌、host 资格判定、host 装配/工具准入调用点、`extension.host.inspect`、`plugin.config.*`(含 settings 键空间)与 actor 命令面(3 个真实动作 + 4 个带原因的显式拒绝)均已交付,并有 6 条直接单测 |
-| P6 CLI/TUI 与 Marketplace | **partial** | CLI 词表与真实闭环已交付(`marketplace add/discover`、`plugin install/distribution/list/doctor/config` 全部 exit 0,见 §15.2);`autoUpdate` 的可见出口为 CLI 可查询的 `pendingUpdates`(D10 的 CLI 侧已满足);TUI 确认边界、TUI 通知落点、`plugin features` 待做 |
+| P6 CLI/TUI 与 Marketplace | **partial** | CLI 词表与真实闭环已交付(`marketplace add/discover`、`plugin install/distribution/list/doctor/config/features` 全部 exit 0,含 `feature_unknown` exit 1 与用法错误 exit 2,见 §15.2);`autoUpdate` 的可见出口为 CLI 可查询的 `pendingUpdates`(D10 的 CLI 侧已满足);TUI 确认边界与 TUI 通知落点待做 |
 | P7 加固与真实 smoke | **partial** | 失败语义矩阵(16 用例)、预算/上限矩阵(15 用例)、两份文档同步、真实 TTY 九步闭环(exit 0、`activation:"ready"`)、"调用"段缺口定位与收口(4 用例 + `skill.skills_root_empty` warning)、文件 watcher 全链(协调器 8 + 适配器 5 + 接线 2 用例,默认关闭、`plugins.watch` 启用)均已交付;TUI 确认边界、descriptor 命名观感问题待做 |
 
 ### 15.2 实施记录
