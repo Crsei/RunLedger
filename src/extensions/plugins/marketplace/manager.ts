@@ -125,7 +125,7 @@ export class MarketplaceManager {
 			return fail("marketplace_exists", `marketplace is already registered: ${request.name}`);
 		}
 		const fetchRequest: MarketplaceFetchRequest = { name: request.name, sourceType: request.sourceType, sourceUri: request.sourceUri };
-		const fetched = await this.#options.fetcher.fetch(fetchRequest, request.refresh === true ? { refresh: true } : {});
+		const fetched = await this.#options.fetcher.resolveCatalog(fetchRequest, request.refresh === true ? { refresh: true } : {});
 		if (!fetched.ok) return fail("marketplace_invalid", fetched.message);
 
 		const timestamp = new Date().toISOString();
@@ -179,7 +179,7 @@ export class MarketplaceManager {
 		if (!current.ok) return current;
 		const entry = current.value.marketplaces.find((item) => item.name === name);
 		if (entry === undefined) return fail("marketplace_missing", `marketplace is not registered: ${name}`);
-		const fetched = await this.#options.fetcher.fetch({ name: entry.name, sourceType: entry.sourceType, sourceUri: entry.sourceUri }, { refresh: true });
+		const fetched = await this.#options.fetcher.resolveCatalog({ name: entry.name, sourceType: entry.sourceType, sourceUri: entry.sourceUri }, { refresh: true });
 		if (!fetched.ok) return fail("marketplace_invalid", fetched.message);
 		const updated: MarketplaceRegistryEntry = { ...entry, catalogPath: fetched.rootPath, updatedAt: new Date().toISOString(), runledgerCatalogDigest: fetched.catalogDigest };
 		const saved = await this.#options.registry.saveMarketplaces({
@@ -205,7 +205,7 @@ export class MarketplaceManager {
 		if (candidates.length === 0) return fail("marketplace_missing", "no marketplace matches the install spec");
 
 		for (const marketplace of candidates) {
-			const catalogResult = await this.#options.fetcher.fetch({ name: marketplace.name, sourceType: marketplace.sourceType, sourceUri: marketplace.sourceUri });
+			const catalogResult = await this.#options.fetcher.resolveCatalog({ name: marketplace.name, sourceType: marketplace.sourceType, sourceUri: marketplace.sourceUri });
 			if (!catalogResult.ok) continue;
 			const entry = findMarketplacePlugin(catalogResult.catalog.catalog, parsed.spec.name);
 			if (entry === undefined) continue;
@@ -258,7 +258,7 @@ export class MarketplaceManager {
 		if (!current.ok) return current;
 		const pending: PendingUpdate[] = [];
 		for (const marketplace of current.value.marketplaces) {
-			const catalogResult = await this.#options.fetcher.fetch({ name: marketplace.name, sourceType: marketplace.sourceType, sourceUri: marketplace.sourceUri });
+			const catalogResult = await this.#options.fetcher.resolveCatalog({ name: marketplace.name, sourceType: marketplace.sourceType, sourceUri: marketplace.sourceUri });
 			if (!catalogResult.ok) continue;
 			for (const entry of catalogResult.catalog.catalog.plugins) {
 				const packageId = `${entry.name}@${marketplace.name}`;

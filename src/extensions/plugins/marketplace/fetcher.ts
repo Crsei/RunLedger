@@ -44,7 +44,7 @@ export class MarketplaceFetcher {
 	}
 
 	/** 解析并获取 catalog，返回可读取的根目录与解析结果。 */
-	public async fetch(request: MarketplaceFetchRequest, options: { readonly refresh?: boolean } = {}): Promise<MarketplaceFetchResult> {
+	public async resolveCatalog(request: MarketplaceFetchRequest, options: { readonly refresh?: boolean } = {}): Promise<MarketplaceFetchResult> {
 		const cached = marketplaceCachePath(this.#options.cache, request.name);
 
 		if (request.sourceType === "local") {
