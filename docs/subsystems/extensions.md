@@ -67,7 +67,7 @@ shutdown 是幂等 promise。fenced Runtime 也执行资源终止，但不能在
 - **安装、启用、信任三者分离**：安装只落盘 + 记 digest；启用只改账本位；host 只在 `enabled + 当前内容的 trust receipt + 有 entrypoint + host 未 failed` 全满足时才启动。内容变化会让旧 receipt 变 stale，缺失/stale/revoked 分别有独立诊断码。
 - **回灌**：已安装的**声明式**包会被投影为既有 `PluginManager` 的发现根，因此安装后 `plugin.list` 立刻可见，但仍是 `disabled` + `untrusted`，直到用户显式信任并启用。分发包的权威 manifest 是 `package.json#runledger`；`.runledger-plugin/plugin.json` 只是发现容器。
 - **自动更新模式**：user 层 settings 的 `marketplace.autoUpdate`（`off`/`notify`/`auto`，缺省 `off`）决定行为。`notify` 需要一个真实可见出口，这里有两个：`marketplace discover` 返回的 `pendingUpdates`，以及 TUI 打开 `/plugins` 时的 notice；`auto` 只刷新 catalog 与可见信号，**绝不**代替用户安装、启用或信任（D7/D10）。非法模式与 `agentMode`/`compaction` 一样 fail loud，不静默降级。
-- **TUI 侧边界**：TUI 的 `t` 只打开确认视图，确认后才发 `plugin.trust`/`untrust`（独立 Skill 用 `skill.trust`/`untrust`），取消则回到同一 toggle 视图；打开 `/plugins` 时会把 `marketplace.discover` 的待更新项转成一条 notice。TUI 目前没有 install/upgrade/config 入口。
+- **TUI 侧边界**：TUI 里所有会落盘/改账本的动作都先经过确认视图，确认后才下发 mutation。`t`（信任/取消信任，独立 Skill 用 `skill.trust`/`untrust`）在取消后回到同一个 toggle 视图；`/plugins install|upgrade <spec>` 与 `/plugins config <plugin-id> <key> <value>` 同样先确认，取消不触碰端口。打开 `/plugins` 时会把 `marketplace.discover` 的待更新项转成一条 notice。安装/升级仍然不启用、不信任，且在同一 session 内不改写声明式视图（新 session 生效）。
 - **feature 选择域**：`package.json#runledger.features[]` 声明 `{name, description?, default?}`（上限 64），是 plugin 内部可选能力的**选择域**，不是权限来源。`enabledFeatures: null` 表示只启用 `default: true` 的声明，`[]` 表示全关，非空数组是精确集合；安装语法 `name[a,b]`/`name[*]`/`name[]` 与 `plugin features set` 写的是同一个字段。切换 feature 只改账本这一处，既不启用也不信任 plugin；选择未声明的名字返回 `feature_unknown` 而不是静默裁剪。
 
 ## Extension host
