@@ -25,8 +25,11 @@ export interface ExtensionReloadWatcherOptions {
 	readonly watch: ExtensionWatchPort;
 	/** 需要观察的根；每次开窗时重新读取，便于 root 变化后生效。 */
 	readonly roots: () => readonly string[];
-	/** 与 `ExtensionSnapshotStore.requestReload()` 同语义。 */
-	readonly requestReload: () => ExtensionReloadOutcome;
+	/**
+	 * 与 `ExtensionSnapshotStore.requestReload()` 同语义。允许异步：生产接线要
+	 * `await manager.reload()` 才能拿到 ready/pending，而不是自己猜。
+	 */
+	readonly requestReload: () => ExtensionReloadOutcome | Promise<ExtensionReloadOutcome>;
 	/** 默认关闭；返回 false 时不订阅任何东西。 */
 	readonly enabled?: () => boolean;
 	readonly debounceMs?: number;
@@ -43,7 +46,7 @@ export interface ExtensionReloadWatcher {
 	stop(): void;
 	/** 是否有已排队的变更等待窗口结束。 */
 	queued(): boolean;
-	/** 最近一次请求的返回值；未请求过为 undefined。 */
+	/** 最近一次请求的返回值；未请求过（或异步结果未回来）为 undefined。 */
 	lastOutcome(): ExtensionReloadOutcome | undefined;
 }
 
@@ -70,10 +73,12 @@ export function createExtensionReloadWatcher(options: ExtensionReloadWatcherOpti
 		const changedPath = queuedPath;
 		queuedPath = undefined;
 		if (changedPath === undefined) return;
-		outcome = options.requestReload();
-		void options.audit?.({
-			eventType: "extension.watch.reload_requested",
-			payload: { outcome, debounceMs },
+		void Promise.resolve(options.requestReload()).then(async (settled) => {
+			outcome = settled;
+			await options.audit?.({
+				eventType: "extension.watch.reload_requested",
+				payload: { outcome: settled, debounceMs },
+			});
 		});
 	};
 

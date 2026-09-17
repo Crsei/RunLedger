@@ -16,6 +16,9 @@ interface Harness {
 	readonly advance: () => void;
 }
 
+/** 让异步 requestReload 的微任务结算完；不引入固定 sleep。 */
+const settle = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); };
+
 function harness(): Harness {
 	const subscriptions: Harness["subscriptions"] = [];
 	const timers: Harness["timers"] = [];
@@ -68,7 +71,7 @@ describe("extension reload watcher", () => {
 		expect(w.queued()).toBe(false);
 	});
 
-	it("coalesces changes inside the debounce window into one request", () => {
+	it("coalesces changes inside the debounce window into one request", async () => {
 		const h = harness();
 		let reloads = 0;
 		const w = watcher({ h, requestReload: () => { reloads += 1; return "ready"; }, debounceMs: 400 });
@@ -85,17 +88,19 @@ describe("extension reload watcher", () => {
 		expect(reloads).toBe(0);
 
 		h.advance();
+		await settle();
 		expect(reloads).toBe(1);
 		expect(w.queued()).toBe(false);
 		expect(w.lastOutcome()).toBe("ready");
 	});
 
-	it("reports pending instead of swapping a generation that is in use", () => {
+	it("reports pending instead of swapping a generation that is in use", async () => {
 		const h = harness();
 		const w = watcher({ h, requestReload: () => "pending" });
 		w.start();
 		h.fire("/home/plugins/a");
 		h.advance();
+		await settle();
 		// idle 语义由既有 snapshot 决定：watcher 只如实回传 pending。
 		expect(w.lastOutcome()).toBe("pending");
 	});
@@ -148,6 +153,7 @@ describe("extension reload watcher", () => {
 		w.start();
 		h.fire("/home/plugins/secret-looking-path");
 		h.advance();
+		await settle();
 		expect(audits).toEqual(["extension.watch.reload_requested"]);
 	});
 
