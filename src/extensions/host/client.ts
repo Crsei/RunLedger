@@ -20,6 +20,8 @@ import type { ExtensionActionResult } from "./runtime-api.ts";
 import type { ExtensionHostChannel } from "./channel.ts";
 
 export interface ExtensionHostActionRequest {
+	/** host 单调分配的关联 id；owner 用它做回执与 response-loss 重放判定。 */
+	readonly requestId: string;
 	readonly action: string;
 	readonly payload: Readonly<Record<string, unknown>>;
 	readonly intent?: ExtensionIntent;
@@ -124,6 +126,7 @@ export async function connectExtensionHost(options: ExtensionHostClientOptions):
 		let result: ExtensionActionResult;
 		try {
 			result = await options.onAction({
+				requestId: frame.requestId,
 				action: frame.action,
 				payload: frame.payload,
 				...(frame.intent === undefined ? {} : { intent: frame.intent }),

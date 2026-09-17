@@ -22,6 +22,8 @@ import type { OutputCursor } from "../../../src/runtime/process/output.ts";
 import type { ControlPlaneMutationResult, ControlPlaneOutputResult, ControlPlaneWaitResult } from "../../../src/storage/process/control-plane.ts";
 import { ExtensionHostSupervisor } from "../../../src/extensions/host/supervisor.ts";
 import { ExtensionEventBridge } from "../../../src/extensions/events/bridge.ts";
+import { createExtensionActionHandler } from "../../../src/extensions/actions/handler.ts";
+import type { ExtensionActionActorPort } from "../../../src/extensions/actions/handler.ts";
 import type { ExtensionHostManagedProcessPort } from "../../../src/extensions/host/channel.ts";
 import { EXTENSION_DEFAULT_HOST_LIMITS } from "../../../src/contracts/extensions/registry.ts";
 import type { ExtensionHostBootstrap } from "../../../src/extensions/host/bootstrap.ts";
@@ -327,6 +329,48 @@ describe("extension host process boundary", () => {
 		expect(outcome.ok).toBe(true);
 		// 两个各 200ms 的 handler：串行约 400ms，并行约 200ms。
 		expect(elapsedMs).toBeLessThan(380);
+		await supervisor.stop("owner-request");
+	}, 30_000);
+
+	it("carries a real runtime action through the owner handler and back as a receipt", async () => {
+		const port = new SpawnManagedProcess();
+		const calls: string[] = [];
+		const actor: ExtensionActionActorPort = {
+			sendMessage: async () => ({ ok: true }),
+			appendEntry: async () => ({ ok: true }),
+			setActiveTools: async (input) => { calls.push(`setActiveTools:${input.names.join(",")}`); return { ok: true, value: { activeCount: input.names.length } }; },
+			setModel: async () => ({ ok: false, code: "model_unavailable", message: "no credentials" }),
+			setThinkingLevel: async () => ({ ok: true }),
+			setSessionName: async () => ({ ok: true }),
+			exec: async () => ({ ok: true }),
+			emitIntent: async () => ({ ok: true }),
+		};
+		const actions = createExtensionActionHandler({ port: actor, generation: 9, admittedTools: () => ["fixture_echo"] });
+		const supervisor = new ExtensionHostSupervisor({
+			managedProcess: port,
+			startCommand: {
+				runtimeCommand: process.execPath,
+				runtimeArgs: useDist ? [] : ["--no-warnings", "--experimental-strip-types"],
+				hostEntrypoint: useDist ? distEntry : srcEntry,
+			},
+			apiVersion: "1.0.0",
+			actionHandler: actions.handle,
+		});
+		const status = await supervisor.start({
+			generation: 9,
+			packageId: "fixture-plugin@local",
+			digest: "e".repeat(64),
+			rootPath: fixtureRoot,
+			entrypoint: bootstrapFor("action-extension.ts").entrypoint,
+		});
+		expect(status.status).toBe("ready");
+		const bridge = new ExtensionEventBridge({ dispatch: (input) => supervisor.dispatchEvent(input) });
+		const outcome = await bridge.dispatch({ name: "PostToolUse", source: { sessionId: "session-1" }, subscribers: ["fixture-plugin@local"] });
+		expect(outcome.ok).toBe(true);
+		if (!outcome.ok) return;
+		expect(calls).toEqual(["setActiveTools:fixture_echo"]);
+		expect(outcome.result.replacement).toEqual({ active: true });
+		expect(actions.ledger.size()).toBe(1);
 		await supervisor.stop("owner-request");
 	}, 30_000);
 
