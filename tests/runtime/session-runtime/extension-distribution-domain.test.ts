@@ -214,6 +214,7 @@ describe("session extension composition host port", () => {
 		return {
 			start: async () => ({ ok: true as const, tools: [] as readonly never[] }),
 			tools: () => [] as readonly never[],
+			inspect: async () => ({ host: "idle" }),
 			shutdown: async () => undefined,
 			dispatchEvent: async () => ({ ok: false as const, code: "host_unavailable", message: "none" }),
 			...overrides,
@@ -279,5 +280,43 @@ describe("session extension composition host port", () => {
 		});
 		await session.shutdown("paused");
 		expect(order).toEqual(["host", "mcp", "hooks"]);
+	});
+});
+
+describe("extension.host.inspect", () => {
+	it("publishes the operation as a read and routes it to the host port", async () => {
+		const session = composition();
+		const manifest = session.resources.operationManifest.find((entry) => entry.operation === "extension.host.inspect");
+		expect(manifest).toEqual({ operation: "extension.host.inspect", capability: "session.extensions", access: "read" });
+
+		// 没有 host 装配时报告 disabled，而不是返回空对象让调用方猜。
+		await expect(session.resources.query("extension.host.inspect", {}, queryContext())).resolves.toMatchObject({
+			ok: true,
+			value: { host: "disabled" },
+		});
+	});
+
+	it("returns the host's own bounded projection when one is assembled", async () => {
+		const session = createSessionExtensionComposition({
+			sessionId: "session_host_inspect",
+			generation: 1,
+			manager: hostManager(),
+			mcp: hostMcp(),
+			closeHooks: async () => undefined,
+			closePlugins: async () => undefined,
+			cleanup: async () => undefined,
+			hostExtensions: {
+				start: async () => ({ ok: true, tools: [] }),
+				tools: () => [],
+				inspect: async () => ({ host: "ready", generation: 3, registryDigest: "a".repeat(64), hostPid: 42, candidates: [{ packageId: "alpha@local", eligibility: "host-ready" }] }),
+				shutdown: async () => undefined,
+				dispatchEvent: async () => ({ ok: false, code: "host_unavailable", message: "none" }),
+			},
+			hostInspect: async () => ({ host: "ready", generation: 3, registryDigest: "a".repeat(64), hostPid: 42, candidates: [{ packageId: "alpha@local", eligibility: "host-ready" }] }),
+		});
+		await expect(session.resources.query("extension.host.inspect", {}, queryContext())).resolves.toMatchObject({
+			ok: true,
+			value: { host: "ready", generation: 3, hostPid: 42, candidates: [{ packageId: "alpha@local", eligibility: "host-ready" }] },
+		});
 	});
 });

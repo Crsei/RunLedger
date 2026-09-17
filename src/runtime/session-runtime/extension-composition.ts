@@ -109,9 +109,14 @@ export interface SessionExtensionCompositionOptions {
 	readonly attemptPort?: () => AttemptPort | undefined;
 	/** P5 分发面;缺省时所有分发操作返回 operation_unavailable。 */
 	readonly distribution?: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
+	/** `extension.host.inspect` 的后端;缺省时返回 disabled。 */
+	readonly hostInspect?: SessionHostInspect;
 	/** P5/P1 可执行扩展 host;缺省(或 Profile 关闭)时扩展工具与事件桥不可用。 */
 	readonly hostExtensions?: SessionExtensionHostPort;
 }
+
+/** `extension.host.inspect` 的后端形状；composition 把它接进 resource domain。 */
+export type SessionHostInspect = () => Promise<Record<string, unknown>>;
 
 /**
  * 扩展 host 的生命周期与查询面（P1–P4 的装配缝）。
@@ -124,6 +129,8 @@ export interface SessionExtensionHostPort {
 	/** 已准入的扩展工具；start 之前为空。 */
 	tools(): readonly AgentTool[];
 	shutdown(reason: "paused" | "detached" | "error" | "fenced"): Promise<void>;
+	/** host 与候选状态的 bounded 只读投影；未装配 host 时也返回选择结果。 */
+	inspect(): Promise<Record<string, unknown>>;
 	/** 事件桥派发；未装配时返回 host_unavailable，交由调用方 fail-closed 处理。 */
 	dispatchEvent(input: {
 		readonly name: string;
@@ -141,6 +148,8 @@ export interface SessionExtensionComposition {
 	readonly turnLifecycle?: ExtensionTurnLifecycle;
 	/** host 在 `start` 后才公布注册表；调用方在 start 之后用 `addTools` 追加。 */
 	extensionTools(): readonly AgentTool[];
+	/** `extension.host.inspect` 的后端；未装配 host 时返回 disabled 而不是空对象。 */
+	hostInspect(): Promise<Record<string, unknown>>;
 	dispatchExtensionEvent(input: {
 		readonly name: string;
 		readonly cancelable: boolean;
@@ -187,6 +196,8 @@ export interface SessionExtensionHostRuntime {
 	}) => Promise<ExtensionEventOutcome>;
 	/** 已订阅某个投影事件的扩展 id;用于跳过无人订阅的跨进程往返。 */
 	readonly subscribersFor: (name: string) => readonly string[];
+	/** host 生命周期与候选 gate 的只读投影。 */
+	readonly inspect: () => Promise<Record<string, unknown>>;
 }
 
 export interface SessionExtensionHostPortOptions {
@@ -251,6 +262,7 @@ export function createSessionExtensionHostPort(options: SessionExtensionHostPort
 			return { ok: true, tools: admitted };
 		},
 		tools: () => admitted,
+		inspect: () => options.runtime.inspect(),
 		shutdown: async () => {
 			if (active === undefined) return;
 			active = undefined;
@@ -291,6 +303,7 @@ const OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object
 	Object.freeze({ operation: "mcp.restart", capability: "session.mcp", access: "mutate" }),
 	// P5 分发面（§8 operation manifest 增量）。安装/启用/信任三者严格分离：
 	// 这些 mutate 只落盘与记账，绝不顺带授予执行。
+	Object.freeze({ operation: "extension.host.inspect", capability: "session.extensions", access: "read" }),
 	Object.freeze({ operation: "plugin.distribution.list", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "plugin.doctor", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "marketplace.discover", capability: "session.plugins", access: "read" }),
@@ -344,6 +357,11 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 	return {
 		tools,
 		extensionTools: () => hostTools,
+		hostInspect: async () => {
+			const host = options.hostExtensions;
+			if (host === undefined) return { host: "disabled", reason: "no executable extension host is assembled for this session" };
+			return host.inspect();
+		},
 		dispatchExtensionEvent: async (input) => {
 			const host = options.hostExtensions;
 			if (host === undefined) return { ok: false, code: "host_unavailable", message: "no extension host is assembled for this session" };
@@ -411,6 +429,11 @@ async function queryResources(options: SessionExtensionCompositionOptions, opera
 	}
 	if (operation === "mcp.list" || operation === "mcp.doctor") {
 		return ok(operation, options.generation, { items: mcp });
+	}
+	if (operation === "extension.host.inspect") {
+		return ok(operation, options.generation, options.hostInspect === undefined
+			? { host: "disabled", reason: "this session has no extension host composition" }
+			: await options.hostInspect());
 	}
 	if (operation === "plugin.distribution.list" || operation === "plugin.doctor" || operation === "marketplace.discover") {
 		const distribution = options.distribution?.read;
@@ -815,6 +838,7 @@ export async function createProductionSessionExtensionComposition(
 		skillLoader,
 		distribution: distribution.ports,
 		hostExtensions,
+		hostInspect: () => hostExtensions.inspect(),
 		contextSources: (modelContextChars) => {
 			const skills = manager.currentSkills().filter((skill) => skill.descriptor.activation === "ready");
 			if (skills.length === 0) return [];
@@ -1047,6 +1071,36 @@ function createSessionHostAssembly(input: {
 			const state = supervisor?.client()?.state();
 			if (state === undefined || state.status !== "ready" || activePackageId === undefined) return [];
 			return state.registry.subscriptions.some((subscription) => subscription.name === name) ? [activePackageId] : [];
+		},
+		inspect: async () => {
+			// 只读投影：host 生命周期 + 候选 gate。不暴露 entrypoint 之外的 native 路径。
+			const selection = await input.distribution.selectHostCandidates();
+			const status = supervisor?.status();
+			const state = supervisor?.client()?.state();
+			return {
+				host: status === undefined ? "idle" : status.status,
+				...(status === undefined || status.status !== "ready" ? {} : {
+					generation: status.generation,
+					registryDigest: status.registryDigest,
+					hostPid: status.hostPid,
+					activatedAt: status.activatedAt,
+					subscriptions: state?.status === "ready" ? state.registry.subscriptions.length : 0,
+					tools: state?.status === "ready" ? state.registry.tools.length : 0,
+				}),
+				...(status !== undefined && status.status === "failed" ? { code: status.code, message: status.message, retainedGeneration: status.retainedGeneration ?? null } : {}),
+				candidates: selection.candidates.map((candidate) => ({
+					packageId: candidate.packageId,
+					version: candidate.version,
+					scope: candidate.scope,
+					enabled: candidate.enabled,
+					entrypoints: candidate.entrypoints.length,
+					declaredTools: candidate.declaredTools.length,
+					eligibility: selection.gates.find((gate) => gate.candidate.packageId === candidate.packageId)?.ok === true
+						? "host-ready"
+						: (selection.gates.find((gate) => gate.candidate.packageId === candidate.packageId) as { readonly code?: string } | undefined)?.code ?? "not-selected",
+				})),
+				diagnostics: selection.diagnostics,
+			};
 		},
 	};
 
