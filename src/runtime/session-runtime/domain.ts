@@ -67,7 +67,8 @@ import { createSessionBashClassificationAudit } from "./bash-classification-audi
 import type { AgentRunBudgetUsage } from "../types.ts";
 import { SessionTitleLifecycle } from "./title-lifecycle.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
-import { createProductionSessionExtensionComposition, type SessionExtensionComposition } from "./extension-composition.ts";
+import { createProductionSessionExtensionComposition, type SessionExtensionActionHostHolder, type SessionExtensionComposition } from "./extension-composition.ts";
+import type { ModelThinkingLevel } from "../../types.ts";
 import type { SessionPlanInspection } from "./plan-composition.ts";
 import type { ModelContextAssemblyInput } from "../types.ts";
 import { collectUselessToolCallIds } from "../context/compaction/projection-prune.ts";
@@ -255,6 +256,17 @@ export async function assembleSessionDomain(
 		...(goalSettings.enabled ? goalTools.tools : []),
 	];
 	let extensions: SessionExtensionComposition | undefined;
+	// controller 在 extension composition 之后构建，因此扩展动作用晚绑定持有者：
+	// 构建完 controller 再填 `.current`，未填时动作明确返回 session_command_unavailable。
+	const extensionActionHost: SessionExtensionActionHostHolder = {};
+	const bindActionHost = (controller: InteractiveSessionController): void => {
+		extensionActionHost.current = () => ({
+			prompt: (text: string, behavior: "steer" | "followUp", origin: "user" | "runtime") => controller.prompt(text, behavior, origin),
+			setThinkingLevel: async (level: string) => controller.setThinkingLevel(level as ModelThinkingLevel),
+			getAvailableModels: async (provider?: string) => (await controller.getAvailableModels(provider)).map((model) => ({ id: model.id, provider: model.provider })),
+			selectModel: async (model: unknown) => { await controller.selectModel(model as Parameters<typeof controller.selectModel>[0]); },
+		});
+	};
 	if (Object.values(harnessProfile.descriptor.extensions).some(Boolean)) {
 		extensions = await createProductionSessionExtensionComposition({
 			layout: options.layout,
@@ -268,6 +280,7 @@ export async function assembleSessionDomain(
 			attemptPort: () => attemptPort.get(),
 			baseToolNames: baseTools.map((tool) => tool.name),
 			skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
+			actorHost: extensionActionHost,
 		});
 	}
 	const securitySettings = createSecuritySettingsResourceDomain({
@@ -568,6 +581,8 @@ export async function assembleSessionDomain(
 			// policy 的动态基准（`controller.composedTools`），所以新工具不会被静默拒绝。
 			const hostTools = extensions?.extensionTools() ?? [];
 			if (hostTools.length > 0) controller.addTools([...hostTools]);
+			// 扩展动作的真实命令面：只暴露动作实际使用的四个方法。
+			bindActionHost(controller);
 		},
 		shutdown: async (reason) => {
 			compaction.cancel();

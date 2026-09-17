@@ -113,6 +113,8 @@ export interface SessionExtensionCompositionOptions {
 	readonly distribution?: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
 	/** `extension.host.inspect` 的后端;缺省时返回 disabled。 */
 	readonly hostInspect?: SessionHostInspect;
+	/** 扩展动作的真实命令面;缺省时动作返回 session_command_unavailable。 */
+	readonly actorHost?: SessionExtensionActionHostHolder;
 	/** P5/P1 可执行扩展 host;缺省(或 Profile 关闭)时扩展工具与事件桥不可用。 */
 	readonly hostExtensions?: SessionExtensionHostPort;
 }
@@ -178,6 +180,11 @@ export interface ProductionSessionExtensionCompositionOptions {
 		readonly osUserHome: string;
 		readonly projectBoundary: string;
 	}>;
+	/**
+	 * 扩展动作的真实命令面。controller 在 extension composition **之后**构建，
+	 * 因此这里传一个晚绑定持有者；未注入时动作返回 `session_command_unavailable`。
+	 */
+	readonly actorHost?: SessionExtensionActionHostHolder;
 }
 
 /**
@@ -273,6 +280,26 @@ export function createSessionExtensionHostPort(options: SessionExtensionHostPort
 		},
 		dispatchEvent: (input) => options.runtime.dispatch(input),
 	};
+}
+
+/**
+ * 扩展动作需要的**最小** controller 面。只列真正被动作使用的三个方法，避免把
+ * controller 整体类型拉进 extensions 组合层；由 `domain.ts` 在 controller 构建
+ * 之后注入，因此是晚绑定的（construct 期拿不到）。
+ *
+ * `getAvailableModels` 只用于把 `setModel` 的 (providerId, modelId) 解析成
+ * controller 认识的模型实例；找不到就返回失败，不做模糊匹配。
+ */
+export interface SessionExtensionActionHost {
+	readonly prompt: (text: string, behavior: "steer" | "followUp", origin: "user" | "runtime") => Promise<void>;
+	readonly setThinkingLevel: (level: string) => Promise<string>;
+	readonly getAvailableModels: (provider?: string) => Promise<readonly { readonly id: string; readonly provider: string }[]>;
+	readonly selectModel: (model: unknown) => Promise<void>;
+}
+
+/** 晚绑定持有者：domain.ts 在 controller 就绪后 `.current = () => controller`。 */
+export interface SessionExtensionActionHostHolder {
+	current?: () => SessionExtensionActionHost | undefined;
 }
 
 export class SessionExtensionStartupError extends Error {
@@ -1024,15 +1051,39 @@ function createSessionHostAssembly(input: {
 		});
 	};
 
-	// 动作：只有 intent 是投影（记审计）；其余在命令面接线前明确拒绝。
+	// 动作：intent 是投影（只记审计）；有真实命令面的动作走晚绑定的 controller；
+	// 没有对应能力的动作明确失败并说明原因，不做静默 no-op。
+	const host = (): SessionExtensionActionHost | undefined => input.options.actorHost?.current?.();
 	const actorPort: ExtensionActionActorPort = {
-		sendMessage: async () => unavailable("send-message"),
-		appendEntry: async () => unavailable("append-entry"),
-		setActiveTools: async () => unavailable("set-active-tools"),
-		setModel: async () => unavailable("set-model"),
-		setThinkingLevel: async () => unavailable("set-thinking-level"),
-		setSessionName: async () => unavailable("set-session-name"),
-		exec: async () => unavailable("exec"),
+		sendMessage: async ({ text }) => {
+			const current = host();
+			if (current === undefined) return unavailable("send-message");
+			// origin 固定为 runtime：扩展不得冒充真实用户输入（D4/D9）。
+			await current.prompt(text, "followUp", "runtime");
+			return { ok: true, value: { queued: "follow-up", origin: "runtime" } };
+		},
+		appendEntry: async ({ entry }) => {
+			await audit("extension.action.append_entry", { keys: Object.keys(entry).slice(0, 16) });
+			return { ok: false, code: "session_command_unavailable", message: "append-entry has no session ledger surface yet" };
+		},
+		setActiveTools: async () => unavailable("set-active-tools", "the controller exposes no active-tool setter; use addTools through composition"),
+		setModel: async ({ providerId, modelId }) => {
+			const current = host();
+			if (current === undefined) return unavailable("set-model");
+			const models = await current.getAvailableModels(providerId);
+			const match = models.find((model) => model.id === modelId && model.provider === providerId);
+			if (match === undefined) return { ok: false, code: "model_unavailable", message: `no available model ${providerId}/${modelId}` };
+			await current.selectModel(match);
+			return { ok: true, value: { providerId, modelId } };
+		},
+		setThinkingLevel: async ({ level }) => {
+			const current = host();
+			if (current === undefined) return unavailable("set-thinking-level");
+			const applied = await current.setThinkingLevel(level);
+			return { ok: true, value: { level: applied } };
+		},
+		setSessionName: async () => unavailable("set-session-name", "session title mutation is not wired to the extension action surface yet"),
+		exec: async () => unavailable("exec", "extension exec must go through a governed managed process; that port is not wired yet"),
 		emitIntent: async ({ intent }) => {
 			await audit("extension.intent", { kind: intent.kind, level: intent.level, key: intent.key ?? null, textDigest: runtimeDigest(intent.text).digest });
 			return { ok: true, value: { projected: "audit-only" } };
@@ -1157,8 +1208,8 @@ function declaredSettings(manifest: unknown): Readonly<Record<string, ExtensionS
 	return entries.length === 0 ? undefined : settings as Readonly<Record<string, ExtensionSettingDescriptor>>;
 }
 
-function unavailable(action: string): { readonly ok: false; readonly code: string; readonly message: string } {
-	return { ok: false, code: "session_command_unavailable", message: `extension action ${action} is not wired to the session command surface yet` };
+function unavailable(action: string, reason?: string): { readonly ok: false; readonly code: string; readonly message: string } {
+	return { ok: false, code: "session_command_unavailable", message: reason ?? `extension action ${action} is not wired to the session command surface yet` };
 }
 
 function toolErrorResult(code: string, message: string): AgentToolResult<unknown> {
@@ -1195,6 +1246,7 @@ function createSessionDistribution(input: {
 	readonly trustStore: TrustStore;
 	readonly principalId: PrincipalId;
 	readonly layout: RunledgerLayout;
+	readonly actorHost?: SessionExtensionActionHostHolder;
 }): {
 	readonly ports: { readonly read: SessionDistributionReadPort; readonly mutate: SessionDistributionMutationPort };
 	/** 已安装声明式包的发现根；注册表不可读时返回空数组（不阻断会话启动）。 */
