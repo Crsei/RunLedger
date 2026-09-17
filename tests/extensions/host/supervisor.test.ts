@@ -116,7 +116,9 @@ describe("extension host event dispatch", () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		const outcome = await result.client.requestEvent({ name: "PreToolUse", cancelable: true, payload: { toolName: "bash" }, deadlineMs: 1_000 });
-		expect(outcome).toEqual({ ok: true, value: { allow: true } });
+		expect(outcome.ok).toBe(true);
+		if (!outcome.ok) return;
+		expect(outcome.value).toMatchObject({ handlers: [{ index: 0, outcome: "error", result: null }, { index: 1, outcome: "result", result: { allow: true } }] });
 		expect(diagnostics).toContain("extension.handler_failed");
 		await result.client.close("owner-request");
 	});
@@ -138,7 +140,9 @@ describe("extension host event dispatch", () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		const outcome = await result.client.requestEvent({ name: "PostToolUse", cancelable: false, payload: {}, deadlineMs: 1_000 });
-		expect(outcome).toEqual({ ok: true, value: null });
+		expect(outcome.ok).toBe(true);
+		if (!outcome.ok) return;
+		expect(outcome.value).toMatchObject({ handlers: [{ index: 0, outcome: "timeout", result: null }] });
 		expect(diagnostics).toContain("extension.handler_timeout");
 		expect(result.client.state().status).toBe("ready");
 		await result.client.close("owner-request");
@@ -148,7 +152,7 @@ describe("extension host event dispatch", () => {
 		const { result } = await connected(() => undefined);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		await expect(result.client.requestEvent({ name: "TurnStart", cancelable: false, payload: {}, deadlineMs: 200 })).resolves.toEqual({ ok: true, value: null });
+		await expect(result.client.requestEvent({ name: "TurnStart", cancelable: false, payload: {}, deadlineMs: 200 })).resolves.toEqual({ ok: true, value: { handlers: [] } });
 		await result.client.close("owner-request");
 	});
 });
@@ -179,7 +183,8 @@ describe("extension host owner actions", () => {
 		});
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
-		await expect(result.client.requestEvent({ name: "TurnStart", cancelable: false, payload: {}, deadlineMs: 1_000 })).resolves.toEqual({ ok: true, value: null });
+		const event = await result.client.requestEvent({ name: "TurnStart", cancelable: false, payload: {}, deadlineMs: 1_000 });
+		expect(event.ok).toBe(true);
 		expect(received).toEqual(["set-model"]);
 		expect(extensionOutcome).toEqual({ ok: false, code: "model_unavailable", message: "no credentials" });
 		await result.client.close("owner-request");

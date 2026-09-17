@@ -48,6 +48,21 @@ export interface RunExtensionHostOptions {
 
 const MAX_HANDLER_RESULT_BYTES = 64 * 1024;
 
+/**
+ * 唯一并行派发的事件：shutdown 使用短预算，并发的 handler 之间没有顺序
+ * 依赖（与 omp 的 `session_shutdown` 语义一致）。其余事件严格按注册顺序
+ * 串行，handler 结果按注册顺序累积。
+ */
+export const EXTENSION_PARALLEL_EVENT_NAMES = Object.freeze(["SessionEnd"] as const);
+
+/** 单个 handler 的运行记录；owner 侧据此做结果合成与审计。 */
+export interface ExtensionHandlerRunRecord {
+	readonly index: number;
+	readonly outcome: "result" | "timeout" | "error";
+	readonly durationMs: number;
+	readonly result: unknown;
+}
+
 function byteLength(value: unknown): number {
 	try {
 		return Buffer.byteLength(JSON.stringify(value) ?? "null", "utf8");
@@ -179,73 +194,84 @@ export async function runExtensionHost(options: RunExtensionHostOptions): Promis
 		limits,
 	});
 
-	const handleEventFrame = async (frame: Extract<ExtensionHostFrame, { kind: "event" }>): Promise<void> => {
-		const handlers = runtime.handlersFor(frame.name);
-		if (handlers.length === 0) {
-			send({
-				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-				generation: options.bootstrap.generation,
-				frameId: nextFrameId("frame"),
-				kind: "result",
-				requestId: frame.requestId,
-				ok: true,
-				value: { result: null },
-			});
-			return;
-		}
-		const budgetMs = Math.max(1, Math.min(frame.deadlineMs, limits.handlerTimeoutMs));
-		const results: unknown[] = [];
-		for (const handler of handlers) {
-			const controller = new AbortController();
-			const delivery = { name: frame.name, cancelable: frame.cancelable, payload: frame.payload, signal: controller.signal };
-			let outcome: unknown;
-			try {
-				const raced = await withTimeout(Promise.resolve(handler(delivery)), budgetMs, () => controller.abort());
-				if (raced === "timeout") {
-					record(extensionDiagnostic({
-						code: "extension.handler_timeout",
-						severity: "warning",
-						message: `handler for ${frame.name} exceeded ${budgetMs}ms`,
-						source: "extension-host",
-					}));
-					continue;
-				}
-				outcome = raced;
-			} catch (error) {
-				// 单个 handler 抛错只产生 diagnostic，不影响同事件其它 handler，
-				// 也不让 host 退出（与扩展自身的裸异步错误不同）。
+	const runHandler = async (index: number, name: string, cancelable: boolean, payload: Readonly<Record<string, unknown>>, budgetMs: number): Promise<ExtensionHandlerRunRecord> => {
+		const handlers = runtime.handlersFor(name);
+		const handler = handlers[index];
+		if (handler === undefined) return { index, outcome: "error", durationMs: 0, result: null };
+		const startedAt = Date.now();
+		const controller = new AbortController();
+		const delivery = { name, cancelable, payload, signal: controller.signal };
+		try {
+			const raced = await withTimeout(Promise.resolve(handler(delivery)), budgetMs, () => controller.abort());
+			const durationMs = Date.now() - startedAt;
+			if (raced === "timeout") {
 				record(extensionDiagnostic({
-					code: "extension.handler_failed",
+					code: "extension.handler_timeout",
 					severity: "warning",
-					message: `handler for ${frame.name} failed: ${error instanceof Error ? error.message : "unknown"}`,
+					message: `handler for ${name} exceeded ${budgetMs}ms`,
 					source: "extension-host",
 				}));
-				continue;
+				return { index, outcome: "timeout", durationMs, result: null };
 			}
-			if (outcome !== undefined) results.push(outcome);
+			return { index, outcome: "result", durationMs, result: raced ?? null };
+		} catch (error) {
+			// 单个 handler 抛错只产生 diagnostic，不影响同事件其它 handler，
+			// 也不让 host 退出（与扩展自身的裸异步错误不同）。
+			record(extensionDiagnostic({
+				code: "extension.handler_failed",
+				severity: "warning",
+				message: `handler for ${name} failed: ${error instanceof Error ? error.message : "unknown"}`,
+				source: "extension-host",
+			}));
+			return { index, outcome: "error", durationMs: Date.now() - startedAt, result: null };
 		}
-		const value = results.length === 0 ? { result: null } : { result: results.length === 1 ? results[0] : results };
-		if (byteLength(value) > MAX_HANDLER_RESULT_BYTES) {
+	};
+
+	const handleEventFrame = async (frame: Extract<ExtensionHostFrame, { kind: "event" }>): Promise<void> => {
+		const respond = (value: Record<string, unknown> | undefined, error?: { readonly code: string; readonly message: string }): void => {
 			send({
 				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
 				generation: options.bootstrap.generation,
 				frameId: nextFrameId("frame"),
 				kind: "result",
 				requestId: frame.requestId,
-				ok: false,
-				error: { code: "handler_result_oversize", message: `handler result exceeds ${MAX_HANDLER_RESULT_BYTES} bytes` },
+				ok: error === undefined,
+				...(error === undefined ? { value: value ?? {} } : { error }),
 			});
+		};
+
+		// owner 侧已按投影裁剪；这里再校验一次字节上限，防止坏对端绕过投影层。
+		if (byteLength(frame.payload) > limits.maxEventPayloadBytes) {
+			respond(undefined, { code: "event_payload_oversize", message: `event payload exceeds ${limits.maxEventPayloadBytes} bytes` });
 			return;
 		}
-		send({
-			protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
-			generation: options.bootstrap.generation,
-			frameId: nextFrameId("frame"),
-			kind: "result",
-			requestId: frame.requestId,
-			ok: true,
-			value,
-		});
+
+		const handlers = runtime.handlersFor(frame.name);
+		if (handlers.length === 0) {
+			respond({ handlers: [] });
+			return;
+		}
+		const parallel = (EXTENSION_PARALLEL_EVENT_NAMES as readonly string[]).includes(frame.name);
+		const budgetMs = Math.max(1, Math.min(
+			frame.deadlineMs,
+			parallel ? limits.shutdownTimeoutMs : limits.handlerTimeoutMs,
+		));
+		const indexes = handlers.map((_handler, index) => index);
+		const runs = parallel
+			? await Promise.all(indexes.map((index) => runHandler(index, frame.name, frame.cancelable, frame.payload, budgetMs)))
+			: await (async (): Promise<ExtensionHandlerRunRecord[]> => {
+				const sequential: ExtensionHandlerRunRecord[] = [];
+				for (const index of indexes) {
+					sequential.push(await runHandler(index, frame.name, frame.cancelable, frame.payload, budgetMs));
+				}
+				return sequential;
+			})();
+		const value = { handlers: runs.map((run) => ({ index: run.index, outcome: run.outcome, durationMs: run.durationMs, result: run.result })) };
+		if (byteLength(value) > MAX_HANDLER_RESULT_BYTES) {
+			respond(undefined, { code: "handler_result_oversize", message: `handler result exceeds ${MAX_HANDLER_RESULT_BYTES} bytes` });
+			return;
+		}
+		respond(value);
 	};
 
 	const onLine = (line: string): void => {

@@ -1,6 +1,6 @@
 # Extensions 运行时与 Plugin 分发/Marketplace 完整复刻计划
 
-> 状态:**P2 部分完成(进行中)**。P0 已交付 §5.2 契约、§8 事件增量、Q1–Q4 裁定;P1 已交付 extension host 进程与协议骨架(含真实子进程崩溃隔离证据);P2 已交付工具准入与作者 API 子路径,composition root 接线与协议查询未完成(见 §15.2 阻塞记录);P3–P7 未开始。
+> 状态:**P3 完成,进入 P4**。P0 契约、P1 host 进程与协议骨架、P2 工具准入与作者子路径、P3 事件投影与桥均已交付;P2 的 composition root 接线仍随 P5 的安装产物一起落地;P4–P7 未开始。
 > 基线日期:2026-09-17;RunLedger 基线为当前工作树 `rollback/before-composer-shape`(`git status` 含并发未提交改动,HEAD `2b046ef`;实施前必须重新核对)。
 > 参考基线:oh-my-pi `3b3a6dc9bbd85102ce19d0b1c11bf6870915f6ec`(`packages/coding-agent` v18.1.17,本机 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/oh-my-pi`,工作树干净 0 dirty);下文 omp 行号以该工作树为准,仅为机制参考,不是 RunLedger 完成证据。
 > 适用范围:`src/extensions/**`、`src/runtime/{session-runtime,harness-profiles,protocol,contracts,tools,agent-loop}/**`、`src/security/**`、`src/storage/**`、`src/cli/**`、`src/tui/**`、`src/contracts/**` 与对应 `tests/**`。
@@ -9,7 +9,8 @@
 > 修订记录:2026-09-17 初版。依据三路只读侦察(omp Extensions runtime 接口面、omp Plugin/Marketplace 磁盘与 CLI 契约、RunLedger `src/extensions/**` 现状与缺口)撰写。
 > 修订记录:2026-09-17 P0 收口。Q1–Q4 按推荐项裁定;§5.2 契约落 `src/contracts/extensions/**`;§8 事件增量落 `src/runtime/protocol/events.ts`;`01` §13/M7 同步。
 > 修订记录:2026-09-17 P1 收口。Host 协议编解码、注册表校验、扩展侧 API、owner 侧 client/channel 与 supervisor 落地;真实 host 子进程的工厂失败与裸 timer 崩溃只让 generation failed。
-> 修订记录:2026-09-17 P2 部分收口。工具准入(保留名/跨扩展冲突/声明 capability/有界 schema)与 owner 侧 `setActiveTools` 语义落地;`runledger/extensions` 作者子路径发布。composition root 接线待 P3。
+> 修订记录:2026-09-17 P2 部分收口。工具准入(保留名/跨扩展冲突/声明 capability/有界 schema)与 owner 侧 `setActiveTools` 语义落地;`runledger/extensions` 作者子路径发布。
+> 修订记录:2026-09-17 P3 收口。事件投影裁剪层与事件桥落地;host 侧改为逐 handler 记录 + `SessionEnd` 并行短预算;abort 传播;真实子进程端到端验证 PreToolUse 重写强制重新授权。
 
 ## 0. 文档定位与执行规则
 
@@ -351,10 +352,13 @@ Session Owner(每 owned Session)
 - 已完成:`src/extensions/tools/admission.ts` —— 声明 capability 门禁、保留名拒绝、跨扩展冲突按加载顺序确定性拒绝(不自动改名、不静默遮蔽)、参数 JSON Schema 的有界结构白名单(禁 `$ref`/`$defs`/`pattern`)、provenance 与 approval class → `AgentTool` 投影、`resolveActiveToolSelection` 的 owner 决策语义;`runledger/extensions` 作者子路径(`src/extensions/api.ts` + `package.json#exports`)。证据:`tests/extensions/tools-admission.test.ts` 10 用例。
 - 未完成(转入 P3 同批接线):把准入结果注册进 Session 的 `ToolRegistry` 并把 `extension.host.inspect` 加入 operation manifest —— 二者都改 `src/runtime/session-runtime/extension-composition.ts`,属 §6.3 串行窗口,在本工作树存在并发未提交改动期间不与之并行改写。
 
-### P3 — 事件桥
+### P3 — 事件桥——**已完成**
 
 - RED:顺序/超时/abort 三个 handler 组合用例;`tool_call` block 与 input 重写后**必须重新授权**;载荷超限与未声明订阅被拒绝。
 - DoD:投影层覆盖 P3 定义的事件子集;`session_shutdown` 并行 + 短预算;handler 异常只产生 diagnostic。
+- 交付物:`src/extensions/events/projection.ts`(白名单裁剪、凭据键硬拒绝、超限拒绝不截断)、`src/extensions/events/bridge.ts`(结果合成与 fail-closed 校验);`src/extensions/host/runtime.ts` 增加逐 handler 运行记录与 `EXTENSION_PARALLEL_EVENT_NAMES`;`channel`/`client`/`supervisor` 的读等待粒度收敛到 50ms 并打通 abort 传播。
+- 合成结果字段与 `HookPipelineResult` 对齐(`blocked` / `updatedInput` / `requiresRevalidation` / `requiresAuthorization` / `additionalContext`),因此扩展 handler 只是 PreToolUse pipeline 的另一个 handler 来源。
+- 证据:`tests/extensions/events-bridge.test.ts` 18 用例;`tests/extensions/host/host-process.test.ts` 新增真实子进程用例(PreToolUse 重写端到端标记重新授权、`SessionEnd` 双 handler 并行);合计 53 文件 / 319 用例通过。
 
 ### P4 — 运行时动作
 
@@ -500,7 +504,7 @@ git diff --check
 | P0 契约冻结与裁定 | **done** | `src/contracts/extensions/**`(8 文件);`src/runtime/protocol/events.ts` 12 个新事件;`tests/runtime-contracts/extensions-contracts.test.ts`(23 用例);§12 Q1–Q4 裁定;`01` §13/M7 同步;`npm run check` 与 `npm test` 见 §15.2 |
 | P1 host 进程与协议骨架 | **done** | `src/extensions/host/**`(9 文件);`tests/extensions/host/**` 38 用例全部通过(含真实 Node 子进程的 factory 失败与裸 timer 崩溃隔离);`tsc -p tsconfig.json`/`tsconfig.tests.json` 通过 |
 | P2 注册面与工具准入 | **partial** | 工具准入 `src/extensions/tools/admission.ts`(10 用例通过)与 `runledger/extensions` 子路径已交付;composition root 接线与 `extension.host.inspect` 查询待 P3(串行窗口 + 当前工作树并发占用)|
-| P3 事件桥 | planned | — |
+| P3 事件桥 | **done** | `src/extensions/events/**`;319 用例通过(含真实子进程的 PreToolUse 重写重新授权与 `SessionEnd` 并行证据);`tsc -p tsconfig.json`/`tsconfig.tests.json`、`check:current-format`、`check:runtime-boundaries`、`check:package-boundaries` 通过 |
 | P4 运行时动作 | planned | — |
 | P5 分发:安装/scope/激活 | planned | — |
 | P6 CLI/TUI 与 Marketplace | planned | — |
@@ -511,5 +515,7 @@ git diff --check
 - 2026-09-17 初版:依据三路只读侦察建立基线、逐项对照表、D1–D15、P0–P7 与验收口径;未实现任何代码,未提交。
 - 2026-09-17 P0 收口:契约落 `src/contracts/extensions/**`;canonical event catalog 增量落 `src/runtime/protocol/events.ts`(并把 runtime `eventAction` 改为取最后一段,与类型层推断一致);新增 12 项事件投影白名单;marketplace/Claude 兼容磁盘契约成形。验证:`npx vitest run tests/runtime-contracts/extensions-contracts.test.ts` 23 passed;`npm run check:current-format`、`npm run check:runtime-boundaries`、`npx tsc --noEmit -p tsconfig.json` 通过。行为影响为零:未装配 supervisor、未改 operation manifest、未改 Profile 门控。commit `9ff63af`。
 - 2026-09-17 P2 部分收口:工具准入与作者子路径落地。准入是拒绝制且原子的:未在 `capabilities.tools` 声明、与 stdlib 保留名冲突、与另一扩展冲突、runtime name 非法、schema 非 object、schema 含 `$ref`/`$defs`/`pattern` 或超出字节/深度/节点上限的注册全部被拒并给出 bounded 诊断;`setActiveTools` 由 owner 解析,未知名字整条拒绝、绝不部分应用。验证:`npx vitest run tests/extensions/tools-admission.test.ts` 10 passed;`npm run check:package-boundaries` 通过;`node -e` 确认 `exports["./extensions"]` 指向 `dist/extensions/api.js`。
-- **本阶段验证阻塞(证据与影响)**:共享工作树 `rollback/before-composer-shape` 同时存在另一专项(P15 Web 可观测性)的未提交改动,该改动删除了 `src/contracts/web/` 但 `src/contracts/index.ts` 与 `src/web/**` 仍 import 它,导致 `tsc -p tsconfig.json` 报 12 条 `Cannot find module './web/index.ts'`、`tests/cli/**` 因 `ERR_MODULE_NOT_FOUND` 失败。`tsc` 过滤后无任何本计划文件报错;`tests/extensions/**` 与 `tests/runtime-contracts/**` 全部通过。另有既有缺陷(与本计划无关,单独记录、未顺带修):`tests/glob.test.ts`「`*.ts` 单段不递归」在 `2b046ef` 上即失败,glob 工具对单段模式仍返回 `src/x.ts`。本阶段的 `npm run check`/`npm test` 全量门禁因此在共享工作树恢复一致前无法作为通过证据。
+- 2026-09-17 P3 收口:事件投影与桥落地。投影层按 descriptor 白名单裁剪并记录被丢弃的**键名**(不记值),凭据形状键额外硬拒绝,载荷超限整条拒绝而不截断。桥的合成严格按 `resultKind`(`none`/`context`/`decision`/`replace`/`middleware`)校验 handler 返回值形状:非法形状使整次派发失败,绝不降级成 allow;`updatedInput` 仅 PreToolUse 合法且强制 `requiresAuthorization`;handler 抛错/超时只产生 diagnostic 且不改变决策。host 侧改为返回逐 handler 运行记录,`SessionEnd` 并行派发并使用 shutdown 短预算。验证:`npx vitest run tests/extensions/ tests/runtime-contracts/` 53 文件 319 用例通过;真实子进程用例证明 PreToolUse 重写端到端标记重新授权、`SessionEnd` 双 200ms handler 并行完成;`tsc`(src 与 tests)、`check:current-format`、`check:runtime-boundaries`、`check:package-boundaries` 通过。行为影响:仍无 composition root 接线,生产路径行为不变。
+- **P3 期间修复的本计划缺陷**:host 事件回执原先只回 `{result}` 且读循环等待粒度为 250ms,使事件往返附加最多 250ms 延迟;现改为逐 handler 记录 + 50ms 读粒度(控制通道是延迟敏感路径,与 Hook/MCP 的 500ms 轮询不同)。
+- **本阶段验证阻塞(证据与影响)**:共享工作树 `rollback/before-composer-shape` 同时存在另一专项(P15 Web 可观测性)的未提交改动,该改动删除了 `src/contracts/web/` 但 `src/contracts/index.ts` 与 `src/web/**` 仍 import 它,导致 `tests/cli/**` 因 `ERR_MODULE_NOT_FOUND` 失败(P15 随后自行收敛,`tsc -p tsconfig.json` 已恢复 0 错误)。全量 `npm run check` 目前在 `check:consumers` 的 `check-typecheck-coverage` 失败:8 条 `overlapping_package_consumer` 指向 P15 新增的 `packages/collab-web/**` 被 `tsconfig.json` 与 `tsconfig.contracts.json` 重复覆盖,与本计划无关。`tests/extensions/**` 与 `tests/runtime-contracts/**` 全部通过。另有既有缺陷(与本计划无关,单独记录、未顺带修):`tests/glob.test.ts`「`*.ts` 单段不递归」在 `2b046ef` 上即失败,glob 工具对单段模式仍返回 `src/x.ts`。本阶段的 `npm run check`/`npm test` 全量门禁因此在共享工作树恢复一致前无法作为通过证据。
 - 2026-09-17 P1 收口:host 协议 JSONL 编解码(半包/字节上限/深度/版本/generation/未知 kind 全部分开失败);注册表校验(重复名拒绝、白名单订阅、上限、identity digest 与 pid/generation/到达顺序无关);扩展侧 API 的注册期/运行期分离(`ExtensionRuntimeNotInitializedError`);owner 侧 client 的握手、事件请求/回执、动作帧应答与 fail-closed 协议违规处理;channel 只经既有 governed managed process port 创建进程;supervisor 的 generation 生命周期、idle 边界与 last-known-good 回退。验证:`npx vitest run tests/extensions/host/` 38 passed(其中 4 例走真实 Node 子进程:握手后回收、工厂抛错只 failed 该 generation、裸 `setInterval` 抛错后 owner/session 存活并可恢复、真实注册表投影);`tsc --noEmit -p tsconfig.json` 与 `-p tsconfig.tests.json` 通过;`npm run check:current-format`、`npm run check:runtime-boundaries` 通过。行为影响:新增模块尚未接入任何 composition root,生产路径行为不变。

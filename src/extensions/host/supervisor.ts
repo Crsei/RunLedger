@@ -185,7 +185,7 @@ export class ExtensionHostSupervisor {
 	}
 
 	/** 派发一个投影事件；host 不可用时返回 `host_unavailable`，不静默吞掉。 */
-	public async dispatchEvent(input: { readonly name: string; readonly cancelable: boolean; readonly payload: Readonly<Record<string, unknown>>; readonly deadlineMs?: number }): Promise<ExtensionEventOutcome> {
+	public async dispatchEvent(input: { readonly name: string; readonly cancelable: boolean; readonly payload: Readonly<Record<string, unknown>>; readonly deadlineMs?: number; readonly signal?: AbortSignal }): Promise<ExtensionEventOutcome> {
 		const client = this.client();
 		if (client === undefined) return { ok: false, code: "host_unavailable", message: "extension host is not in a ready generation" };
 		const limits = this.#options.limits ?? EXTENSION_DEFAULT_HOST_LIMITS;
@@ -194,6 +194,7 @@ export class ExtensionHostSupervisor {
 			cancelable: input.cancelable,
 			payload: input.payload,
 			deadlineMs: Math.max(1, Math.min(input.deadlineMs ?? limits.handlerTimeoutMs, limits.eventBudgetMs)),
+			...(input.signal === undefined ? {} : { signal: input.signal }),
 		});
 		if (!outcome.ok && client.state().status !== "ready") {
 			await this.#onClientFailure(outcome.code, outcome.message);

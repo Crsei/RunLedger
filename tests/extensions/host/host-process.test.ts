@@ -21,6 +21,7 @@ import type { ExecutionHandleRef, ManagedProcessSummary, ProcessState, ProcessTe
 import type { OutputCursor } from "../../../src/runtime/process/output.ts";
 import type { ControlPlaneMutationResult, ControlPlaneOutputResult, ControlPlaneWaitResult } from "../../../src/storage/process/control-plane.ts";
 import { ExtensionHostSupervisor } from "../../../src/extensions/host/supervisor.ts";
+import { ExtensionEventBridge } from "../../../src/extensions/events/bridge.ts";
 import type { ExtensionHostManagedProcessPort } from "../../../src/extensions/host/channel.ts";
 import { EXTENSION_DEFAULT_HOST_LIMITS } from "../../../src/contracts/extensions/registry.ts";
 import type { ExtensionHostBootstrap } from "../../../src/extensions/host/bootstrap.ts";
@@ -277,6 +278,58 @@ describe("extension host process boundary", () => {
 		await supervisor.stop("owner-request");
 	}, 30_000);
 
+	it("re-authorizes a real PreToolUse input rewrite end to end", async () => {
+		const port = new SpawnManagedProcess();
+		const supervisor = createSupervisor(port, []);
+		const status = await supervisor.start({
+			generation: 7,
+			packageId: "fixture-plugin@local",
+			digest: "e".repeat(64),
+			rootPath: fixtureRoot,
+			entrypoint: bootstrapFor("rewrite-extension.ts").entrypoint,
+		});
+		expect(status.status).toBe("ready");
+		const audits: string[] = [];
+		const bridge = new ExtensionEventBridge({
+			dispatch: (input) => supervisor.dispatchEvent(input),
+			audit: async (event) => { audits.push(event.eventType); },
+		});
+		const outcome = await bridge.dispatch({
+			name: "PreToolUse",
+			source: { sessionId: "session-1", turnId: "turn-1", toolCallId: "call-1", toolName: "fixture_echo", argsJson: "{\"command\":\"rm -rf /\"}" },
+			input: { command: "rm -rf /" },
+			subscribers: ["fixture-plugin@local"],
+		});
+		expect(outcome.ok).toBe(true);
+		if (!outcome.ok) return;
+		expect(outcome.result.finalInput).toEqual({ command: "ls" });
+		expect(outcome.result.requiresAuthorization).toBe(true);
+		expect(outcome.result.requiresRevalidation).toBe(true);
+		expect(outcome.result.decision).toBe("allow");
+		expect(audits).toEqual(["extension.event.dispatched"]);
+		await supervisor.stop("owner-request");
+	}, 30_000);
+
+	it("dispatches SessionEnd handlers in parallel under the short shutdown budget", async () => {
+		const port = new SpawnManagedProcess();
+		const supervisor = createSupervisor(port, []);
+		const status = await supervisor.start({
+			generation: 8,
+			packageId: "fixture-plugin@local",
+			digest: "e".repeat(64),
+			rootPath: fixtureRoot,
+			entrypoint: bootstrapFor("parallel-shutdown-extension.ts").entrypoint,
+		});
+		expect(status.status).toBe("ready");
+		const startedAt = Date.now();
+		const outcome = await supervisor.dispatchEvent({ name: "SessionEnd", cancelable: false, payload: { sessionId: "session-1", reason: "owner" }, deadlineMs: 2_000 });
+		const elapsedMs = Date.now() - startedAt;
+		expect(outcome.ok).toBe(true);
+		// 两个各 200ms 的 handler：串行约 400ms，并行约 200ms。
+		expect(elapsedMs).toBeLessThan(380);
+		await supervisor.stop("owner-request");
+	}, 30_000);
+
 	it("projects the real host registry back to the owner", async () => {
 		const port = new SpawnManagedProcess();
 		const supervisor = createSupervisor(port, []);
@@ -298,7 +351,8 @@ describe("extension host process boundary", () => {
 		expect(state.registry.flags.map((flag) => flag.name)).toEqual(["fixture-flag"]);
 		expect(state.registry.subscriptions).toEqual([{ name: "PreToolUse" }]);
 		const outcome = await supervisor.dispatchEvent({ name: "PreToolUse", cancelable: true, payload: { toolName: "fixture_echo" }, deadlineMs: 1_000 });
-		expect(outcome).toEqual({ ok: true, value: { allow: true } });
+		expect(outcome.ok).toBe(true);
+		if (outcome.ok) expect(outcome.value).toMatchObject({ handlers: [{ index: 0, outcome: "result", result: { allow: true } }] });
 		await supervisor.stop("owner-request");
 	}, 30_000);
 });

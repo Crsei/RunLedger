@@ -39,7 +39,7 @@ export type ExtensionEventOutcome =
 
 export interface ExtensionHostClient {
 	state(): ExtensionHostClientState;
-	requestEvent(input: { readonly name: string; readonly cancelable: boolean; readonly payload: Readonly<Record<string, unknown>>; readonly deadlineMs: number }): Promise<ExtensionEventOutcome>;
+	requestEvent(input: { readonly name: string; readonly cancelable: boolean; readonly payload: Readonly<Record<string, unknown>>; readonly deadlineMs: number; readonly signal?: AbortSignal }): Promise<ExtensionEventOutcome>;
 	close(reason: ExtensionHostShutdownReason): Promise<void>;
 }
 
@@ -53,7 +53,13 @@ export interface ExtensionHostClientOptions {
 }
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
-const READ_TIMEOUT_MS = 250;
+/**
+ * 读循环的等待粒度。受管进程的 `processWait` 只在 terminal 或超时时返回，
+ * 不会因新输出提前唤醒，因此这个值直接决定事件往返的附加延迟。扩展 host
+ * 是延迟敏感的短控制通道（PreToolUse 在工具执行的关键路径上），取值远小于
+ * Hook/MCP 的 500ms 轮询。
+ */
+const READ_TIMEOUT_MS = 50;
 
 interface PendingEvent {
 	readonly resolve: (outcome: ExtensionEventOutcome) => void;
@@ -196,7 +202,7 @@ export async function connectExtensionHost(options: ExtensionHostClientOptions):
 				pending.delete(frame.requestId);
 				clearTimeout(entry.timer);
 				entry.resolve(frame.ok
-					? { ok: true, value: frame.value?.result ?? null }
+					? { ok: true, value: frame.value ?? null }
 					: { ok: false, code: frame.error?.code ?? "host_result_failed", message: frame.error?.message ?? "host rejected the event" });
 				return;
 			}
@@ -278,14 +284,28 @@ export async function connectExtensionHost(options: ExtensionHostClientOptions):
 			if (closed) return { ok: false, code: "host_closed", message: "extension host channel is closed" };
 			eventSequence += 1;
 			const requestId = `event-${eventSequence}`;
+			const settleEvent = (value: ExtensionEventOutcome): void => {
+				const entry = pending.get(requestId);
+				if (entry === undefined) return;
+				pending.delete(requestId);
+				clearTimeout(entry.timer);
+				entry.resolve(value);
+			};
 			const outcome = new Promise<ExtensionEventOutcome>((resolve) => {
 				const timer = setTimeout(() => {
-					pending.delete(requestId);
 					resolve({ ok: false, code: "host_event_timeout", message: `host did not answer ${input.name} within ${input.deadlineMs}ms` });
 				}, input.deadlineMs);
 				timer.unref();
 				pending.set(requestId, { resolve, timer });
 			});
+			if (input.signal !== undefined) {
+				// abort 只停止 owner 侧的等待：host 内已开始的 handler 仍会跑到自己的
+				// 预算为止，owner 不得据此假定对端已经停下。
+				if (input.signal.aborted) return { ok: false, code: "host_event_aborted", message: "event was aborted before dispatch" };
+				input.signal.addEventListener("abort", () => {
+					settleEvent({ ok: false, code: "host_event_aborted", message: "event was aborted" });
+				}, { once: true });
+			}
 			const delivered = await send({
 				protocolVersion: EXTENSION_HOST_PROTOCOL_VERSION,
 				generation: options.bootstrap.generation,
