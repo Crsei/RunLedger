@@ -79,6 +79,7 @@
 | Plugin / Tree-sitter Bash AST | [`plugin/01-tree-sitter-bash-ast-port-plan.md`](plugin/01-tree-sitter-bash-ast-port-plan.md) | Tree-sitter Bash AST 安全分类移植：WASM worker、allowlist walker、语义规则、fail-closed 授权与 rollout | B0–B4 `implemented`；B5 `planned`，Node/Bun、pack、PTY、审计与 human gate 仍按计划闭合 |
 | 版本升级与发布设施 | [`release/README.md`](release/README.md)、[`release/01 实施计划`](release/01-release-and-upgrade-infrastructure-plan.md) | 版本真相与发布单元、清洁构建与打包边界、发布产物与完整性、安装形态识别、`runledger update` 委托升级、启动升级提示 | `planned`；现状实测基线与阻塞项见 [`release/00`](release/00-release-baseline.md)，阶段状态以 `release/01` §8 为唯一来源 |
 | Web 检索与站点抓取（omp `web/` 移植） | [`plan/18 omp web 能力移植计划`](plan/18-omp-web-capability-port-plan.md) | 从 oh-my-pi `packages/coding-agent/src/web` 移植检索管线、19 个 provider、站点 handler、共享 API client 与 vendored DOM/turndown 到 `src/websource/`；新增 transport / 凭据 / settings 三条注入式 port 与 `NetworkRequest.principal` | `implemented`；落地结果、验证证据与未闭合缺口（Tier C、外部真实检索、PDF 全文、浏览器兜底）见该文 §11 |
+| 上游模块对照（parity） | [`parity/README.md`](parity/README.md)、[`00 omp coding-agent 模块对照与缺口报告`](parity/00-oh-my-pi-coding-agent-module-gap-report.md)、[`01 omp monorepo 包与 crate 对照报告`](parity/01-oh-my-pi-monorepo-package-and-crate-gap-report.md)、[`02 omp 工具注册与呈现机制`](parity/02-oh-my-pi-tool-registration-and-presentation.md) | 以 oh-my-pi 指定快照为口径：00 覆盖 `packages/coding-agent/src` 的模块缺口，01 覆盖其余 15 个包、`crates/*` 与非 TS 树并区分「换实现 / 真缺失」，02 说明上游工具如何注册、发现与呈现（capability registry → `createTools` → `loadMode`/`xd://`） | 静态源码对照与机制说明；不代表运行时验收，也不改变任何领域 authority |
 
 ## 2026-08-04 当前实现批次
 
@@ -189,6 +190,11 @@ development-doc/
 │   ├── README.md
 │   ├── 00-release-baseline.md
 │   └── 01-release-and-upgrade-infrastructure-plan.md
+├── parity/
+│   ├── README.md
+│   ├── 00-oh-my-pi-coding-agent-module-gap-report.md
+│   ├── 01-oh-my-pi-monorepo-package-and-crate-gap-report.md
+│   └── 02-oh-my-pi-tool-registration-and-presentation.md
 └── tui/
     ├── 00-overview.md
     ├── 01-architecture.md
