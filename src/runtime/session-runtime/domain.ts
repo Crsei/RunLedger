@@ -38,6 +38,7 @@ import { gatedExecutionEnv, type LateBoundAttemptPort } from "./attempt-gateway.
 import { replaySession } from "../../storage/session-codec.ts";
 import type { ExecutionEnv } from "../execution-env.ts";
 import { createStdlibTools, type StdlibToolsOptions } from "../tools/index.ts";
+import type { ManageSkillPort } from "../tools/manage-skill.ts";
 import { readTodoPhases, renderTodoPhases } from "../tools/todo.ts";
 import { InteractiveSessionController, type InteractiveSessionControllerOptions, type ModelRequestRouter, type RuntimeSelectionOverrides, type SessionTitleChangedEvent } from "../interactive-session-controller.ts";
 import type { AgentTool } from "../types.ts";
@@ -101,6 +102,9 @@ import {
 } from "../harness-profiles/index.ts";
 import { SessionModelCalls, observeSessionModels } from "./model-call-observer.ts";
 import type { HarnessCompositionReceipt } from "../harness-profiles/index.ts";
+import { NodeExtensionStorage } from "../../storage/extensions/extension-storage.ts";
+import { ManagedSkillStore } from "../../extensions/skills/managed-store.ts";
+import { runtimeDigest } from "../protocol/foundation.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -255,15 +259,60 @@ export async function assembleSessionDomain(
 			linterFactories: createGovernedLinterFactories(process.toolClient(), executionEnv.fs),
 		}
 		: undefined;
+	// `manage_skill` 仅属于 standard profile。它只写 canonical home 内的 user
+	// skill root，并由 attempt fence 包住；minimal/plan 在构造阶段就不注册它。
+	let extensions: SessionExtensionComposition | undefined;
+	const managedSkillStore = harnessProfile.descriptor.tools.mode !== "standard"
+		? undefined
+		: new ManagedSkillStore({
+			storage: new NodeExtensionStorage({ runledgerHome: options.layout.home }),
+			userSkillRoot: join(options.layout.state, "extensions", "user", "skills"),
+		});
+	const manageSkillPort: ManageSkillPort | undefined = managedSkillStore === undefined
+		? undefined
+		: {
+			mutate: async (input, signal) => {
+				if (signal?.aborted === true) return { ok: false, code: "unavailable", message: "manage_skill was cancelled before writing" };
+				const reload = extensions?.requestReload;
+				const attempt = attemptPort.get();
+				if (reload === undefined || attempt === undefined) return { ok: false, code: "unavailable", message: "managed skill runtime is unavailable" };
+				const begun = attempt.beginAttempt("external_mutation", runtimeDigest({
+					operation: "manage_skill",
+					action: input.action,
+					name: input.name,
+					descriptionDigest: runtimeDigest(input.description ?? "").digest,
+					bodyDigest: runtimeDigest(input.body ?? "").digest,
+				}));
+				if ("error" in begun) return { ok: false, code: "unavailable", message: `manage_skill blocked: ${begun.error}` };
+				if (!("attemptId" in begun) || ("status" in begun && begun.status !== "started")) return { ok: false, code: "unavailable", message: "manage_skill attempt is unavailable" };
+				let wrote = false;
+				try {
+					const result = await managedSkillStore.mutate(input);
+					if (!result.ok) {
+						attempt.settleAttempt(begun.attemptId, "rejected", runtimeDigest({ operation: "manage_skill", code: result.code }));
+						return result;
+					}
+					wrote = true;
+					const refreshed = await reload();
+					const value = refreshed.status === "failed"
+						? { ...result, reload: "failed" as const, ...(refreshed.error === undefined ? {} : { reloadError: refreshed.error }) }
+						: { ...result, reload: refreshed.status };
+					const settled = attempt.settleAttempt(begun.attemptId, "committed", runtimeDigest({ operation: "manage_skill", action: input.action, name: input.name, reload: value.reload }));
+					return settled.ok ? value : { ok: false, code: "unavailable", message: `manage_skill attempt settlement failed: ${settled.code}` };
+				} catch (error) {
+					attempt.settleAttempt(begun.attemptId, wrote ? "uncertain" : "rejected", runtimeDigest({ operation: "manage_skill", error: error instanceof Error ? error.message : String(error) }));
+					return { ok: false, code: "storage", message: "managed skill could not be written" };
+				}
+			},
+		};
 	const baseTools = [
 		...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions, {
 			credentials: createWebSearchCredentials({ layout: options.layout }),
 			...(options.settings.webSearch === undefined ? {} : { settings: toWebSearchSettings(options.settings.webSearch) }),
-		}, options.askPort),
+		}, options.askPort, manageSkillPort),
 		...planTools.tools,
 		...(goalSettings.enabled ? goalTools.tools : []),
 	];
-	let extensions: SessionExtensionComposition | undefined;
 	// controller 在 extension composition 之后构建，因此扩展动作用晚绑定持有者：
 	// 构建完 controller 再填 `.current`，未填时动作明确返回 session_command_unavailable。
 	const extensionActionHost: SessionExtensionActionHostHolder = {};
@@ -737,6 +786,7 @@ export function productionSessionTools(
 	lspOptions?: LspToolOptions,
 	webSearch?: StdlibToolsOptions["webSearch"],
 	askPort?: StdlibToolsOptions["askPort"],
+	manageSkill?: StdlibToolsOptions["manageSkill"],
 ): AgentTool[] {
 	const excluded = new Set(["NotebookEdit", "echo"]);
 	excluded.add("Skill");
@@ -747,6 +797,7 @@ export function productionSessionTools(
 		...(permissionRequester === undefined ? {} : { permissionRequester }),
 		...(webSearch === undefined ? {} : { webSearch }),
 		...(askPort === undefined ? {} : { askPort }),
+		...(manageSkill === undefined ? {} : { manageSkill }),
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));

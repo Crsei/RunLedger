@@ -4,6 +4,8 @@
 > 上游快照：`oh-my-pi` `1c0303b1f2ec515cbf4b44a9a49d68a029531aac`（2026-09-17），`packages/coding-agent` 版本 `18.2.4`。
 > 目标快照：RunLedger 工作树，分支 `rollback/before-composer-shape`，HEAD `0b2c501b194e0a65d80741dfe650814ea9de42dc`（含未提交改动）。
 > 本文是**对照事实记录**，不是实施计划，也不改变任何模块的 authority。阶段状态仍查各专题入口。
+>
+> **快照推进（2026-09-18 补记）**：本文全部结论固定在目标快照 `0b2c501b`。此后工作树已前进，其中 `30fd103`（`feat(websource): port oh-my-pi web module with web_search tool`）落地 `src/websource/`（131 文件），**关闭 §3 #6（`web/`）与 §3 #7（`exa/`）**；`a8e9951` 落地 web 看板，`69ac184` 落地 goal 首轮与持久暂停。§3 的编号保持稳定（外部文档按编号引用），关闭项在行内标注而不删除。复核当前状态请按 §7 命令重新生成事实，**不要在本文结论上增量推测**。
 
 本报告回答一个问题：**以 oh-my-pi 的 `packages/coding-agent/src` 为口径，RunLedger 缺哪些模块。**
 
@@ -34,7 +36,7 @@
 | `.md` 资源（提示词/规则） | 244 | 0 |
 | 同名同路径文件 | — | 16 |
 
-判定分布：`full` 6 项、`partial` 39 项、`absent` 33 项（详见 §3–§5）。
+判定分布（按目标快照 `0b2c501b`）：`full` 6 项、`partial` 39 项、`absent` 33 项（详见 §3–§5）。其中 §3 #6、#7 已在后续提交 `30fd103` 关闭，见文首快照推进说明。
 
 ## 3. 完全缺失（`absent`）
 
@@ -47,8 +49,8 @@
 | 3 | `live/` | 8 | `live/controller.ts`、`live/transport.ts`、`live/protocol.ts`、`live/voices.ts`、`live/visualizer.ts`、`live/attestation.ts`、`live/prompts/live-instructions.md`、`live/prompts/agent-final-message.md` | 实时语音会话：双向传输、音色目录、音频可视化 | 无。`src/web/live-trajectory.ts` 是只读看板投影，同名不同物 |
 | 4 | `collab/` | 9 | `collab/host.ts`、`collab/guest.ts`、`collab/relay-client.ts`、`collab/registry.ts`、`collab/controller.ts`、`collab/crypto.ts`、`collab/protocol.ts`、`collab/replication-shrink.ts`、`collab/display-name.ts` | 多人共享会话：relay、host/guest 握手、room key、能力注册、guest 提示注入 | 无。`packages/collab-web/README.md` 明确记载只取浏览器 UI、不迁移 relay/room key/pi-wire 写模型；`src/runtime/session-server/` 是单机 owner-fenced 多客户端，不是多人协作 |
 | 5 | `irc/` | 1 | `irc/bus.ts` | 进程级 agent 邮箱：`IrcMessage`、投递回执（injected/woken/revived）、parked agent 复活、`replyTo` 关联 | 无。`src/runtime/agents/spawn-tool.ts` 是一次性 spawn→report，无邮箱/寻址/唤醒 |
-| 6 | `web/` | 116 | `web/search/index.ts`、`web/search/provider.ts`、`web/search/query.ts`、`web/search/render.ts`、`web/search/providers/*.ts`（27 家）、`web/scrapers/*.ts`（76 个站点）、`web/firecrawl.ts`、`web/kagi.ts`、`web/parallel.ts` | 统一 `web_search` 工具：多 provider 检索 + 结构化站点 scraper | 无 web 检索。`src/runtime/tools/web-fetch.ts` 只是受治裸 GET + 正则去标签 |
-| 7 | `exa/` | 3 | `exa/index.ts`、`exa/mcp-client.ts`、`exa/types.ts` | Exa MCP 客户端与动态工具包装、websets | 无。通用 MCP host 可挂用户自备 Exa server，但不含集成代码 |
+| 6 | `web/` | 116 | `web/search/index.ts`、`web/search/provider.ts`、`web/search/query.ts`、`web/search/render.ts`、`web/search/providers/*.ts`（27 家）、`web/scrapers/*.ts`（76 个站点）、`web/firecrawl.ts`、`web/kagi.ts`、`web/parallel.ts` | 统一 `web_search` 工具：多 provider 检索 + 结构化站点 scraper | 无 web 检索。`src/runtime/tools/web-fetch.ts` 只是受治裸 GET + 正则去标签。<br>🔵 **已关闭（2026-09-18，`30fd103`）**：`src/websource/`（131 文件）已移植检索管线 + 19 个 provider + 74 个 scraper handler + 共享 client + `internal/{dom,turndown}`，并注册 `web_search` 工具。缺口出处与落地事实见 [`plan/18`](../plan/18-omp-web-capability-port-plan.md)（其 §11.4 记录 Tier C 5 个 provider、真实外部检索、PDF 全文、浏览器兜底仍未闭合）。 |
+| 7 | `exa/` | 3 | `exa/index.ts`、`exa/mcp-client.ts`、`exa/types.ts` | Exa MCP 客户端与动态工具包装、websets | 无。通用 MCP host 可挂用户自备 Exa server，但不含集成代码。<br>🔵 **已关闭（2026-09-18，`30fd103`）**：`src/websource/exa/` 已移植，作为 `exa` provider 的 keyless 兜底；按 [`plan/18`](../plan/18-omp-web-capability-port-plan.md) §11.3 偏差 4，只保留检索路径消费的 `isSearchResponse`/`normalizeExaMcpPayload`，未移植「从 MCP schema 动态生成 CustomTool」部分。 |
 | 8 | `blob-broker/` | 26 | `blob-broker/service.ts`、`blob-broker/store.ts`、`blob-broker/broker.ts`、`blob-broker/daemon.ts`、`blob-broker/exposure.ts`、`blob-broker/destinations.ts`、`blob-broker/uploaders*.ts`（7）、`blob-broker/provider-files-*.ts`、`blob-broker/savings.ts`、`blob-broker/context-images.ts`、`blob-broker/publication.ts` | 图片/blob 托管：URL 铸造、出口隧道、上传目的地、provider 文件上传、内联→URL 兜底 | 无。`src/images.ts` 只做图片**生成** API 分发 |
 | 9 | `markit/` | 9 | `markit/registry.ts`、`markit/converters/pdf/index.ts`、`markit/converters/docx.ts`、`markit/converters/pptx.ts`、`markit/converters/xlsx.ts`、`markit/converters/epub.ts`、`markit/types.ts`、`markit/NOTICE` | PDF/DOCX/PPTX/XLSX/EPUB → Markdown 转换 | 无。`read` 无二进制文档抽取分支；`package.json` 无相关依赖 |
 | 10 | `commit/` | 65 | `commit/pipeline.ts`、`commit/execute.ts`、`commit/conventional/*`、`commit/agentic/*`（含 `commit/agentic/tools/*`、`commit/agentic/prompts/*`）、`commit/changelog/*`、`commit/git/diff.ts`、`commit/analysis/*`、`commit/prompts/*`、`commit/cli.ts` | 提交信息生成：conventional 归一/校验、map-reduce diff 摘要、agentic 流程、changelog | 无。CLI 帮助与 `src/tui/commands/registry.ts` 均无 `commit` |
@@ -134,8 +136,8 @@
 | 可立项，需 Session 域改动 | `checkpoint` / `rewind` | 可以复用现有 `forkSession({ throughSequence })` 的**新会话**语义，不能回退 append-only 的原会话。前置是 durable 的用户可见命名 checkpoint，以及 driver 接到 handoff 后发起 fork/切换；现有 `session_checkpoints` 仅是可删除的 replay cache。 |
 | 可立项，独立文档转换专题 | DOCX/PPTX/XLSX/EPUB 的 `read` 分支 | 上游 markit 的这四类转换器是纯 TS，可在受治理 `read` 字节输入后接入；须另定输入/输出上限、二进制/附件呈现与许可证清单。PDF 依赖 native `pdf-inspector`，不随此项引入。 |
 | 可立项，需外部副作用合同 | `image_gen` | `src/images.ts` 已有 provider 图片生成分发 seam；要暴露模型工具仍需通过 ExecutionGateway/Attempt、artifact/trace 引用、输出呈现和 provider 失败语义，不能把 provider 调用直接放进工具实现。 |
-| 可立项，限只读子集 | GitHub 查询/上下文工具 | `src/websource/scrapers/github.ts` 已能在受治理网络下抓取 GitHub URL；可抽取只读查询，但上游 `gh-*` 含 PR checkout、watch 等操作，必须另定 token scope、权限/审计与 mutation 边界，不能把 scraper 当作 `gh` 全量对等物。 |
-| 可立项，需扩展治理设计 | 手动 `manage_skill` | RunLedger 已有 skill discovery/trust/registry 和 extension action seam；直接创建/修改 skill 必须走显式写入授权、来源/digest 与审计。上游的 `learn`/自动托管 skills 还依赖 memory backend，不能与此混为一项。 |
+| 已实现，限只读子集（本批次） | GitHub 查询/上下文工具 | `src/websource/github-read.ts` 和 `src/runtime/tools/github.ts` 已通过 `createWebSearchFetch({ principal: "github" })` 接入 `repo_view`、`file_read` 与五类 search；endpoint 固定、token 仅经 credential port、结果有界。PR 创建/checkout/push、任意 URL 与 `run_watch` 仍明确不做。实现与验收门槛见 [Plan 20 §6](../plan/20-omp-implementable-tools-port-plan.md#6-阶段-ivgithub-只读查询)。 |
+| 已实现，受扩展治理（本批次） | 手动 `manage_skill` | `src/extensions/skills/managed-store.ts` 只写 canonical user root，带 provenance marker、atomic write/only-managed delete；standard Session 通过 attempt fence 注册，active turn 只标记 pending reload，且不自动 trust。`learn`/自动托管 skills 仍依赖 Memory backend，不随此项实现。实现与验收门槛见 [Plan 20 §7](../plan/20-omp-implementable-tools-port-plan.md#7-阶段-vcanonical-user-manage_skill)。 |
 
 下列项目前**不应作为低成本工具移植**：
 
@@ -208,7 +210,7 @@ grep -rl -iE 'AgentRegistry|MAIN_AGENT_ID' $RL
 | 已完成 / 已裁定不做 | ~~`tools/` 中低成本项：`ast-grep`/`ast-edit`、`read-pdf`/`read-archive`/`sqlite-reader`、`ask`、`checkpoint`~~ | `read` 的 sqlite/archive 分支与 `ask` 已完成；前两项是 `read` helper 而非工具。`ast-*` 与 PDF 已有明确非目标裁定；`checkpoint`/`rewind` 转入 §4.1 的 Session 域候选，不能再按低成本项表述。 |
 | P1 | `checkpoint` / `rewind`（新会话 fork 语义） | 现有 fork 可承接，但需 durable 命名标记、driver handoff、Session Domain 与 TUI/CLI 的同一条协议；不改变 append-only 事件链。 |
 | P1 | `src/subprocess/*` + `src/async/job-manager.ts` | 是 `stats/`、`activity/`、`tts`/`stt`、`blob-broker` 的共同前置；不补则后续各项各自造轮子 |
-| P1 | `web/`（至少 search provider 层） | 已有受治网络策略与 `web-fetch` 骨架 |
+| P1 | ~~`web/`（至少 search provider 层）~~ **已完成**（`30fd103`，见 [plan/18](../plan/18-omp-web-capability-port-plan.md)） | 原有理由：已有受治网络策略与 `web-fetch` 骨架。剩余未闭合项见 plan/18 §11.4 |
 | P1 | `session/` 的 `turn-recovery` 重放与 `session-maintenance` length-stop | plan 14 已显式列为 out of scope，属已知欠账 |
 | P2 | `registry/` + `irc/` + `tools/hub` | 三者耦合；若要让 agent 可寻址/可续跑需一起做。当前 `runtime/agents` 只支持一次性 child |
 | P2 | `modes/acp/`、`dap/`、`eval/` | 独立能力面，依赖外部协议或运行时，可独立立项 |

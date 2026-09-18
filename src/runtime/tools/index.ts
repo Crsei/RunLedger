@@ -51,6 +51,8 @@ import { createWebSearchFetch } from "../../websource/transport.ts";
 import { createRequestPermissionsTool, type RequestPermissionsPort } from "../../security/tools/request-permissions.ts";
 import { createAskTool } from "./ask.ts";
 import type { AskPort } from "../session-runtime/ask-reverse-request.ts";
+import { createGithubTool } from "./github.ts";
+import { createManageSkillTool, type ManageSkillPort } from "./manage-skill.ts";
 
 export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
@@ -67,6 +69,8 @@ export interface StdlibToolsOptions {
 	 * 不会暴露一个必然失败的工具。
 	 */
 	readonly askPort?: AskPort;
+	/** Canonical user-skill 写入端口；仅 standard Session Owner 组合注入。 */
+	readonly manageSkill?: ManageSkillPort;
 	/** todo 工具的持久化 sink;未注入时 todo 只在进程内维护状态。 */
 	readonly ledger?: import("../ledger/types.ts").LedgerSink;
 	/**
@@ -122,12 +126,17 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
       credentials: options.webSearch.credentials,
       ...(options.webSearch.settings === undefined ? {} : { settings: options.webSearch.settings }),
     }));
+    register(createGithubTool({
+      fetch: createWebSearchFetch({ network: env?.network ?? unavailableNetwork(), principal: "github" }),
+      credentials: options.webSearch.credentials,
+    }));
   }
   register(createSkillTool(options.skillLoader === undefined ? {} : { loader: options.skillLoader }));
 	register(createTodoTool(options.ledger === undefined ? {} : { ledger: options.ledger }));
 	register(createNotebookEditTool());
 	if (options.permissionRequester !== undefined) register(createRequestPermissionsTool(options.permissionRequester));
 	if (options.askPort !== undefined) register(createAskTool(options.askPort));
+	if (options.manageSkill !== undefined) register(createManageSkillTool(options.manageSkill));
 	register(echoTool);
 	if (options.managedProcess) {
 		const processClient = options.managedProcess;
@@ -234,6 +243,8 @@ export function stdlibTools(cwd: string = process.cwd()): AgentTool[] {
 
 export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoTool };
 export { createWebSearchTool };
+export { createGithubTool, githubSchema } from "./github.ts";
+export type { GitHubToolInput, GithubToolOptions } from "./github.ts";
 export type { WebSearchCredentialPort, WebSearchSettings };
 export type { TodoToolOptions };
 export { createProcessOutputTool, createProcessWaitTool, createWriteStdinTool, createProcessStopTool, createProcessResizeTool };
@@ -241,4 +252,6 @@ export { createRequestPermissionsTool } from "../../security/tools/request-permi
 export { createAskTool, askSchema } from "./ask.ts";
 export type { AskToolDetails } from "./ask.ts";
 export type { AskAnswers, AskPort, AskQuestion } from "../session-runtime/ask-reverse-request.ts";
+export { createManageSkillTool, manageSkillSchema } from "./manage-skill.ts";
+export type { ManageSkillPort, ManageSkillToolInput } from "./manage-skill.ts";
 export { echoTool };

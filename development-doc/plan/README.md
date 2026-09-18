@@ -3,6 +3,7 @@
 本目录保存跨领域实施编排；公共合同、生产 authority 与验收状态仍归各专题。完整历史计划导航见 [开发索引](../00-index.md)。
 
 | 计划 | 范围与状态入口 |
+| [Plan 20：omp 可实现工具移植](20-omp-implementable-tools-port-plan.md) | `in progress`；在 Plan 19 已落地的 archive/sqlite/ask 基础上，依次实现命名 checkpoint/新会话 rewind、DOCX/PPTX/XLSX/EPUB `read`、受治理 `image_gen`、只读 `github` 和 canonical user `manage_skill`。明确排除 ast/PDF/browser/eval/Memory/yield-hub；每阶段的 authority、文件和验收门槛见本文。 |
 |---|---|
 | [Plan 19：omp 工具面扩展与呈现层](19-omp-tool-surface-expansion-plan.md) | in progress；按 parity/02 §8 的因果顺序「先补工具面、再按实测压力引入呈现层」。A1 = `read` 类型分派 + sqlite/archive 分支（零依赖，实施中）；A2 = `ask`；B1/B2/B3 = checkpoint-rewind / ast_grep-ast_edit / PDF，三项**待裁定**（B2 需先撤销 Plan 16 裁定 4）；C = 呈现层，等 A/B 落地后按实测设计。同时纠正 parity 00 的三处描述（read-pdf/sqlite-reader 不是工具；rewind 在同文件）。 |
 | [Plan 18：oh-my-pi Web 能力移植（`web_search` 与站点抓取）](18-omp-web-capability-port-plan.md) | `implemented`；`src/websource/`（19 provider + 74 站点 handler + 三条 port）与 `web_search` 接线已落地，check/test/build 与 built CLI/TTY 证据见 §11。Tier C 的 5 个 LLM 介导 provider、youtube 抓取、markit 转换与浏览器兜底按裁定不纳入；真实外部检索服务未验证（本机无出网）。 |

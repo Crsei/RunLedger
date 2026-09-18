@@ -22,4 +22,6 @@ export interface ExtensionStoragePort {
 	readDirectory(path: string): Promise<ExtensionStorageResult<readonly ExtensionStorageEntry[]>>;
 	readFile(path: string, maxBytes: number): Promise<ExtensionStorageResult<Uint8Array>>;
 	writeFileAtomic(path: string, bytes: Uint8Array, options: { readonly fileMode: 0o600; readonly directoryMode: 0o700 }): Promise<ExtensionStorageResult<void>>;
+	/** 可选删除面；只给 canonical-home 内、受管理的 extension 状态使用。 */
+	remove?(path: string, options: { readonly recursive: boolean }): Promise<ExtensionStorageResult<void>>;
 }

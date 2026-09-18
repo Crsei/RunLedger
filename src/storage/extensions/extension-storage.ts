@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type {
 	ExtensionStorageEntry,
@@ -91,6 +91,28 @@ export class NodeExtensionStorage implements ExtensionStoragePort {
 			return { ok: true, value: undefined };
 		} catch (error) {
 			return failure(error, "extension state could not be written");
+		}
+	}
+
+	public async remove(path: string, options: { readonly recursive: boolean }): Promise<ExtensionStorageResult<void>> {
+		const target = resolve(path);
+		if (!isContained(this.#runledgerHome, target)) return { ok: false, code: "denied", message: "extension state must remain under runledgerHome" };
+		try {
+			const parent = await realpath(dirname(target));
+			if (!isContained(this.#runledgerHome, parent)) return { ok: false, code: "denied", message: "extension state parent escapes runledgerHome" };
+			const entry = await lstat(target);
+			if (entry.isSymbolicLink()) return { ok: false, code: "denied", message: "extension state target may not be a symlink" };
+			if (entry.isDirectory() && !options.recursive) {
+				// `rm({ recursive:false })` 不删除目录；用 rmdir 保证竞争写入后
+				// ENOTEMPTY 失败，而不是递归删除晚到的非受管文件。
+				if ((await readdir(target)).length !== 0) return { ok: false, code: "io", message: "extension directory is not empty" };
+				await rmdir(target);
+			} else {
+				await rm(target, { recursive: options.recursive, force: false, maxRetries: 0 });
+			}
+			return { ok: true, value: undefined };
+		} catch (error) {
+			return failure(error, "extension state could not be removed");
 		}
 	}
 }

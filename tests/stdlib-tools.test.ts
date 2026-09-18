@@ -464,7 +464,7 @@ describe("stdlib tools (cross-platform)", () => {
       webSearch: { credentials: unavailableWebSearchCredentials() },
     });
     expect(withPorts.has("web_search")).toBe(true);
-    expect(withPorts.size).toBe(14);
+    expect(withPorts.size).toBe(15);
     // 出站工具的 capability claim 必须为 network,否则 Plan Mode 会按未知效果拒绝。
     expect(withPorts.get("web_search")?.capabilityClaims?.map((claim) => claim.name)).toEqual(["network"]);
   });

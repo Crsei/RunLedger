@@ -157,6 +157,8 @@ export interface SessionExtensionComposition {
 	readonly turnLifecycle?: ExtensionTurnLifecycle;
 	/** host 在 `start` 后才公布注册表；调用方在 start 之后用 `addTools` 追加。 */
 	extensionTools(): readonly AgentTool[];
+	/** 请求一次 snapshot reload；active turn 中只标记 pending，由 lifecycle 在 turn 边界执行。 */
+	requestReload(): Promise<ExtensionReloadResult>;
 	/** `extension.host.inspect` 的后端；未装配 host 时返回 disabled 而不是空对象。 */
 	hostInspect(): Promise<Record<string, unknown>>;
 	dispatchExtensionEvent(input: {
@@ -433,6 +435,7 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 	return {
 		tools,
 		extensionTools: () => hostTools,
+		requestReload: () => options.manager.reload(),
 		hostInspect: async () => {
 			const host = options.hostExtensions;
 			if (host === undefined) return { host: "disabled", reason: "no executable extension host is assembled for this session" };

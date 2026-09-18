@@ -145,6 +145,8 @@ read.ts execute()
 
 ### B1 `checkpoint` / `rewind` 的语义（已裁定：复用 fork 语义）
 
+具体实现文件、阶段顺序和验收迁移至 [Plan 20](20-omp-implementable-tools-port-plan.md) §3；本节保留语义裁定，避免与跨工具实现计划重复维护。
+
 **上游事实**：`checkpoint`/`rewind` 是 `sessionManager.branchWithSummary` —— **session 树分支**，不是 git 快照、也不是文件回滚。
 
 **RunLedger 事实**：事件是 append-only hash 链 + CAS，**同会话内无法回退**；唯一回退是 `forkSession({throughSequence})`（新 sessionId，边界须为「已完成无 toolCall 的 assistant 轮次」）。CLI `--fork --fork-at`、TUI `/fork --at=`、域操作 `session.fork` **已存在**。
@@ -172,7 +174,7 @@ read.ts execute()
 **上游事实**：`read` 的 PDF 分支是 **Chromium 截图**（RL 无 browser）；文本抽取的 `pdfToMarkdown` 是 **native**（`pdf-inspector` crate）。
 
 **待裁定**：(a) 引入 native PDF crate（新增 build/边界脚本负担，与 B2 同类）；(b) 只做「PDF 元信息 + 不可读提示」的降级分支；(c) 不做。
-markit 的 DOCX/PPTX/XLSX/EPUB 是**纯 TS**，可独立于 PDF 立项（属 parity 00 §3 #9 `markit/` 的独立专题，**不在本计划**）。
+markit 的 DOCX/PPTX/XLSX/EPUB 是**纯 TS**，可独立于 PDF 实现；对应的 `read` 分支实现文件、测试与门槛见 [Plan 20](20-omp-implementable-tools-port-plan.md) §4。PDF 仍不在该计划范围。
 
 ---
 
