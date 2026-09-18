@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	loadProjectSettings,
 	loadProjectSettingsSync,
+	mergeWebSearchSettings,
 	recordingConfigDigest,
 	resolveRecapSettings,
 	resolveRecordingConfig,
@@ -485,5 +486,107 @@ describe("marketplace autoUpdate setting", () => {
 		} finally {
 			rmSync(cwd, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("webSearch settings", () => {
+	it("preserves user-layer order/exclude/timeout/searxng through a save+load round-trip", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			// 回归：webSearch 曾被 sanitizer 整体丢弃，导致 domain.ts 的
+			// `options.settings.webSearch` 永远为 undefined，配置静默失效。
+			await saveProjectSettings({ layout }, {
+				webSearch: {
+					order: ["exa", "brave"],
+					exclude: ["searxng"],
+					timeoutSeconds: 12,
+					searxng: { endpoint: "https://searx.example/", language: "zh", safesearch: 1 },
+				},
+			});
+			expect((await loadProjectSettings({ layout })).webSearch).toEqual({
+				order: ["exa", "brave"],
+				exclude: ["searxng"],
+				timeoutSeconds: 12,
+				searxng: { endpoint: "https://searx.example/", language: "zh", safesearch: 1 },
+			});
+			expect(loadProjectSettingsSync({ layout }).webSearch?.timeoutSeconds).toBe(12);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("dedupes provider ids, keeps first-seen order and drops malformed sub-keys", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			writeFileSync(
+				layout.settings,
+				JSON.stringify({ webSearch: { order: ["exa", "exa", "", 7, "brave"], exclude: "searxng", timeoutSeconds: 0 } }),
+				"utf8",
+			);
+			// exclude 不是数组、timeoutSeconds 非正数 -> 子键丢弃；order 去重后保留。
+			expect((await loadProjectSettings({ layout })).webSearch).toEqual({ order: ["exa", "brave"] });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the key absent when nothing usable survives sanitizing", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			writeFileSync(layout.settings, JSON.stringify({ webSearch: { order: [], timeoutSeconds: -1, searxng: { endpoint: "" } } }), "utf8");
+			expect((await loadProjectSettings({ layout })).webSearch).toBeUndefined();
+			writeFileSync(layout.settings, JSON.stringify({ webSearch: "exa" }), "utf8");
+			expect((await loadProjectSettings({ layout })).webSearch).toBeUndefined();
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("lets the workspace layer narrow with exclude only and drops user-authority sub-keys", async () => {
+		const cwd = tmpCwd();
+		try {
+			const layout = canonicalFixture(cwd);
+			mkdirSync(layout.home, { recursive: true, mode: 0o700 });
+			await saveProjectSettings({ layout, workspaceKey: "ws-websearch" }, {
+				webSearch: {
+					order: ["exa"],
+					exclude: ["brave"],
+					timeoutSeconds: 30,
+					searxng: { endpoint: "https://searx.example/" },
+				},
+			});
+			expect((await loadProjectSettings({ layout, workspaceKey: "ws-websearch" })).webSearch).toEqual({ exclude: ["brave"] });
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("mergeWebSearchSettings", () => {
+	it("returns the user value untouched when the workspace has no exclude", () => {
+		const user = Object.freeze({ order: Object.freeze(["exa"]), timeoutSeconds: 5 });
+		expect(mergeWebSearchSettings(user, undefined)).toBe(user);
+		expect(mergeWebSearchSettings(user, Object.freeze({}))).toBe(user);
+		expect(mergeWebSearchSettings(user, Object.freeze({ exclude: Object.freeze([]) }))).toBe(user);
+	});
+
+	it("unions the workspace exclude without dropping user authority", () => {
+		expect(
+			mergeWebSearchSettings(
+				{ order: ["exa", "brave"], exclude: ["searxng"], timeoutSeconds: 8 },
+				{ exclude: ["brave", "duckduckgo"] },
+			),
+		).toEqual({ order: ["exa", "brave"], exclude: ["searxng", "brave", "duckduckgo"], timeoutSeconds: 8 });
+	});
+
+	it("produces an exclude-only value when only the workspace declares one", () => {
+		expect(mergeWebSearchSettings(undefined, { exclude: ["brave"] })).toEqual({ exclude: ["brave"] });
+		expect(mergeWebSearchSettings(undefined, undefined)).toBeUndefined();
 	});
 });

@@ -81,7 +81,7 @@ export interface ProjectSettings {
 	marketplace?: MarketplaceSettings;
 	/**
 	 * web 检索的 provider 顺序/排除、超时与 SearXNG 端点。user 层拥有 order 与
-	 * timeout 的 authority；workspace 层只能追加 exclude（收窄）。
+	 * timeout 的 authority；workspace 层只能追加 exclude（收窄），其余子键被丢弃。
 	 */
 	webSearch?: WebSearchSettings;
 }
@@ -586,7 +586,87 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 		const marketplace = sanitizeMarketplaceSettings(raw.marketplace);
 		if (marketplace !== undefined) out.marketplace = marketplace;
 	}
+	// web 检索：user 层全量；workspace 层只接受 exclude（收窄），其余子键丢弃。
+	const webSearch = sanitizeWebSearchSettings(raw.webSearch, allowRecording);
+	if (webSearch !== undefined) out.webSearch = webSearch;
 	return out;
+}
+
+/**
+ * 结构清洗 web 检索设置。
+ *
+ * `userAuthority=false`（workspace 层）时只保留 `exclude`：order / timeoutSeconds /
+ * searxng 属 user 层 authority，workspace 写入被丢弃而不是被静默合并。provider id
+ * 的已知性由 `storage/web-search-settings.ts` 在消费时过滤，这里只做结构清洗。
+ */
+function sanitizeWebSearchSettings(value: unknown, userAuthority: boolean): WebSearchSettings | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const exclude = sanitizeProviderIdList(raw.exclude);
+	if (!userAuthority) return exclude === undefined ? undefined : { exclude };
+	const out: {
+		order?: readonly string[];
+		exclude?: readonly string[];
+		timeoutSeconds?: number;
+		searxng?: NonNullable<WebSearchSettings["searxng"]>;
+	} = {};
+	const order = sanitizeProviderIdList(raw.order);
+	if (order !== undefined) out.order = order;
+	if (exclude !== undefined) out.exclude = exclude;
+	if (typeof raw.timeoutSeconds === "number" && Number.isFinite(raw.timeoutSeconds) && raw.timeoutSeconds > 0) {
+		out.timeoutSeconds = raw.timeoutSeconds;
+	}
+	const searxng = sanitizeSearxngSettings(raw.searxng);
+	if (searxng !== undefined) out.searxng = searxng;
+	return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** provider id 列表：只保留非空字符串，去重并保持首次出现顺序。 */
+function sanitizeProviderIdList(value: unknown): readonly string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const ids: string[] = [];
+	for (const item of value) {
+		if (typeof item !== "string" || item.length === 0 || ids.includes(item)) continue;
+		ids.push(item);
+	}
+	return ids.length > 0 ? Object.freeze(ids) : undefined;
+}
+
+const SEARXNG_STRING_KEYS = ["endpoint", "token", "basicUsername", "basicPassword", "language"] as const;
+
+function sanitizeSearxngSettings(value: unknown): NonNullable<WebSearchSettings["searxng"]> | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const out: Record<string, unknown> = {};
+	for (const key of SEARXNG_STRING_KEYS) {
+		if (typeof raw[key] === "string" && (raw[key] as string).length > 0) out[key] = raw[key];
+	}
+	for (const key of ["engines", "categories"] as const) {
+		const list = sanitizeProviderIdList(raw[key]);
+		if (list !== undefined) out[key] = list;
+	}
+	if (typeof raw.safesearch === "number" && Number.isSafeInteger(raw.safesearch) && raw.safesearch >= 0) {
+		out.safesearch = raw.safesearch;
+	}
+	return Object.keys(out).length > 0 ? Object.freeze(out) : undefined;
+}
+
+/**
+ * 把 workspace 层的 exclude 追加到 user 有效值上（只收窄，不放宽）。
+ *
+ * workspace 不能改写 order / timeoutSeconds / searxng，也不能移除 user 已排除的
+ * provider。两层都没有 exclude 时返回原对象，避免产生无意义的浅拷贝。
+ */
+export function mergeWebSearchSettings(
+	user: WebSearchSettings | undefined,
+	workspace: WebSearchSettings | undefined,
+): WebSearchSettings | undefined {
+	const extra = workspace?.exclude;
+	if (extra === undefined || extra.length === 0) return user;
+	if (user === undefined) return Object.freeze({ exclude: Object.freeze([...extra]) });
+	const merged: string[] = [...(user.exclude ?? [])];
+	for (const id of extra) if (!merged.includes(id)) merged.push(id);
+	return Object.freeze({ ...user, exclude: Object.freeze(merged) });
 }
 
 function sanitizeMarketplaceSettings(value: unknown): MarketplaceSettings | undefined {

@@ -27,7 +27,7 @@ import { registerConfiguredProxyProvidersFromHome } from "../providers/configure
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
-import { loadLayeredProjectSettings, loadProjectSettings } from "../storage/settings-manager.ts";
+import { loadLayeredProjectSettings, loadProjectSettings, mergeWebSearchSettings } from "../storage/settings-manager.ts";
 import { resolveRunledgerHome } from "../storage/runledger-home.ts";
 import { parseArgs, USAGE } from "./args.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
@@ -289,6 +289,13 @@ export async function main(argv: readonly string[]): Promise<void> {
 	assertSessionWorkspaceMatches(target, currentWorkspace);
 	const typedSessionId = targetSessionId as SessionId;
 	const workspaceStorageKey = workspaceStorageKeyFor(typedSessionId);
+	// workspace 层对 web 检索只能追加 exclude（收窄）；其余字段仍由 user 层决定，
+	// 因此这里只合成 webSearch，不把 workspace settings 整体合并进 Session。
+	const narrowedWebSearch = mergeWebSearchSettings(
+		settings.webSearch,
+		(await loadProjectSettings({ layout, workspaceKey: workspaceStorageKey })).webSearch,
+	);
+	const sessionSettings = narrowedWebSearch === undefined ? settings : { ...settings, webSearch: narrowedWebSearch };
     const embedded = await createEmbeddedSessionRuntime({
 	  sessionId: typedSessionId,
       store,
@@ -297,7 +304,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 	  domain: {
         cwd,
         layout,
-        settings,
+        settings: sessionSettings,
         models,
 		traceRecorderFactory,
 		modelRequestRouter: modelRequestRouters.forSession({ sessionId: typedSessionId, workspaceStorageKey }),
