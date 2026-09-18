@@ -117,6 +117,38 @@ export function probeOwner(
 	});
 }
 
+/** loopback endpoint 的可达性判定。只有 `refused` 能作为「无进程监听」的证据。 */
+export type OwnerEndpointLiveness = "listening" | "refused" | "unreachable";
+
+/**
+ * §5.3 的无认证端点探测:只判断 exact 127.0.0.1:port 上是否还有进程监听,
+ * 不发送 initialize 帧、不消费 token。用于离线迁移前的 owner 死亡证明。
+ *
+ * 判定刻意保守:只有内核明确拒绝(`ECONNREFUSED`)才代表 listener 已消失;
+ * timeout、其它 errno 与 close 都只说明「无法证明已死」,调用方必须继续 fail
+ * closed。反过来 `listening` 也不能证明 owner 健康——进程被 SIGSTOP 时内核
+ * 仍会完成握手,所以本探测只用于「排除存活」这一个方向。
+ */
+export function probeEndpointLiveness(endpoint: OwnerEndpoint, timeoutMs: number): Promise<OwnerEndpointLiveness> {
+	return new Promise<OwnerEndpointLiveness>((resolve) => {
+		const socket = net.createConnection({ host: endpoint.host, port: endpoint.port });
+		let settled = false;
+		const finish = (result: OwnerEndpointLiveness): void => {
+			if (settled) return;
+			settled = true;
+			socket.destroy();
+			resolve(result);
+		};
+		socket.setTimeout(timeoutMs);
+		socket.once("connect", () => finish("listening"));
+		socket.once("timeout", () => finish("unreachable"));
+		socket.once("error", (error: NodeJS.ErrnoException) => {
+			finish(error.code === "ECONNREFUSED" ? "refused" : "unreachable");
+		});
+		socket.once("close", () => finish("unreachable"));
+	});
+}
+
 /** 面向 SessionOwner 的默认 transport:bind + probe 都走 localhost TCP。 */
 export function createTcpOwnerTransport(onConnection?: (socket: net.Socket) => void): OwnerTransport {
 	let bound: BoundCandidateListener | undefined;

@@ -11,6 +11,9 @@
  *   EXCLUSIVE 重验后应用一个事务性 DDL migration;migrator crash 后 persisted
  *   migration_blocked 保持 fail closed,只能显式 resume/abort；只追加 nullable
  *   column 的兼容迁移可在短事务内与旧 owner 共存。
+ * - 崩溃的 owner 会永久停在 active state,让 offline gate 永远无法满足。gate 因此
+ *   接受调用方提供的 `DeadOwnerEvidence`(必须由 heartbeat 过期 + 端点拒绝连接
+ *   独立证明),并按 runtime_id + generation 精确排除;没有证据的 owner 照旧阻塞。
  */
 
 import { SESSION_STORE_SCHEMA_MAX, SESSION_STORE_SCHEMA_MIN } from "../../runtime/session-owner/types.ts";
@@ -34,6 +37,9 @@ import {
 } from "./schema.ts";
 
 export const ACTIVE_OWNER_STATES = ["starting", "recovery_required", "running", "stopping"] as const;
+
+/** ACTIVE_OWNER_STATES 是冻结字面量元组,插值不引入外部输入。 */
+const ACTIVE_OWNER_STATE_SQL = ACTIVE_OWNER_STATES.map((state) => `'${state}'`).join(", ");
 
 export interface SessionStoreHeader {
 	readonly storeVersion: number;
@@ -121,11 +127,64 @@ export function checkStoreCompatibility(db: SessionDatabase): StoreSchemaCompati
 	return { ok: true, header: result.header };
 }
 
-export function countActiveOwners(db: SessionDatabase): number {
-	const row = db.querySingle(
-		"SELECT COUNT(*) AS n FROM session_owners WHERE state IN ('starting', 'recovery_required', 'running', 'stopping')",
+/** 一个 active owner 的 exact identity,外加判定存活所需的端点与 heartbeat。 */
+export interface ActiveOwnerRow {
+	readonly sessionId: string;
+	readonly runtimeId: string;
+	readonly generation: number;
+	readonly endpoint?: { readonly host: "127.0.0.1"; readonly port: number };
+	readonly heartbeatAtMs?: number;
+}
+
+/**
+ * 已被证明死亡的 owner 的 exact identity。必须绑定 runtimeId + generation:
+ * 同一 Session 若被新 runtime 重新 claim,行 identity 会变,旧证据自然失效。
+ */
+export interface DeadOwnerEvidence {
+	readonly sessionId: string;
+	readonly runtimeId: string;
+	readonly generation: number;
+}
+
+/** 列出所有 active owner 的 identity 与存活判据(不含 authToken)。 */
+export function listActiveOwners(db: SessionDatabase): readonly ActiveOwnerRow[] {
+	return db
+		.queryAll(
+			`SELECT session_id, runtime_id, generation, port, heartbeat_at_ms
+			   FROM session_owners
+			  WHERE state IN (${ACTIVE_OWNER_STATE_SQL}) AND runtime_id IS NOT NULL`,
+		)
+		.map((row) => ({
+			sessionId: String(row.session_id),
+			runtimeId: String(row.runtime_id),
+			generation: Number(row.generation),
+			...(row.port === null ? {} : { endpoint: { host: "127.0.0.1" as const, port: Number(row.port) } }),
+			...(row.heartbeat_at_ms === null ? {} : { heartbeatAtMs: Number(row.heartbeat_at_ms) }),
+		}));
+}
+
+/**
+ * active owner 计数。`deadOwners` 只排除 identity 完全一致的行——迁移方必须先用
+ * 独立证据(heartbeat 过期 + 端点拒绝连接)证明这些 owner 已死;没有证据时缺省
+ * 计入,保持 fail closed。
+ */
+export function countActiveOwners(db: SessionDatabase, deadOwners: readonly DeadOwnerEvidence[] = []): number {
+	if (deadOwners.length === 0) {
+		const row = db.querySingle(`SELECT COUNT(*) AS n FROM session_owners WHERE state IN (${ACTIVE_OWNER_STATE_SQL})`);
+		return Number(row?.n ?? 0);
+	}
+	return listActiveOwners(db).filter((owner) => !matchesDeadOwner(owner, deadOwners)).length;
+}
+
+function matchesDeadOwner(owner: ActiveOwnerRow, deadOwners: readonly DeadOwnerEvidence[]): boolean {
+	return deadOwners.some(
+		(dead) => dead.sessionId === owner.sessionId && dead.runtimeId === owner.runtimeId && dead.generation === owner.generation,
 	);
-	return Number(row?.n ?? 0);
+}
+
+/** 离线迁移 gate 的可选输入。缺省不排除任何 owner,行为与旧实现一致。 */
+export interface OfflineMigrationGateOptions {
+	readonly deadOwners?: readonly DeadOwnerEvidence[];
 }
 
 export interface MigrationGateHandle {
@@ -145,8 +204,13 @@ export type BeginOfflineMigrationResult =
  * §4.2 offline admission gate:BEGIN IMMEDIATE → admission=migration_blocked →
  * 证明零 active owner → COMMIT gate。发现 active owner 时恢复 ready 并退出,
  * 不能 kill/takeover owner。
+ *
+ * `options.deadOwners` 只接受调用方已用独立证据证明死亡的 owner identity
+ * (见 `DeadOwnerEvidence`);gate 仍在本事务内重数 active owner,任何 identity
+ * 不匹配的新 owner 都会让 gate 失败,因此该参数不会削弱并发写保护。
  */
-export function beginOfflineMigration(db: SessionDatabase): BeginOfflineMigrationResult {
+export function beginOfflineMigration(db: SessionDatabase, options: OfflineMigrationGateOptions = {}): BeginOfflineMigrationResult {
+	const deadOwners = options.deadOwners ?? [];
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) {
 		return { ok: false, code: "store_schema_incompatible", detail: compatibility.detail };
@@ -158,7 +222,7 @@ export function beginOfflineMigration(db: SessionDatabase): BeginOfflineMigratio
 	let nextEpoch = epoch;
 	try {
 		db.withImmediateTransactionSync((tx) => {
-			const owners = countActiveOwners(tx);
+			const owners = countActiveOwners(tx, deadOwners);
 			if (owners > 0) {
 				throw new ActiveOwnersError(owners);
 			}
@@ -207,6 +271,9 @@ export type ApplyStructuralMigrationResult =
  * §4.2 应用一个事务性 structural migration:BEGIN EXCLUSIVE → 重验 gate 持有者
  * 与零 active owner → DDL + schema_meta/format digest + admission=ready → COMMIT。
  * 失败时 DDL 事务回滚并保持 admission=migration_blocked(fail closed)。
+ *
+ * 这里的重验必须与 `beginOfflineMigration` 使用同一份 `deadOwners` 证据,否则
+ * 已证明死亡的 owner 会在第二次计数时重新阻塞,gate 形同虚设。
  */
 export function applyStructuralMigration(
 	db: SessionDatabase,
@@ -215,8 +282,9 @@ export function applyStructuralMigration(
 		nextVersion: number;
 		nextSql: string;
 		nextFormatDigest: string;
-	},
+	} & OfflineMigrationGateOptions,
 ): ApplyStructuralMigrationResult {
+	const deadOwners = options.deadOwners ?? [];
 	const before = readStoreHeader(db);
 	if (!before.ok) return { ok: false, code: "migration_failed", detail: before.detail };
 	if (options.nextVersion <= before.header.storeVersion) {
@@ -230,7 +298,7 @@ export function applyStructuralMigration(
 	}
 	try {
 		db.withImmediateTransactionSync((tx) => {
-			const owners = countActiveOwners(tx);
+			const owners = countActiveOwners(tx, deadOwners);
 			if (owners > 0) {
 				throw new ActiveOwnersError(owners);
 			}
@@ -258,7 +326,7 @@ export function applyStructuralMigration(
 }
 
 /** Built-in legacy -> current migration used by the CLI before owner discovery. */
-export function migrateSessionStoreV1ToV2(db: SessionDatabase): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 2; readonly alreadyCurrent: true } {
+export function migrateSessionStoreV1ToV2(db: SessionDatabase, options: OfflineMigrationGateOptions = {}): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 2; readonly alreadyCurrent: true } {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
 	if (compatibility.header.storeVersion === 2) {
@@ -267,15 +335,15 @@ export function migrateSessionStoreV1ToV2(db: SessionDatabase): ApplyStructuralM
 	if (compatibility.header.storeVersion !== 1) {
 		return { ok: false, code: "migration_failed", detail: `unsupported migration source version ${compatibility.header.storeVersion}` };
 	}
-	const gateResult = beginOfflineMigration(db);
+	const gateResult = beginOfflineMigration(db, options);
 	if (!gateResult.ok) return { ok: false, code: "active_owners_present", detail: gateResult.detail };
 	const applied = applyStructuralMigration(db, {
 		gate: gateResult.gate,
+		deadOwners: options.deadOwners,
 		nextVersion: 2,
 		nextSql: SESSION_STORE_SCHEMA_V1_TO_V2_SQL,
 		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V2_SQL),
 	});
-	if (!applied.ok) return applied;
 	return applied;
 }
 
@@ -328,6 +396,7 @@ export function migrateSessionStoreV2ToV3(db: SessionDatabase): ApplyStructuralM
 /** Profile identity 会改变所有新 row 的必填语义，只允许零 active owner 的 offline migration。 */
 export function migrateSessionStoreV3ToV4(
 	db: SessionDatabase,
+	options: OfflineMigrationGateOptions = {},
 ): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 4; readonly alreadyCurrent: true } {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
@@ -337,7 +406,7 @@ export function migrateSessionStoreV3ToV4(
 	if (compatibility.header.storeVersion !== 3) {
 		return { ok: false, code: "migration_failed", detail: `unsupported migration source version ${compatibility.header.storeVersion}` };
 	}
-	const gateResult = beginOfflineMigration(db);
+	const gateResult = beginOfflineMigration(db, options);
 	if (!gateResult.ok) {
 		return {
 			ok: false,
@@ -347,6 +416,7 @@ export function migrateSessionStoreV3ToV4(
 	}
 	return applyStructuralMigration(db, {
 		gate: gateResult.gate,
+		deadOwners: options.deadOwners,
 		nextVersion: 4,
 		nextSql: SESSION_STORE_SCHEMA_V3_TO_V4_SQL,
 		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V4_SQL),
@@ -354,15 +424,16 @@ export function migrateSessionStoreV3ToV4(
 }
 
 /** 新 mode ref 不被旧 binary 支持，必须在零 active owner 时升级。 */
-export function migrateSessionStoreV4ToV5(db: SessionDatabase): ApplyStructuralMigrationResult {
+export function migrateSessionStoreV4ToV5(db: SessionDatabase, options: OfflineMigrationGateOptions = {}): ApplyStructuralMigrationResult {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
 	if (compatibility.header.storeVersion === 5) return { ok: true, storeVersion: 5 };
 	if (compatibility.header.storeVersion !== 4) return { ok: false, code: "migration_failed", detail: "expected schema 4" };
-	const gate = beginOfflineMigration(db);
+	const gate = beginOfflineMigration(db, options);
 	if (!gate.ok) return { ok: false, code: gate.code === "active_owners_present" ? "active_owners_present" : "migration_failed", detail: gate.detail };
 	return applyStructuralMigration(db, {
 		gate: gate.gate,
+		deadOwners: options.deadOwners,
 		nextVersion: 5,
 		nextSql: SESSION_STORE_SCHEMA_V4_TO_V5_SQL,
 		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V5_SQL),
@@ -370,15 +441,16 @@ export function migrateSessionStoreV4ToV5(db: SessionDatabase): ApplyStructuralM
 }
 
 /** 新 standard ref 只经显式离线迁移开放；旧 binary 必须拒绝新版库。 */
-export function migrateSessionStoreV5ToV6(db: SessionDatabase): ApplyStructuralMigrationResult {
+export function migrateSessionStoreV5ToV6(db: SessionDatabase, options: OfflineMigrationGateOptions = {}): ApplyStructuralMigrationResult {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
 	if (compatibility.header.storeVersion === 6) return { ok: true, storeVersion: 6 };
 	if (compatibility.header.storeVersion !== 5) return { ok: false, code: "migration_failed", detail: "expected schema 5" };
-	const gate = beginOfflineMigration(db);
+	const gate = beginOfflineMigration(db, options);
 	if (!gate.ok) return { ok: false, code: gate.code === "active_owners_present" ? "active_owners_present" : "migration_failed", detail: gate.detail };
 	return applyStructuralMigration(db, {
 		gate: gate.gate,
+		deadOwners: options.deadOwners,
 		nextVersion: 6,
 		nextSql: SESSION_STORE_SCHEMA_V5_TO_V6_SQL,
 		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V6_SQL),
@@ -386,15 +458,16 @@ export function migrateSessionStoreV5ToV6(db: SessionDatabase): ApplyStructuralM
 }
 
 /** 扩展 exact ref 白名单以开放 plan@2;旧 plan@1 Session 的 ref 保持原值。 */
-export function migrateSessionStoreV6ToV7(db: SessionDatabase): ApplyStructuralMigrationResult {
+export function migrateSessionStoreV6ToV7(db: SessionDatabase, options: OfflineMigrationGateOptions = {}): ApplyStructuralMigrationResult {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
 	if (compatibility.header.storeVersion === 7) return { ok: true, storeVersion: 7 };
 	if (compatibility.header.storeVersion !== 6) return { ok: false, code: "migration_failed", detail: "expected schema 6" };
-	const gate = beginOfflineMigration(db);
+	const gate = beginOfflineMigration(db, options);
 	if (!gate.ok) return { ok: false, code: gate.code === "active_owners_present" ? "active_owners_present" : "migration_failed", detail: gate.detail };
 	return applyStructuralMigration(db, {
 		gate: gate.gate,
+		deadOwners: options.deadOwners,
 		nextVersion: 7,
 		nextSql: SESSION_STORE_SCHEMA_V6_TO_V7_SQL,
 		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V7_SQL),
@@ -404,12 +477,13 @@ export function migrateSessionStoreV6ToV7(db: SessionDatabase): ApplyStructuralM
 /** 显式 schema 迁移入口调用；普通启动不自动改写既有库。 */
 export function migrateSessionStoreToCurrent(
 	db: SessionDatabase,
+	options: OfflineMigrationGateOptions = {},
 ): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 7; readonly alreadyCurrent: true } {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
 	if (compatibility.header.storeVersion === 7) return { ok: true, storeVersion: 7, alreadyCurrent: true };
 	if (compatibility.header.storeVersion === 1) {
-		const titleSchemaMigration = migrateSessionStoreV1ToV2(db);
+		const titleSchemaMigration = migrateSessionStoreV1ToV2(db, options);
 		if (!titleSchemaMigration.ok) return titleSchemaMigration;
 	}
 	const afterTitle = checkStoreCompatibility(db);
@@ -421,22 +495,22 @@ export function migrateSessionStoreToCurrent(
 	const afterWorkspace = checkStoreCompatibility(db);
 	if (!afterWorkspace.ok) return { ok: false, code: "migration_failed", detail: afterWorkspace.detail };
 	if (afterWorkspace.header.storeVersion === 3) {
-		const profileMigration = migrateSessionStoreV3ToV4(db);
+		const profileMigration = migrateSessionStoreV3ToV4(db, options);
 		if (!profileMigration.ok) return profileMigration;
 	}
 	const afterProfile = checkStoreCompatibility(db);
 	if (!afterProfile.ok) return { ok: false, code: "migration_failed", detail: afterProfile.detail };
 	if (afterProfile.header.storeVersion === 4) {
-		const modeMigration = migrateSessionStoreV4ToV5(db);
+		const modeMigration = migrateSessionStoreV4ToV5(db, options);
 		if (!modeMigration.ok) return modeMigration;
 	}
 	const afterMode = checkStoreCompatibility(db);
 	if (!afterMode.ok) return { ok: false, code: "migration_failed", detail: afterMode.detail };
 	if (afterMode.header.storeVersion === 5) {
-		const shellMigration = migrateSessionStoreV5ToV6(db);
+		const shellMigration = migrateSessionStoreV5ToV6(db, options);
 		if (!shellMigration.ok) return shellMigration;
 	}
-	return migrateSessionStoreV6ToV7(db);
+	return migrateSessionStoreV6ToV7(db, options);
 }
 
 /** 显式 abort:gate 持有者(epoch 匹配)恢复 ready。migrator crash 后唯一合法出口之一。 */
@@ -449,19 +523,20 @@ export function abortOfflineMigration(db: SessionDatabase, gate: MigrationGateHa
 }
 
 /** 崩溃后 resume:同版本 migration tool 显式重新持有 gate(epoch 递增)。 */
-export function resumeOfflineMigration(db: SessionDatabase): BeginOfflineMigrationResult {
+export function resumeOfflineMigration(db: SessionDatabase, options: OfflineMigrationGateOptions = {}): BeginOfflineMigrationResult {
+	const deadOwners = options.deadOwners ?? [];
 	const header = readStoreHeader(db);
 	if (!header.ok) {
 		return { ok: false, code: "store_schema_incompatible", detail: header.detail };
 	}
 	if (header.header.admission !== "migration_blocked") {
-		return beginOfflineMigration(db);
+		return beginOfflineMigration(db, options);
 	}
 	const epoch = header.header.migrationEpoch;
 	let nextEpoch = epoch;
 	try {
 		db.withImmediateTransactionSync((tx) => {
-			const owners = countActiveOwners(tx);
+			const owners = countActiveOwners(tx, deadOwners);
 			if (owners > 0) throw new ActiveOwnersError(owners);
 			nextEpoch = epoch + 1;
 			tx.runSync("UPDATE store_control SET admission = 'migration_blocked', migration_epoch = ?, updated_at_ms = ? WHERE singleton_id = 1", [
