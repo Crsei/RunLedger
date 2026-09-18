@@ -265,3 +265,13 @@ describe("parseArgs security / worktree flags", () => {
     expect(r.error).toBeUndefined();
   });
 });
+
+describe("headless prompt file", () => {
+  it("parses a fresh execution and rejects ambiguous lifecycle options", () => {
+    expect(parseArgs(["--prompt-file", "/tmp/task.txt"]).args.promptFile).toBe("/tmp/task.txt");
+    for (const args of [["--prompt-file"], ["--prompt-file", "a", "--continue"],
+      ["--prompt-file", "a", "dump"], ["--prompt-file", "a", "--prompt-file", "b"]]) {
+      expect(parseArgs(args).error).toBeDefined();
+    }
+  });
+});

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "8ca056ed-edcf-4b76-8a13-1dc6cb6bfbc4",
+  "messages": [
+    {
+      "schemaVersion": 1,
+      "id": "19a0cca9-872a-4eeb-92fc-43c1d2a648c8",
+      "projectId": "20a1afb2-3427-4b56-8137-192ff92d5f79",
+      "sessionId": "8ca056ed-edcf-4b76-8a13-1dc6cb6bfbc4",
+      "runId": "7ee7d956-98ef-4869-b181-7ff094e9fa35",
+      "providerMessageId": null,
+      "role": "user",
+      "parts": [
+        {
+          "type": "text",
+          "id": "3e6bb34d-103a-4426-bf40-8de38ddb6575",
+          "text": "hello，你是谁"
+        }
+      ],
+      "createdAt": "2026-09-14T16:18:22.163Z",
+      "revision": 1,
+      "status": "completed"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "786933bf01993d31a9efdd6ecf4a70b459631d1874b1099d6a319f467c61408d",
+      "projectId": "20a1afb2-3427-4b56-8137-192ff92d5f79",
+      "sessionId": "8ca056ed-edcf-4b76-8a13-1dc6cb6bfbc4",
+      "runId": "7ee7d956-98ef-4869-b181-7ff094e9fa35",
+      "providerMessageId": "assistant-1789402702367",
+      "role": "assistant",
+      "parts": [
+        {
+          "type": "text",
+          "id": "assistant-1789402702367:0",
+          "text": "我是 execra AI，这个 RunLedger 项目工作区的专用助手。可以帮你读代码、改代码、跑命令、查项目资料。\n\n需要我先看看项目现状，还是你有具体任务？"
+        }
+      ],
+      "createdAt": "2026-09-14T16:18:24.393Z",
+      "revision": 44,
+      "status": "completed"
+    }
+  ],
+  "runs": [
+    {
+      "schemaVersion": 1,
+      "id": "7ee7d956-98ef-4869-b181-7ff094e9fa35",
+      "projectId": "20a1afb2-3427-4b56-8137-192ff92d5f79",
+      "sessionId": "8ca056ed-edcf-4b76-8a13-1dc6cb6bfbc4",
+      "commandId": "928e1329-c5e0-41c9-9337-e4ea616b5fa3",
+      "providerTurnId": "prompt-7ee7d956-98ef-4869-b181-7ff094e9fa35",
+      "status": "completed",
+      "error": null,
+      "createdAt": "2026-09-14T16:18:22.163Z",
+      "updatedAt": "2026-09-14T16:18:28.240Z",
+      "revision": 3,
+      "usage": {
+        "inputTokens": 9744,
+        "outputTokens": 43,
+        "totalTokens": 9787,
+        "cost": 0.0021720600000000004
+      }
+    }
+  ],
+  "requests": [],
+  "draft": "",
+  "sequence": 63
+}

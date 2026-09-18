@@ -4,6 +4,8 @@
 > 上游快照：`oh-my-pi` `1c0303b1f2ec515cbf4b44a9a49d68a029531aac`，`packages/coding-agent` 版本 `18.2.4`。
 > 目标快照：RunLedger 工作树，分支 `rollback/before-composer-shape`，HEAD `0b2c501b194e0a65d80741dfe650814ea9de42dc`。
 > 本文是**机制说明事实记录**，不是实施计划，也不改变任何模块的 authority。
+>
+> **快照说明**：上游侧结论固定在 `1c0303b1`。RunLedger 侧的读取（§8）实际发生在 `30fd103`（websource 移植）之后，因此 §8 记录的 `createStdlibTools` 已包含 `web_search` 注册；`src/websource/` 与 `web/`、`exa/` 的缺口关闭见 [00](00-oh-my-pi-coding-agent-module-gap-report.md) 文首说明。
 
 本文回答一个问题：**oh-my-pi 有 100+ 个工具定义，它如何注册、发现、以及在不炸 context 的前提下呈现给模型。**
 
@@ -40,7 +42,7 @@ context files          ┘                       └─────────�
 | 层 | 位置 | 性质 | 生命周期 |
 |---|---|---|---|
 | **发现层** | `src/capability/` + `src/discovery/` | 声明式 inventory（「在哪能找到东西」） | 每次 `loadCapability` 重跑；仅缓存原始 FS 读取 |
-| **注册层** | `src/tools/index.ts` + `session.toolRegistry` | session 级实例化（「这个 session 能调什么」） | **每 session 一次**，`sdk.ts:2017` 唯一入口 |
+| **注册层** | `src/tools/index.ts` + `session.toolRegistry` | session 级实例化（「这个 session 能调什么」） | 初始内置装配每 session 一次；MCP / 扩展 / memory / RPC 后续可增删成员（见 §3.7） |
 | **呈现层** | `loadMode` / `xd://` / Code Mode / prompt 投影 | 每请求 schema 预算（「这次请求发什么」） | 只在显式事件上变更 |
 
 三层的解耦程度是本文最值得记的一点：**注册 ≠ 呈现**。一个工具可以被注册、可被调用，却不出现在任何一次请求的顶层 schema 里。
@@ -300,10 +302,11 @@ for (const tool of tools) toolRegistry.set(tool.name, tool);
 ### 3.7 冻结语义（核心问答）
 
 **静态**：
-- 注册决策与 `toolRegistry` 成员集。`sdk.ts:4337` 注释明说：`createTools` 只在 session 启动时构建一次，**之后任何 settings 变更都不重建**；`sdk.ts:2988` 同理（「roster 在 session 创建时构建一次」）。
+- 初始内置工具装配：SDK 在 session 启动时调用一次 `createTools`，普通 settings 变更不会重新执行整套 factory / gate。这里的「一次」描述初始装配调用链，**不表示 `toolRegistry` 成员集冻结**。
 - 每 session 重新实例化全部 factory —— 既不是进程级单例，也不复用。
 
 **动态**：
+- `toolRegistry` 成员与实例：`replaceMemoryTools` 删除旧 backend 工具并注册新实例；`refreshMCPTools` 替换 MCP 成员；`refreshRpcHostTools` 替换 RPC 成员；SDK 的 `scheduleToolRegistration` 安装迟到的扩展工具。这些路径直接调用 registry 的 `set` / `delete`，不是只调整呈现名单。
 - `agent.state.tools`（呈现集）与 system prompt，由 `SessionTools`（`session/session-tools.ts`）持有。
 - **绝不因为「新的一轮开始」而变**——一轮只做 normalize。
 
@@ -531,15 +534,21 @@ RunLedger 是**整体性 profile 替换**，不是逐工具 `loadMode`。两者�
 |---|---|---|
 | 装配入口 | `src/tools/index.ts:519` `createTools`（async），**1 个调用点** `sdk.ts:2017` | `src/runtime/tools/index.ts:82` `createStdlibTools`（sync），4 个生产调用点：`session-runtime/domain.ts:739`、`stdlib-stream.ts:83`、`interactive-session-controller.ts:822`、`cli/runtime-host-session.ts:210` |
 | 装配方式 | 逐工具门表 + `createIf` 条件工厂 + `null` 语义 | 顺序 `register(...)` 约 20 个，**无逐工具 gate**；条件项存在（`options.webSearch`、`options.managedProcess`、`options.permissionRequester`）但无条件门表 |
-| 发现层 | 14 kind capability registry，87 个 provider 注册点，优先级去重 | **无**同类 registry；`src/extensions/capabilities/{registry,types}.ts` 是泛型 capability 编排器，仍 passive 且只有 skills 一个具体接线（见 01 §3 #14） |
-| 呈现减负 | `ToolLoadMode` + `xd://` 挂载 + Code Mode + inline descriptors | **无逐工具 demotion**；用 Harness Profile 的 `allowlist` 整体替换 |
+| 发现层 | 14 kind capability registry，87 个 provider 注册点，优先级去重 | 已有泛型 `src/extensions/capabilities/{registry,types}.ts`，**已通过 skills 接入生产**；尚未覆盖上游 14 kind 的统一发现体系 |
+| 呈现减负 | `ToolLoadMode` + `xd://` 挂载 + Code Mode + inline descriptors | 尚无通用逐工具 `loadMode` / `xd://`；profile allowlist 做整体投影；**MCP 已通过 `mcp_catalog` / `mcp_search` / `mcp_call` 按需发现与调用** |
 | 子集机制 | `requestedTools` + auto-include + force push | `HarnessProfileDescriptor.tools` = `{mode:"standard"}` 直通 或 `{mode:"allowlist", allowlist}`；`projectHarnessTools` 做纯投影，**allowlist 名字必须恰好存在一次**否则抛 `HarnessToolProjectionError`，并校验 frozen manifest digest 防漂移 |
 | 现有 profile | — | `minimal@1` = `["bash","edit"]`、`minimal@2` = `["bash"]`、`plan@1` = `["read","glob","ls","plan_read","plan_write"]`、`standard@2` = 直通 |
 | 运行时可变性 | 高：MCP / 扩展 / 模式 / Code Mode / RPC 均可热改呈现集 | 低：profile 在 Session 创建时冻结、fork 继承（根 `AGENTS.md` §2）；工具集变更走 profile 而非增量 |
 | 审批门 | 全 registry 无差别套 `ExtensionToolWrapper` | Security/ExecutionGateway + attempt gateway + owner fence（不同模型，见 00 §5） |
 | 动态来源 | custom tools / extensions / plugins / MCP / RPC host / SDK | 扩展 out-of-process host（`registerTool`/`registerCommand`/`registerFlag`/`on`）+ MCP 客户端 |
 
-**结论**：RunLedger 不需要「工具多到炸 context」的解法，因为它没有 100+ 工具面（00 §4 `tools/`：26 文件 vs 上游 159）。若将来 `tools/` 缺口被填补（00 §8 优先级 P0 列的 `ast-grep`/`ask`/`checkpoint` 等），`loadMode`-style 呈现层会从「不需要」变成「必须有」——这是本文对 RunLedger 的唯一前瞻性提示，不是当前缺陷。
+**生产接线补充（2026-09-18 复核）**：
+
+- **发现层**：`createProductionSessionExtensionComposition` 创建 `createSkillRegistry`，交给 `ExtensionManager`；后者在加载/重载时调用 `SkillRegistry.load`，最终进入 `CapabilityRegistry.load`。因此「只有 skills 一个具体接线」是覆盖范围限制，不是未接生产。`registry.ts` 文件头仍写「不接 production / P2 才 cutover」，属于过期注释，不能作为当前接线证据。
+- **MCP 呈现**：`createSessionMcpRuntime` 固定返回上述三个模型工具，远端工具保留在 MCP manager catalog 中。`mcp_search` 的结果携带匹配工具的 `inputSchema`，`mcp_call` 按 `serverId` / `toolName` 路由并经过 attempt recovery barrier；远端工具不会逐个变成顶层 provider schema。这已将远端工具数量与顶层 schema 数量解耦，但不等于内置/扩展工具也具备通用 demotion。
+- **Provider 侧种子**：`src/utils/deferred-tools.ts` 的 `splitDeferredTools` 被 Anthropic / OpenAI Responses / Codex Responses adapter 消费，依赖 provider 能力与历史 `addedToolNames`。当前生产工具未产出该字段，不能把 adapter 支持记成已启用的通用发现机制。
+
+**结论**：RunLedger 已有 MCP 专用的按需发现与调用路径；通用工具呈现层仍未实现。是否需要扩展它，应按实际模型可见 schema 的预算与 provider 限制评估，不能由源码文件数或工具总数直接推断。后续评估与工具面扩展见 [Plan 19](../plan/19-omp-tool-surface-expansion-plan.md)。
 
 ## 9. 复现命令
 

@@ -68,6 +68,30 @@ runledger --provider <provider-id> --model <model-id>
 
 进入界面后直接输入任务，例如“梳理这个仓库的启动流程，并标出关键入口文件”。认证方式和模型路由详见[模型与认证](docs/subsystems/models.md)。
 
+## 单次非交互执行
+
+`--prompt-file` 创建一个新 Session，通过同一生产 Session Owner 执行任务，
+将消息、工具结果和运行边界写到 stdout JSONL，然后关闭运行时。诊断写到 stderr。
+它不支持与恢复会话或 control 命令组合；错误和中断返回非零退出码。
+无交互客户端不会自动批准权限请求，自动化任务应显式配置权限和审批策略。
+
+```sh
+trial_root=$(mktemp -d /tmp/runledger-task-XXXXXX)
+mkdir -p "$trial_root/home" "$trial_root/workspace"
+printf '%s\n' '创建 hello.txt，内容为 hello，然后检查内容。' > "$trial_root/task.txt"
+cd "$trial_root/workspace"
+# 先通过环境变量配置所选 provider 的凭据。
+RUNLEDGER_DIR="$trial_root/home" runledger \
+  --prompt-file "$trial_root/task.txt" \
+  --provider opencode-go --model deepseek-v4.1-flash \
+  --permission-profile workspace-write --approval-policy never \
+  > "$trial_root/events.jsonl" 2> "$trial_root/stderr.log"
+```
+
+JSONL 保留完整消息和工具结果，不重复输出流式累积快照；成功结束含
+`runledger_complete`，失败应结合退出码和 stderr 判断。执行有 30 分钟上限，
+SIGINT/SIGTERM 会请求中断并清理 Session。事件可能包含任务文件内容，按任务数据保存。
+
 ## 日常使用
 
 ### 继续和派生会话

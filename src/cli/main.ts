@@ -20,7 +20,8 @@ import { createKimiCodeDeviceIdProvider } from "../storage/kimi-device-id.ts";
  * lease;没有 feature flag 或 legacy fallback。
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
+import { runHeadless } from "./headless.ts";
 import { mkdir } from "node:fs/promises";
 import { registerConfiguredProxyProvidersFromHome } from "../providers/configured-proxy.ts";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
@@ -159,6 +160,8 @@ export async function main(argv: readonly string[]): Promise<void> {
     process.exit(2);
   }
 
+  const headlessPrompt = args.promptFile === undefined ? undefined : readFileSync(args.promptFile, "utf8");
+  if (headlessPrompt !== undefined && !headlessPrompt.trim()) throw new Error("--prompt-file must not be empty");
   const cwd = process.cwd();
   const { resolution, layout } = await resolveRunledgerHome();
   // 默认 home(<userHome>/.runledger)需要首启创建;显式 RUNLEDGER_DIR 必须
@@ -346,6 +349,27 @@ export async function main(argv: readonly string[]): Promise<void> {
 	  initialView.controller.dispose();
 	  await initialView.embedded.handle.close().catch(() => undefined);
 	  await pauseIfLastAttachment(initialView.embedded, true);
+      db.close();
+    }
+    return;
+  }
+
+  if (headlessPrompt !== undefined) {
+    const abort = new AbortController();
+    const onSignal = () => abort.abort();
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+    try {
+      await runHeadless(initialView.controller, headlessPrompt, {
+        signal: abort.signal,
+        write: (event) => { writeSync(1, JSON.stringify(event) + "\n"); },
+      });
+    } finally {
+      process.removeListener("SIGINT", onSignal);
+      process.removeListener("SIGTERM", onSignal);
+      initialView.controller.dispose();
+      await initialView.embedded.handle.close().catch(() => undefined);
+      await pauseIfLastAttachment(initialView.embedded, true);
       db.close();
     }
     return;

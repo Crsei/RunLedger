@@ -93,6 +93,7 @@ export interface ParsedArgs {
   noWorktree: boolean;
   /** 显式 runtime gate；缺省 false，仍需 user/workspace settings。 */
   experimentalMultiAgent: boolean;
+  promptFile?: string;
   debug: boolean;
   /** 未知 flag 兜底,key 不带前导 --;有 =value 时 value 为 string,否则为 true */
   unknown: ReadonlyMap<string, string | true>;
@@ -138,6 +139,7 @@ const HELP_TEXT = `Usage: runledger [options]
       web [--port <port>]    启动本地只读项目运行看板
       auth-gateway <command>  启动/管理本地前向代理网关
       --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR
+      --prompt-file <path>     新建非交互 Session，读取任务文件，输出 JSONL 后退出
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出
   -h, --help                  本帮助
@@ -180,6 +182,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let worktreeBranch: string | undefined;
   let noWorktree = false;
   let experimentalMultiAgent = false;
+  let promptFile: string | undefined;
   let debug = false;
   const unknown = new Map<string, string | true>();
   const positional: string[] = [];
@@ -188,6 +191,15 @@ export function parseArgs(argv: readonly string[]): ParseResult {
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
+    if (a === "--prompt-file") {
+      const value = argv[++i];
+      if (!value || value.startsWith("--") || promptFile !== undefined) {
+        error = "--prompt-file 需要唯一的文件路径";
+        break;
+      }
+      promptFile = value;
+      continue;
+    }
     if (a === "--") {
       // separator: 之后全部当 positional
       for (let j = i + 1; j < argv.length; j++) {
@@ -481,6 +493,10 @@ export function parseArgs(argv: readonly string[]): ParseResult {
     error = network === "deny" ? "--network deny 不能配置 --network-host" : "--network-host 需要显式 --network review|allowlist|allow";
   }
 
+  if (error === undefined && promptFile !== undefined && (continueRecent || resume || session || sessionId || fork || positional.length > 0)) {
+    error = "--prompt-file 仅支持新建 Session，不能与恢复或 control 命令组合";
+  }
+
   return {
     args: {
       help,
@@ -509,6 +525,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       worktreeBranch,
       noWorktree,
       experimentalMultiAgent,
+      ...(promptFile === undefined ? {} : { promptFile }),
       debug,
       unknown,
       positional,

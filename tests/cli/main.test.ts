@@ -92,7 +92,7 @@ describe("CLI read-only Extension control commands", () => {
   ])("routes runledger %s %s through the Session query channel", (group, action) => {
     const home = mkdtempSync(join(tmpdir(), "runledger-cli-extension-query-"));
     try {
-      const result = runCli([group, action], { RUNLEDGER_DIR: home });
+      const result = runCli([group, action], { RUNLEDGER_DIR: home, HOME: home, USERPROFILE: home });
       expect(result.status).toBe(0);
       expect(JSON.parse(result.stdout) as unknown).toMatchObject({
         ok: true,

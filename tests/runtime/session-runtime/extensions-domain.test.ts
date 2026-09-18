@@ -2,7 +2,7 @@ import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../../sr
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import type { SessionProtocolOperationDescriptor } from "../../../src/runtime/session-server/protocol.ts";
 import { createProductionSessionExtensionComposition, createSessionExtensionComposition } from "../../../src/runtime/session-runtime/extension-composition.ts";
@@ -20,6 +20,23 @@ import { loadProjectSettings } from "../../../src/storage/settings-manager.ts";
 import { builtinModels } from "../../../src/providers/all.ts";
 import { AuthStorage } from "../../../src/storage/auth-storage.ts";
 import { createRuntimeHarness } from "./harness.ts";
+
+// canonical home 不控制兼容 skills 的 OS home；直接运行本文件也必须隔离发现来源。
+const { isolatedHomedir } = vi.hoisted(() => ({ isolatedHomedir: vi.fn<() => string>() }));
+vi.mock("node:os", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:os")>();
+	return { ...actual, homedir: isolatedHomedir };
+});
+
+let compatibilityHome: string;
+beforeEach(() => {
+	compatibilityHome = mkdtempSync(join(tmpdir(), "runledger-extension-compat-home-"));
+	isolatedHomedir.mockReturnValue(compatibilityHome);
+});
+afterEach(() => {
+	rmSync(compatibilityHome, { recursive: true, force: true });
+	isolatedHomedir.mockReset();
+});
 
 function snapshot() {
 	return {
