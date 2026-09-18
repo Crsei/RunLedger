@@ -9,6 +9,7 @@ RunLedger 是面向可审计 Agent 执行的运行时。标准 CLI 通过 Sessio
 | 你要做什么 | 优先阅读 | 后续入口 |
 |---|---|---|
 | 启动 CLI、选择模型、继续或派生会话 | [CLI 参数表](cli.md) | [模型与认证](subsystems/models.md)、[会话运行时](subsystems/session-runtime.md) |
+| 修改 settings、环境变量、权限或扩展配置 | [配置参数总表](configuration.md) | [工具与安全](subsystems/tools.md)、[扩展系统](subsystems/extensions.md) |
 | 理解项目如何运行、模块如何协作 | [架构总览](architecture.md) | [子系统索引](subsystems/README.md) |
 | 排查会话恢复、数据位置或迁移问题 | [持久化](subsystems/persistence.md) | [会话运行时](subsystems/session-runtime.md)、[存储迁移 handoff](../development-doc/storage-cli/02-user-home-migration-handoff.md) |
 | 理解工具权限、批准或进程执行 | [工具与安全](subsystems/tools.md) | [工作区与 Worktree](subsystems/workspace.md) |
@@ -23,6 +24,7 @@ RunLedger 是面向可审计 Agent 执行的运行时。标准 CLI 通过 Sessio
 | 文档 | 内容 |
 |---|---|
 | [CLI 参数表](cli.md) | 启动参数、会话选择、模型与权限设置、控制子命令、网关、迁移、环境变量、示例及当前限制 |
+| [配置参数总表](configuration.md) | 按功能分类的全部可配置参数：环境变量、CLI 参数、user/workspace settings、security 段、TUI 偏好、MCP/Hooks/LSP/Plugin 声明、Provider 凭据与已拒绝项 |
 | [架构总览](architecture.md) | 生产入口、Session Owner 组合、跨子系统数据流、生命周期、执行治理与新增行为的归属 |
 | [真实 session 上下文快照](system-prompts.md) | 本项目真实 CLI/TUI 捕获的最终提示词、用户消息及完整工具 schema；AGENTS 正文刻意省略；附 JSON。活会话的实时获取用 TUI `/dump` 或 `runledger dump` |
 | [子系统索引](subsystems/README.md) | 各子系统职责与详细参考入口 |
