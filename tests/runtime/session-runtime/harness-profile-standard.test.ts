@@ -46,7 +46,7 @@ describe("standard@1 production characterization", () => {
 
 	it("pins the current governed base tool order and provider-facing schemas", () => {
 		const cwd = "/workspace/standard-characterization";
-		// 与生产装配一致:web 检索端口注入时才出现 web_search。
+		// 与生产装配一致:web credential + governed network 注入时才出现 web_search/github。
 		const tools = productionSessionTools(cwd, inertExecutionEnv(cwd), undefined, undefined, undefined, {
 			credentials: unavailableWebSearchCredentials(),
 		});
@@ -61,12 +61,13 @@ describe("standard@1 production characterization", () => {
 			"ls",
 			"WebFetch",
 			"web_search",
+			"github",
 			"todo",
 		]);
 		expect(canonicalDigest(tools.map((tool) => ({
 			name: tool.name,
 			description: tool.description,
 			parameters: tool.parameters,
-		})))).toBe("c3c366e1ee9729039e14c17027017ff984da4c90110d85a64acf8795cec7a0b5");
+		})))).toBe("38cc45d4f1fa412f921c5ec7b8591c7ecea572bf0b504e3c5ade907e41fa368d");
 	});
 });

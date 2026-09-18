@@ -57,7 +57,7 @@ export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> 
 		if (!apiKey) {
 			throw new Error(`No API key for provider: ${model.provider}`);
 		}
-		const client = createClient(model, apiKey, options?.headers, options?.env);
+		const client = createClient(model, apiKey, options?.headers, options?.env, options?.fetch);
 		let params = buildParams(model, context);
 		const nextParams = await options?.onPayload?.(params, model);
 		if (nextParams !== undefined) {
@@ -112,17 +112,40 @@ function createClient(
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	env?: Record<string, string>,
+	governedFetch?: ImagesOptions["fetch"],
 ): OpenAI {
 	const proxyUrl = getCachedProviderProxyUrl(model.provider, model.baseUrl, env);
 	const proxyFetch = proxyUrl ? createProxyFetchForUrl(model.baseUrl, proxyUrl) : undefined;
+	// OpenAI's public type permits Request/URL inputs. Its Node transport sends
+	// strings today; the adapter preserves the broader shape before delegating to
+	// RunLedger's intentionally string-only governed transport.
+	const sdkFetch = governedFetch === undefined ? proxyFetch : toSdkFetch(governedFetch);
 
 	return new OpenAI({
 		apiKey,
 		baseURL: model.baseUrl,
-		...(proxyFetch ? { fetch: proxyFetch } : {}),
+		...(sdkFetch ? { fetch: sdkFetch } : {}),
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: providerHeadersToRecord({ ...model.headers, ...optionsHeaders }),
 	});
+}
+
+function toSdkFetch(fetch: NonNullable<ImagesOptions["fetch"]>): typeof globalThis.fetch {
+	return async (input, init) => {
+		if (typeof input === "string") return fetch(input, init);
+		if (input instanceof URL) return fetch(input.toString(), init);
+		const request = input;
+		const body = init?.body === undefined && request.body !== null
+			? await request.clone().arrayBuffer()
+			: init?.body;
+		return fetch(request.url, {
+			method: init?.method ?? request.method,
+			headers: init?.headers ?? request.headers,
+			...(body === undefined ? {} : { body }),
+			...(init?.signal === undefined ? { signal: request.signal } : { signal: init.signal }),
+			...(init?.redirect === undefined ? { redirect: request.redirect } : { redirect: init.redirect }),
+		});
+	};
 }
 
 type OpenRouterImagesCreateParams = Omit<ChatCompletionCreateParamsNonStreaming, "modalities"> & {

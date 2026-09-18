@@ -56,6 +56,8 @@ import { createManageSkillTool, type ManageSkillPort } from "./manage-skill.ts";
 import { createCheckpointTool } from "./checkpoint.ts";
 import { createRewindTool } from "./rewind.ts";
 import type { NamedCheckpointToolPort } from "../session-runtime/named-checkpoint-domain.ts";
+import { createImageGenerationTool } from "./image-gen.ts";
+import type { ImageGenerationPort } from "./image-generation-port.ts";
 
 export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
@@ -76,6 +78,8 @@ export interface StdlibToolsOptions {
 	readonly manageSkill?: ManageSkillPort;
 	/** Named checkpoint/fork handoff; both tools are absent unless the full port is wired. */
 	readonly namedCheckpoint?: NamedCheckpointToolPort;
+	/** Session-owned image generation adapter; absent outside the standard governed composition. */
+	readonly imageGeneration?: ImageGenerationPort;
 	/** todo 工具的持久化 sink;未注入时 todo 只在进程内维护状态。 */
 	readonly ledger?: import("../ledger/types.ts").LedgerSink;
 	/**
@@ -146,6 +150,7 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
 		register(createCheckpointTool(options.namedCheckpoint));
 		register(createRewindTool(options.namedCheckpoint));
 	}
+	if (options.imageGeneration !== undefined) register(createImageGenerationTool(options.imageGeneration));
 	register(echoTool);
 	if (options.managedProcess) {
 		const processClient = options.managedProcess;
@@ -253,7 +258,7 @@ export function stdlibTools(cwd: string = process.cwd()): AgentTool[] {
   return createStdlibTools(cwd).toContext();
 }
 
-export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoTool };
+export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoTool, createImageGenerationTool };
 export { createWebSearchTool };
 export { createGithubTool, githubSchema } from "./github.ts";
 export type { GitHubToolInput, GithubToolOptions } from "./github.ts";

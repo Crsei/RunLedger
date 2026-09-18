@@ -358,10 +358,12 @@ describe("minimal@1 production composition", () => {
 			const minimalController = minimalDomain?.controller as InspectableController;
 			expect(standardController.systemPrompt).toBe("standard isolated prompt");
 			expect(standardController.tools.map((tool) => tool.name)).toContain("lsp");
+			expect(standardController.tools.map((tool) => tool.name)).toContain("image_gen");
 			expect(standard.handle.supports("extension.inspect")).toBe(true);
 			expect(standardDomain?.childRuntime).toBeDefined();
 			expect(minimalController.systemPrompt).toBe(MINIMAL_HARNESS_SYSTEM_PROMPT);
 			expect(minimalController.tools.map((tool) => tool.name)).toEqual(["bash", "edit"]);
+			expect(minimalController.tools.map((tool) => tool.name)).not.toContain("image_gen");
 			expect(minimal.handle.supports("extension.inspect")).toBe(false);
 			expect(minimalDomain?.childRuntime).toBeUndefined();
 		} finally {

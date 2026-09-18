@@ -287,6 +287,12 @@ export interface ImagesOptions {
 	signal?: AbortSignal;
 	apiKey?: string;
 	/**
+	 * Host-injected transport for image providers. The coding-agent tool path
+	 * supplies a governed adapter instead of allowing the SDK to reach the
+	 * ambient global fetch implementation.
+	 */
+	fetch?: (input: string, init?: RequestInit) => Promise<Response>;
+	/**
 	 * Provider-scoped environment values. These take precedence over process.env for
 	 * provider configuration such as endpoint placeholders and proxy variables.
 	 */

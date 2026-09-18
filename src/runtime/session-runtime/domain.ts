@@ -107,6 +107,10 @@ import type { HarnessCompositionReceipt } from "../harness-profiles/index.ts";
 import { NodeExtensionStorage } from "../../storage/extensions/extension-storage.ts";
 import { ManagedSkillStore } from "../../extensions/skills/managed-store.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
+import { builtinImagesModels } from "../../providers/all.ts";
+import type { ImagesModels } from "../../images-models.ts";
+import { AuthStorage } from "../../storage/auth-storage.ts";
+import { createImageGenerationPort } from "../tools/image-generation-port.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -136,6 +140,8 @@ export interface SessionDomainCompositionOptions {
 	readonly askPort?: AskPort;
 	/** checkpoint rewind 的 driver reverse-request；缺省时 checkpoint/rewind 均不注册。 */
 	readonly rewindPort?: RewindPort;
+	/** Host-owned image catalog; absent uses the canonical home credential store. */
+	readonly imageModels?: ImagesModels;
 }
 
 /** 在 SessionRuntime 内装配真实 InteractiveSessionController(单一 Session 域)。 */
@@ -314,11 +320,19 @@ export async function assembleSessionDomain(
 	const namedCheckpointDomain = harnessProfile.descriptor.tools.mode !== "standard" || options.rewindPort === undefined
 		? undefined
 		: new NamedCheckpointDomain({ store, fence, attemptPort: () => attemptPort.get(), rewindPort: options.rewindPort });
+	// image_gen only has a standard-profile composition. Its credential store is
+	// canonical user-home authority; neither tool parameters nor ledger hold it.
+	const imageGeneration = harnessProfile.descriptor.tools.mode !== "standard" || executionEnv.network === undefined
+		? undefined
+		: createImageGenerationPort({
+			images: options.imageModels ?? builtinImagesModels({ credentials: AuthStorage.create(options.layout) }),
+			network: executionEnv.network,
+		});
 	const baseTools = [
 		...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions, {
 			credentials: createWebSearchCredentials({ layout: options.layout }),
 			...(options.settings.webSearch === undefined ? {} : { settings: toWebSearchSettings(options.settings.webSearch) }),
-		}, options.askPort, manageSkillPort, namedCheckpointDomain),
+		}, options.askPort, manageSkillPort, namedCheckpointDomain, imageGeneration),
 		...planTools.tools,
 		...(goalSettings.enabled ? goalTools.tools : []),
 	];
@@ -798,6 +812,7 @@ export function productionSessionTools(
 	askPort?: StdlibToolsOptions["askPort"],
 	manageSkill?: StdlibToolsOptions["manageSkill"],
 	namedCheckpoint?: StdlibToolsOptions["namedCheckpoint"],
+	imageGeneration?: StdlibToolsOptions["imageGeneration"],
 ): AgentTool[] {
 	const excluded = new Set(["NotebookEdit", "echo"]);
 	excluded.add("Skill");
@@ -810,6 +825,7 @@ export function productionSessionTools(
 		...(askPort === undefined ? {} : { askPort }),
 		...(manageSkill === undefined ? {} : { manageSkill }),
 		...(namedCheckpoint === undefined ? {} : { namedCheckpoint }),
+		...(imageGeneration === undefined ? {} : { imageGeneration }),
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));

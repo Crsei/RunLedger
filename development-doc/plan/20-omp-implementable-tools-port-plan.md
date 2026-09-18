@@ -91,11 +91,11 @@
 |---|---|
 | `src/runtime/tools/image-gen.ts` | TypeBox schema、prompt normalizer、bounded output/result details 和 `ImageGenerationPort` adapter。 |
 | `src/runtime/tools/image-generation-port.ts` | image catalog lookup、fixed principal `image_gen`、response byte cap 与 provider-result projection；工具层不直接 import SDK。 |
-| `src/api/openrouter-images.ts` | 接受由 port 注入的 governed fetch adapter；删除该路径对 ambient fetch 的依赖。 |
-| `src/images-models.ts`、`src/providers/all.ts` | image model collection 的选择/credential composition，不改变 chat model catalog。 |
+| `src/api/openrouter-images.ts` | 接受由 port 注入的 governed fetch adapter；`image_gen` 调用路径不依赖 ambient fetch（非工具 API 调用保留既有 transport 兼容）。 |
+| `src/images-models.ts`、`src/providers/all.ts` | 复用既有 image catalog；Session Domain 以 canonical `AuthStorage` 组装其 credential composition，不改变 chat model catalog。 |
 | `src/runtime/tools/index.ts`、`src/runtime/tools/capabilities.ts` | port 存在时注册，claim 为 network；Plan/minimal 不注册。 |
 | `src/runtime/session-runtime/domain.ts` | 创建一次 session-scoped image port，传给 `productionSessionTools`。 |
-| `src/cli/embedded-session-runtime.ts`（若 domain 需要 owner-only image credential state） | 只注入 Host/owner 构造所需的 secret resolver，绝不把 credential 放进 tool params/ledger。 |
+| `src/cli/embedded-session-runtime.ts` | 无需变更：它已是唯一调用 Session Domain 的 owner-side composition；Domain 从 canonical home 构造 image credential store，绝不把 credential 放进 tool params/ledger。 |
 
 ### 5.3 验收
 
@@ -146,7 +146,7 @@
 |---|---|---|
 | I checkpoint/rewind | implemented，待真实 TTY tool-call evidence | 已完成 named event projection、owner-fenced atomic target/source handoff、标准 profile 注册、headless fail-fast、router/TUI switch 和 32 项定向测试；仍需可用 provider 下的 built CLI/TTY 实际工具调用证据。 |
 | II office/EPUB read | implemented | `read-office` 已仅通过 governed `read` 字节分派 DOCX/PPTX/XLSX/EPUB；受限 XML/ZIP 与输出界限、图片占位、converted Markdown selector 的定向测试和 execution-boundary check 已完成。PDF 仍不在范围。 |
-| III image_gen | planned | fake governed network tests；真实 provider 另列 pending/accepted 证据 |
+| III image_gen | implemented，待真实 provider evidence | `image_gen` 只在 standard Session Owner composition 以 Host catalog、canonical credential store 与 `ExecutionEnv.network` 注册；所有 provider HTTP 使用固定 `image_gen` principal，结果是受限 text/image projection。真实受控凭据调用仍须单列。 |
 | IV GitHub read | implemented，待 built CLI smoke | `src/websource/github-read.ts` 与 `src/runtime/tools/github.ts` 已经由 `createWebSearchFetch({ principal: "github" })` 接入标准组合；定向 transport/tool/stdlib 测试已通过，仍须随本批次完成 check/build/CLI 验证。 |
 | V manage_skill | implemented，待 built CLI lifecycle | canonical user root、attempt fence、active-turn pending reload 与 standard-only 注册已接入；存储/工具定向测试已通过，仍须补 isolated CLI 的 create → next-turn discovery → delete 证据。 |
 
@@ -156,7 +156,9 @@
 
 - 阶段 IV/V 已完成源码接线：GitHub 仅通过 governed `github` principal 访问固定 REST endpoint；`manage_skill` 仅写 canonical home、经 attempt fence，且 active turn 只登记 pending reload。
 - 阶段 II 已完成源码接线：`read-office.ts` 只接受 `ExecutionEnv.fs` 已读取的 ZIP 字节，DOCX/PPTX/XLSX/EPUB 输出 Markdown；输入 8 MiB、ZIP entry/member、XML byte/depth/element/entity 与转换输出均有上限。DTD/custom entity、坏 ZIP 不回落为正文；图像从不写盘，只投影占位。PDF 仍为 native 依赖非目标。
+- 阶段 III 已完成源码接线：`image_gen` 的 TypeBox input 只允许 prompt、catalog model、两个受限视觉偏好和最多四张 base64 reference images；port 对模型/credential 先做 fail-closed 解析，将视觉偏好归一到文本 prompt，并以 `createWebSearchFetch({ principal: "image_gen" })` 注入 OpenRouter SDK。输出最多四张 PNG/JPEG/WebP 图片（单张 8 MiB、总计 10 MiB）与 16,000 字符文本，并只记录内容 digest，不把 provider error body 或 credential 投影给 agent/ledger。standard 有该工具，minimal/Plan 没有。
 - 定向测试 `tests/runtime/tools/read-office.test.ts` 加既有 archive/sqlite/read dispatch 测试：31 tests passed；覆盖四种最小容器、DOCX/PPTX 表格、EPUB metadata、图片占位、DTD 拒绝、converted selector 及伪装 `.docx` 文本回落。
 - 定向测试 `tests/{websource/github-read,runtime/tools/github,extensions/skills/managed-store,runtime/tools/manage-skill}.test.ts` 加 `tests/stdlib-tools.test.ts`：39 assertions passed。
+- 阶段 III 定向测试 `tests/runtime/tools/image-gen.test.ts` 与 `tests/api/openrouter-images.test.ts`：5 tests passed，覆盖 catalog/credential miss、governed network deny、abort、prompt normalization、base64 output 和输出上限；`harness-profile-minimal` 另外验证 standard 含 `image_gen`、minimal 不含。真实 provider 不以 fixture 代替。
 - `npm run check` 与 `npm run build` 均 exit 0；built `runledger --help` 在一个新建、隔离的 `RUNLEDGER_DIR` 下成功，随后已删除该空目录。
-- `npm test` 的 80 files / 577 assertions 都通过，但 Vitest worker 最终报 `Timeout calling "onTaskUpdate"`，使命令 exit 1；该 runner-level unhandled error 不视为本批次完整测试绿灯，也不由本计划范围外修改掩盖。
+- `npm test` 的 80 files / 570 assertions 都通过，但 Vitest worker 最终报 `Timeout calling "onTaskUpdate"`，使命令 exit 1；该 runner-level unhandled error 不视为本批次完整测试绿灯，也不由本计划范围外修改掩盖。
