@@ -89,7 +89,7 @@
 | `subprocess/` | 2 | `subprocess/worker-client.ts`、`subprocess/worker-runtime.ts` | 仅 `src/security/permission/bash-ast/parser.ts` + `worker.ts`（node:worker_threads 池） | 无通用 `WorkerHandle`/`spawnWorkerOrUnavailable`/`createUnavailableWorker`/`workerEnvFromParent`/smokeTest 探针/worker-runtime 子侧引导 |
 | `activity/` | 1 | `activity/index.ts` | `src/runtime/agents/graph-projection.ts`、`src/tui/agents/types.ts`、`src/tui/interactive/agent-workflow.ts` | 无 `AgentActivityRow` 索引：无 response/tool/irc/lifecycle 行、无跨 agent feed、无 byte-offset transcript tail、无 live 进度行、无 search/before 游标查询 |
 | `stats/` | 3 | `stats/activity-protocol.ts`、`stats/activity-client.ts`、`stats/activity-worker.ts` | `src/runtime/usage/index.ts`、`src/web/usage.ts`、`src/web/usage-projection.ts` | 无 `DailyActivityPoint` 热力图管线与一次性 stats 子进程协议/client/worker；RunLedger 是进程内增量扫描 |
-| `tools/` | 159 | `tools/index.ts`、`tools/read.ts`、`tools/write.ts`、`tools/todo.ts`、`tools/yield.ts`、`tools/xdev.ts`、`tools/ast-grep.ts`、`tools/ast-edit.ts`、`tools/ask.ts`、`tools/eval.ts`、`tools/debug.ts`、`tools/gh.ts`、`tools/image-gen.ts`、`tools/run-code.ts`、`tools/security-scan.ts`、`tools/checkpoint.ts`、`tools/think.ts`、`tools/review.ts`、`tools/computer.ts`、`tools/browser.ts`、`tools/sqlite-reader.ts`、`tools/read-pdf.ts`、`tools/read-archive.ts`、`tools/memory-recall.ts`、`tools/browser/*`、`tools/computer/*`、`tools/eval-format/*`、`tools/hub/*`、`tools/puppeteer/*` | `src/runtime/tools/*`（26 文件）、`src/lsp/tool.ts` | 上游 159 文件中约 80 无对等物。除上列外还缺 `report-tool-issue`、`learn`、`manage-skill`、`vibe`、`tools/memory-retain.ts`、`tools/memory-reflect.ts`、`tools/memory-edit.ts`、`tools/memory-recall.ts`、`gh-*` 家族、`read-summary`、`shell-tokenize`、`tool-timeouts`、`render-utils` |
+| `tools/` | 159 | `tools/index.ts`、`tools/read.ts`、`tools/write.ts`、`tools/todo.ts`、`tools/yield.ts`、`tools/xdev.ts`、`tools/ast-grep.ts`、`tools/ast-edit.ts`、`tools/ask.ts`、`tools/eval.ts`、`tools/debug.ts`、`tools/gh.ts`、`tools/image-gen.ts`、`tools/run-code.ts`、`tools/security-scan.ts`、`tools/checkpoint.ts`、`tools/think.ts`、`tools/review.ts`、`tools/computer.ts`、`tools/browser.ts`、`tools/sqlite-reader.ts`、`tools/read-pdf.ts`、`tools/read-archive.ts`、`tools/memory-recall.ts`、`tools/browser/*`、`tools/computer/*`、`tools/eval-format/*`、`tools/hub/*`、`tools/puppeteer/*` | 基线：`src/runtime/tools/*`（26 文件）、`src/lsp/tool.ts`。复核时：`src/runtime/tools/*` 为 **29** 个 TS 文件；其中 `read-sqlite.ts`、`read-archive.ts` 是 `read` 的类型分支 helper，`ask.ts` 是新增用户工具（详见 §4.1） | 基线的「约 80」只适用于 `0b2c501b`，不是当前精确计数。后续已关闭 `ask` 及 `read` 的 sqlite/archive 分支；`web_search` 已由 `src/websource/` 条件注册。仍无对等物的代表项包括 `checkpoint`/`rewind`、`gh-*`、`browser`/`computer`、`eval`/`run-code`、memory 四件套、`learn`/`manage_skill`、`report-tool-issue` 与 `vibe`。`read-summary`、`shell-tokenize`、`tool-timeouts`、`render-utils` 是支撑实现，不应按独立模型工具计数。 |
 | `task/` | 31 | `task/executor.ts`、`task/isolation-runner.ts`、`task/isolation-ownership.ts`、`task/worktree.ts`、`task/structured-subagent.ts`、`task/persisted-revive.ts`、`task/output-manager.ts`、`task/result-summary.ts`、`task/render.ts`、`task/workpool.ts`、`task/parallel.ts`、`task/spawn-policy.ts` | `src/runtime/tasks/types.ts`、`src/runtime/agents/*`（12 文件） | 无 `executor.ts` 等价、无 worktree 子代理隔离与 merge、无 `workpool`/`parallel` 批处理、无 `structured-subagent`/`result-summary`/`persisted-revive`/`output-manager`/`render` |
 | `exec/` | 4 | `exec/bash-executor.ts`、`exec/direnv.ts`、`exec/non-interactive-env.ts`、`exec/exec.ts` | `src/runtime/tools/bash.ts`、`src/runtime/execution-env.ts`、`src/runtime/process/manager.ts`、`src/storage/process/node-pty-adapter.ts` | 无 `direnv` 环境加载、无 `non-interactive-env` 构造（CI 环境剥离）、无原生化 brush-core Shell 快照/minimizer |
 | `edit/` | 10 | `edit/index.ts`、`edit/auto-repair.ts`、`edit/renderer.ts`、`edit/normalize.ts`、`edit/schemas.ts`、`edit/store.ts`、`edit/blackbox.ts`、`edit/hashline-compact.md` | `src/runtime/tools/edit.ts`、`src/runtime/tools/multi-edit.ts` | 无 `auto-repair` 自愈重试、无多模式 schema（hashline/patch）、无 `normalize`/`blackbox`/`store`/`renderer` |
@@ -121,6 +121,28 @@
 | `goals/` + `plan-mode/` | 11 | `goals/index.ts`、`goals/runtime.ts`、`goals/state.ts`、`goals/tools/goal-tool.ts`、`plan-mode/plan-autosave.ts`、`plan-mode/plan-files.ts`、`plan-mode/plan-handoff.ts`、`plan-mode/plan-protection.ts`、`plan-mode/approved-plan.ts`、`plan-mode/model-transition.ts`、`plan-mode/state.ts` | `src/runtime/modes/{goal,plan}/*`、`src/runtime/session-runtime/{goal,plan}-domain.ts`、`{goal,plan}-tools.ts`、`{goal,plan}-composition.ts`、`src/tui/interactive/{goal-loop,plan}-workflow.ts` | 两侧都已真实实现，但 RL 侧 `development-doc/plan/17-omp-loop-goal-mode-adaptation-plan.md` §14 记录行为与验收未闭合；上游文件式 plan 产物（autosave/plan-files/handoff/protection/approved-plan/model-transition）在 RL 由事件溯源的 plan artifact-store 与 `plan.approve` 取代 |
 | `tui/` | 10 | `tui/index.ts`、`tui/output-block.ts`、`tui/code-cell.ts`、`tui/tree-list.ts`、`tui/file-list.ts`、`tui/width-aware-text.ts`、`tui/status-line.ts`、`tui/hyperlink.ts` | `src/tui/primitives.ts`、`src/tui/text-layout.ts`、`src/tui/index.ts` | OSC 8 超链接已有对等物；缺 `sixel`/terminal-graphics、`code-cell`、`output-block`、`width-aware-text`、`tree-list`、`file-list`、`status-line` 等共享渲染助手（RL 自建 primitives 覆盖部分场景） |
 | `tiny/` | 14 | `tiny/title-client.ts`、`tiny/worker.ts`、`tiny/worker-server.ts`、`tiny/title-protocol.ts`、`tiny/models.ts`、`tiny/device.ts`、`tiny/mlx-runtime.ts`、`tiny/mlx-server.py`、`tiny/online-candidates.ts`、`tiny/completion-prompt.ts`、`tiny/message-preproc.ts`、`tiny/jsonl-socket.ts` | `src/runtime/session-runtime/title-generator.ts`、`src/runtime/session-runtime/title-lifecycle.ts`、`src/runtime/session-owner/title.ts` | 标题生成已具备，但走当前会话模型；缺本地 ONNX tiny worker（per-model 进程 + socket 协议）、device/EP 选择、mlx 运行时、online 候选、worker 空闲退出 |
+
+### 4.1 `tools/` 快照推进与剩余候选（2026-09-18）
+
+本节在当前 HEAD `aa9683e` 复核，而不是从 `0b2c501b` 的目录数推测。`src/runtime/tools/` 从基线的 26 增至 29 个 TS 文件，但文件数**不是**模型工具数：两个新增 `read-*` 文件是 `read` 的内部类型分支，只有 `ask` 新增了模型可调用工具。下表的「可立项」表示现有权威边界可以承接，不代表已获实施授权或可跳过专题设计。
+
+| 分类 | 项目 | 当前事实与必要边界 |
+|---|---|---|
+| 已完成 | `read` 的 sqlite/archive 分支 | `1108c7d` 在 `splitPathAndSel` 前识别 `db.sqlite:table` 与 `archive.zip:member`，经受治理 FS 读取字节、magic 嗅探失败则回落文本；sqlite 使用只读/`query_only`。这不是新增 `sqlite_reader` 或 `read_archive` 工具。已知限制是读取不到 SQLite `-wal`/`-shm` 侧车。 |
+| 已完成 | `ask` | `aa9683e` 新增 schema、reverse-request `AskPort`、TUI selector 分派，并由 embedded Session Runtime 注入生产 Session Domain。未接 UI 的客户端得到立即 typed failure，不轮询或伪造回答。 |
+| 已完成（相邻模块） | `web_search` | `30fd103` 的 `src/websource/search/tool.ts` 已通过 governed network 条件注册；它关闭的是上游 `web/`、`exa/` 模块缺口，而非完整移植 `tools/` 目录。 |
+| 可立项，需 Session 域改动 | `checkpoint` / `rewind` | 可以复用现有 `forkSession({ throughSequence })` 的**新会话**语义，不能回退 append-only 的原会话。前置是 durable 的用户可见命名 checkpoint，以及 driver 接到 handoff 后发起 fork/切换；现有 `session_checkpoints` 仅是可删除的 replay cache。 |
+| 可立项，独立文档转换专题 | DOCX/PPTX/XLSX/EPUB 的 `read` 分支 | 上游 markit 的这四类转换器是纯 TS，可在受治理 `read` 字节输入后接入；须另定输入/输出上限、二进制/附件呈现与许可证清单。PDF 依赖 native `pdf-inspector`，不随此项引入。 |
+| 可立项，需外部副作用合同 | `image_gen` | `src/images.ts` 已有 provider 图片生成分发 seam；要暴露模型工具仍需通过 ExecutionGateway/Attempt、artifact/trace 引用、输出呈现和 provider 失败语义，不能把 provider 调用直接放进工具实现。 |
+| 可立项，限只读子集 | GitHub 查询/上下文工具 | `src/websource/scrapers/github.ts` 已能在受治理网络下抓取 GitHub URL；可抽取只读查询，但上游 `gh-*` 含 PR checkout、watch 等操作，必须另定 token scope、权限/审计与 mutation 边界，不能把 scraper 当作 `gh` 全量对等物。 |
+| 可立项，需扩展治理设计 | 手动 `manage_skill` | RunLedger 已有 skill discovery/trust/registry 和 extension action seam；直接创建/修改 skill 必须走显式写入授权、来源/digest 与审计。上游的 `learn`/自动托管 skills 还依赖 memory backend，不能与此混为一项。 |
+
+下列项目前**不应作为低成本工具移植**：
+
+- `ast_grep` / `ast_edit` 受 Plan 16 已裁定的 native 依赖非目标约束；不引入 grammar/addon 脚手架。
+- PDF `read`、`browser` / `computer`、`eval` / `run-code` 分别需要 native PDF、browser/desktop worker、或模型代码执行内核，均没有可直接复用的生产运行时。
+- `memory_retain` / `memory_reflect` / `memory_edit` / `memory_recall` 和 `learn` 需先完成 Memory 的 Session Owner authority；当前专题状态是 `core partial, production unavailable`。
+- `yield` 与 `tools/hub` 分别依赖 async job manager 与可寻址/可复活 agent registry/IRC；`read-summary`、`shell-tokenize`、`tool-timeouts`、`render-utils` 则是 helper，不该先作为独立模型工具注册。
 
 ## 5. 已实质对等（`full`）
 
@@ -183,7 +205,8 @@ grep -rl -iE 'AgentRegistry|MAIN_AGENT_ID' $RL
 | 优先级 | 项目 | 理由 |
 |---|---|---|
 | P0 | `secrets/` 出站消息改写 | 唯一有直接安全后果的缺口：当前只做 sink 局部脱敏，粘进对话的密钥仍会发往 provider |
-| P0 | `tools/` 中低成本项：`ast-grep`/`ast-edit`、`read-pdf`/`read-archive`/`sqlite-reader`、`ask`、`checkpoint` | `src/lsp/` 与 `read` selector 框架已在，属增量而非新地基 |
+| 已完成 / 已裁定不做 | ~~`tools/` 中低成本项：`ast-grep`/`ast-edit`、`read-pdf`/`read-archive`/`sqlite-reader`、`ask`、`checkpoint`~~ | `read` 的 sqlite/archive 分支与 `ask` 已完成；前两项是 `read` helper 而非工具。`ast-*` 与 PDF 已有明确非目标裁定；`checkpoint`/`rewind` 转入 §4.1 的 Session 域候选，不能再按低成本项表述。 |
+| P1 | `checkpoint` / `rewind`（新会话 fork 语义） | 现有 fork 可承接，但需 durable 命名标记、driver handoff、Session Domain 与 TUI/CLI 的同一条协议；不改变 append-only 事件链。 |
 | P1 | `src/subprocess/*` + `src/async/job-manager.ts` | 是 `stats/`、`activity/`、`tts`/`stt`、`blob-broker` 的共同前置；不补则后续各项各自造轮子 |
 | P1 | `web/`（至少 search provider 层） | 已有受治网络策略与 `web-fetch` 骨架 |
 | P1 | `session/` 的 `turn-recovery` 重放与 `session-maintenance` length-stop | plan 14 已显式列为 out of scope，属已知欠账 |
