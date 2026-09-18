@@ -279,6 +279,30 @@ security:
 | `package.json` / `package-lock.json` | 仅 D1-A 需要新增依赖 |
 | `docs/configuration.md`、`docs/subsystems/*` | 文档同步 |
 
+### 4.7 解析层实现（Y1 已完成，`src/storage/config-source.ts`）
+
+新增模块 `src/storage/config-source.ts`，只做「定位生效文件 + 文本 → 未知值」，不碰 schema：
+
+| 导出 | 作用 |
+|---|---|
+| `configCandidatePaths(jsonPath)` | 纯函数，按 YAML 优先列出 `.yaml` / `.yml` / `.json`；基名不以 `.json` 结尾时直接报错 |
+| `parseConfigText(text, format)` | 文本 → `unknown`；失败抛 `ConfigParseError`（带 `format`） |
+| `resolveConfigSource(jsonPath)` | 定位生效文件，返回 `absent` / `ambiguous` / `resolved{path,format,shadowed}`；**不读内容**，供写入方判断能否安全写 JSON |
+| `readConfigDocument(jsonPath)` | 读 + 解析，返回 `absent` / `ambiguous` / `unreadable` / `invalid` / `ok{value,shadowed}` |
+
+**已落定的解析选项**（依据实测，不是照抄默认值）：
+
+- `yaml@2.9.1`，精确锁版本（仓库依赖约定：无 caret）。经 `check:package-boundaries` 通过。
+- `version: "1.2"` + `schema: "core"`：`yes`/`no`/`on`/`off` 保持字符串、时间戳不隐式转 `Date`。实测 YAML 1.1 的隐式转换不会出现，因此不需要额外的类型白名单。
+- `uniqueKeys: true`：重复键直接报错（`Map keys must be unique`），不静默取最后一个。
+- `merge: true`：允许 `<<` 合并键。**实测 `merge: false` 会把 `<<:` 变成字面键 `"<<"`**，随后被 sanitizer 当未知键静默丢弃 —— 那是「看起来对但不生效」的坑。合并只发生在同一文件内，结果仍要过同一 sanitizer，不构成 authority 绕过。
+- **告警按失败处理**：未知 tag（如 `!foo bar`）在 `yaml` 里只产生 warning，`strict: true` 也不会把它变成 error。因此实现改为显式检查 `document.errors` **与** `document.warnings`，任一非空即失败。
+- `maxAliasCount: 100`（默认值显式写出）：实测 alias 炸弹会抛 `Excessive alias count indicates a resource exhaustion attack`。
+- **空文档在两种格式下都按解析失败处理**。理由：`JSON.parse("")` 本来就抛错，而 YAML 会得到 `null`；统一成失败既不改动 JSON 的既有行为（空 `settings.json` 仍会关闭 recording 并输出诊断），又让两种格式的结论与诊断一致。这是 D2 等价性要求下唯一不引入行为变更的取值。
+- `__proto__` 实测只成为自身属性（`defineProperty`），不污染 `Object.prototype`。
+
+**写入侧约束（Y2 待实现）**：YAML 优先意味着「读 YAML、写 JSON」会让 CLI 的修改被静默遮蔽。写入方必须先调 `resolveConfigSource()`，若生效文件是 YAML 则**拒绝写入并报结构化错误**，而不是写出一份永远不生效的 JSON。
+
 ---
 
 ## 5. 分阶段实施
@@ -286,7 +310,7 @@ security:
 | 阶段 | 内容 | 前置 | 验收 |
 |---|---|---|---|
 | **Y0** | 冻结 D1/D2/D3 裁定；把 §3 的 `EXPOSABLE` 清单逐项回读上游确认默认值与边界 | D1–D3 | 裁定记录写入本文 §8 |
-| **Y1** | 解析层：新增统一的 `parseConfigText(text, format)` 与 `resolveConfigCandidates(basePath)`，只做「文本 → 未知对象」，不碰 schema | Y0 | 单测覆盖 JSON/YAML 等价性、非法输入、BOM、CRLF、空文件 |
+| **Y1** | 解析层：新增统一的 `parseConfigText(text, format)` 与 `resolveConfigSource(basePath)`，只做「文本 → 未知对象」，不碰 schema | Y0 | **已完成**：`src/storage/config-source.ts` + `tests/storage/config-source.test.ts`（38 条）。覆盖等价性（11 组表驱动）、非法输入、BOM、CRLF、空文件、重复键、未知 tag、alias 炸弹、`__proto__`、候选优先级与遮蔽诊断 |
 | **Y2** | 接入 `settings`（user + workspace）与 `security` 段；**authority 与 fail-closed 语义不变** | Y1 | 现有 `settings`/`security` 测试全绿；新增 YAML 等价性测试；workspace 层 `compaction`/`agentMode` 仍抛错 |
 | **Y3** | 接入其余载体（`models`、`tui-preferences`、`mcp`、`hooks`、`lsp`、managed security） | Y2 | 各载体等价性测试；managed YAML 的收紧校验与 JSON 一致 |
 | **Y4** | 暴露 `MAPPED` 对照文档（§7 R1 的 `webSearch` 修复已提前单独完成） | Y3 | `docs/configuration.md` 双格式章节；`webSearch` 已可实际生效 |
@@ -299,7 +323,7 @@ security:
 
 ## 6. 验收门槛
 
-- **YAML 与 JSON 等价性**：同一语义的 `.json` 与 `.yaml` 必须产生**逐字段相同**的解析结果（含诊断），用属性测试覆盖。
+- **YAML 与 JSON 等价性**：同一语义的 `.json` 与 `.yaml` 必须产生**逐字段相同**的解析结果（含诊断）。原文要求「属性测试覆盖」——仓库未引入 `fast-check`，且 D1 只批准新增 `yaml` 一个依赖，因此改为**表驱动**覆盖各值形态（标量 / 空值 / 空容器 / 深嵌套 / 块式与流式序列 / unicode / 转义 / 科学计数）。若后续要真正的属性测试，需先裁定新增 devDependency。
 - **authority 不回归**：`recording`/`compaction`/`agentMode`/`marketplace` 仍仅 user 层；workspace 收窄规则不变；`sessionDir` 仍被拒绝。
 - **fail closed 不放松**：security 段未知字段仍使整段失效；managed 层仍不得声明 profile/network/sandbox。
 - **`RUNLEDGER_DIR` 与 `RUNLEDGER_SESSION_DIR` 语义不变**。
