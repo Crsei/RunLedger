@@ -16,6 +16,7 @@ import type { FileSystemBrokerPort } from "../policy-filesystem.ts";
 import type { NetworkBrokerPort, NetworkBrokerResponse } from "../policy-network.ts";
 import type { SandboxLaunchPlan } from "../sandbox/types.ts";
 import type { GovernedProcessEnvironment, SessionToolchainProbe } from "../toolchain.ts";
+import { runtimeNodePlatform } from "../../workspace/runtime-platform.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -73,11 +74,39 @@ export function createLocalSessionProcessLeaf(): SessionProcessLeaf {
 	};
 }
 
+/**
+ * Windows 上 Node/Bun 只发布 `node.exe`/`bun.exe`，PATH 里的同名 shim 是无扩展名脚本或
+ * `.cmd`；后者在无 shell 时会被 execFile 拒绝（ERR_INVALID_ARG_VALUE）。因此 win32 只按
+ * 可直接 spawn 的映像扩展名解析，而不是照搬 cmd 的 PATH/PATHEXT 全量顺序。
+ */
+const WINDOWS_IMAGE_EXTENSIONS: readonly string[] = [".exe", ".com"];
+
+/** npm 在 Windows 只发布 `.cmd`/shell shim，attestation 以 `node <entry> --version` 复验，故解析到 JS 入口。 */
+const WINDOWS_NPM_ENTRY = join("node_modules", "npm", "bin", "npm-cli.js");
+
+/** 运行时平台经 runtime-platform 单点派生，本模块不自带平台分支。 */
+function executableExtensions(platform: NodeJS.Platform): readonly string[] {
+	return platform === "win32" ? WINDOWS_IMAGE_EXTENSIONS : [""];
+}
+
 /** Sandbox backend probe 使用的本机 executable locator。 */
-export async function findLocalExecutable(program: string): Promise<string | undefined> {
+export async function findLocalExecutable(program: string, platform: NodeJS.Platform = runtimeNodePlatform()): Promise<string | undefined> {
 	if (program.includes("/") || program.includes("\\")) return existsSync(program) ? program : undefined;
+	const extensions = executableExtensions(platform);
 	for (const entry of (process.env.PATH ?? "").split(delimiter)) {
-		const candidate = join(entry || ".", program);
+		for (const extension of extensions) {
+			const candidate = join(entry || ".", program + extension);
+			if (existsSync(candidate)) return candidate;
+		}
+	}
+	return undefined;
+}
+
+/** 工具链 attestation 的 npm 入口：POSIX 走 PATH 解析，Windows 解析到 npm-cli.js。 */
+export async function findLocalNpmEntry(platform: NodeJS.Platform = runtimeNodePlatform()): Promise<string | undefined> {
+	if (platform !== "win32") return findLocalExecutable("npm", platform);
+	for (const entry of (process.env.PATH ?? "").split(delimiter)) {
+		const candidate = join(entry || ".", WINDOWS_NPM_ENTRY);
 		if (existsSync(candidate)) return candidate;
 	}
 	return undefined;
@@ -86,7 +115,7 @@ export async function findLocalExecutable(program: string): Promise<string | und
 /** Session composition root 使用的本机工具链探针。 */
 export function createLocalSessionToolchainProbe(): SessionToolchainProbe {
 	return {
-		which: (program) => findLocalExecutable(program),
+		which: (program) => (program === "npm" ? findLocalNpmEntry() : findLocalExecutable(program)),
 		realpath: async (path) => fs.realpath(path).catch(() => undefined),
 		readFile: (path) => fs.readFile(path),
 		stat: async (path) => {

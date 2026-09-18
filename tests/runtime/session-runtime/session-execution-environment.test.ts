@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import {
 	createLocalSessionProcessLeaf,
 	createLocalSessionToolchainProbe,
+	findLocalExecutable,
+	findLocalNpmEntry,
 } from "../../../src/security/integration/session-local-leaves.ts";
 import { createSessionSecurity } from "../../../src/security/session-composition.ts";
 import {
@@ -246,6 +248,55 @@ describe("Session governed toolchain and process environment", () => {
 		} finally {
 			if (previous === undefined) delete process.env[secretKey];
 			else process.env[secretKey] = previous;
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("Local executable PATH resolution", () => {
+	/** 在受控 PATH 下运行回调，结束后恢复原值。 */
+	async function withPath<T>(entries: readonly string[], run: () => Promise<T>): Promise<T> {
+		const previous = process.env.PATH;
+		process.env.PATH = entries.join(delimiter);
+		try {
+			return await run();
+		} finally {
+			if (previous === undefined) delete process.env.PATH;
+			else process.env.PATH = previous;
+		}
+	}
+
+	it("prefers Windows image extensions over the extensionless shim next to them", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-executable-"));
+		const bin = join(root, "bin");
+		await mkdir(bin, { recursive: true });
+		await writeFile(join(bin, "node"), "");
+		await writeFile(join(bin, "node.exe"), "");
+		try {
+			await withPath([bin], async () => {
+				// 无扩展名 shim 与真实映像同名时，win32 必须选中可直接 spawn 的映像。
+				expect(await findLocalExecutable("node", "win32")).toBe(join(bin, "node.exe"));
+				expect(await findLocalExecutable("node", "linux")).toBe(join(bin, "node"));
+			});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves the Windows npm attestation entry to npm-cli.js instead of the .cmd shim", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-npm-entry-"));
+		const prefix = join(root, "prefix");
+		const npmBin = join(prefix, "node_modules", "npm", "bin");
+		await mkdir(npmBin, { recursive: true });
+		await writeFile(join(prefix, "npm.cmd"), "");
+		await writeFile(join(npmBin, "npm-cli.js"), "");
+		try {
+			await withPath([prefix], async () => {
+				// attestation 以 `node <entry> --version` 复验，Windows 的 .cmd shim 无法这样执行。
+				expect(await findLocalNpmEntry("win32")).toBe(join(npmBin, "npm-cli.js"));
+				expect(await findLocalNpmEntry("win32")).not.toBe(join(prefix, "npm.cmd"));
+			});
+		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
