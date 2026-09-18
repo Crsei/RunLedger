@@ -32,6 +32,7 @@ canonical home 由 composition root 解析一次：`RUNLEDGER_DIR` 必须是**�
 | `<home>/AGENTS.md` | 全局指令（与 `<cwd>/AGENTS.md` 一起注入系统提示） |
 | `<home>/state.db` | Session Owner SQLite authority |
 | `<home>/projects/<wsKey>/settings.json` | workspace 级 settings（`wsKey` = `ws-<sha256>`） |
+| `<home>/models.json` | 自定义 Provider / 上游模型代理（见 15.5） |
 | `<home>/state/tui-preferences.json` | 本地 TUI 展示偏好 |
 | `<home>/state/extensions/user/mcp.json` | user 级 MCP 配置 |
 | `<home>/state/extensions/workspaces/<wsKey>/mcp.json` | workspace 级 MCP 配置 |
@@ -41,6 +42,14 @@ canonical home 由 composition root 解析一次：`RUNLEDGER_DIR` 必须是**�
 | `<home>/migration-backup/` | 迁移 verified archive |
 
 目录权限 `0700`，文件权限 `0600`（`src/runtime/contracts/storage-layout.ts`）。
+
+### 配置格式：仅 JSON，不支持 YAML
+
+**当前所有配置载体都是 JSON，项目没有任何 YAML 配置入口。** 仓库未引入 YAML 解析依赖（`package.json` 中无 `yaml` / `js-yaml`；lockfile 里的 `yaml@^2.4.2` 只是 vite 的**可选 peer 依赖**，且未安装），运行时也没有 `.yml` / `.yaml` 配置文件候选名。
+
+唯一的 YAML 语法出现位置是 `SKILL.md` 的 frontmatter，由 `src/extensions/skills/frontmatter.ts` 的**有界子集 parser** 解析（自写、无依赖）：只接受标量、`[a, b]` 行内列表、缩进列表与字符串映射，明确拒绝 tab、顶层缩进、重复 key、alias（`*`/`&`）与 tag（`!`）。它不构成通用 YAML 支持，也不能用于本文其他配置项。
+
+同理，`src/websource/internal/platform.ts` 的 `parseFrontmatter()` 只是 choosealicense 抓取所需的极窄子集解析，不是通用 YAML 解析器。`docs/` 与 `development-doc/` 中出现的 YAML 代码块均为文档示例，其中 Plan 10 的 YAML 形态最终以 JSON 落地为 `<home>/models.json`。
 
 ---
 
@@ -502,7 +511,23 @@ sandbox 强度序：`off < external < workspace-write < read-only < strict`。sa
 
 值域：string ≤4096 字符；number 为 `[-1e9, 1e9]` 内的有限数；boolean 接受 `true` / `false` 与字符串 `"true"` / `"false"`。
 
-### 15.5 扩展配置层优先级
+### 15.5 自定义 Provider / 上游模型代理（`models.json`）
+
+位置：`<home>/models.json`（JSON，`src/providers/configured-proxy.ts`）。用于接入同时暴露 Anthropic Messages 与 OpenAI Chat Completions 双 wire 的代理（new-api / one-api / 同类服务）。文档根只接受 `providers` 对象；配置的 provider ID **不能与内建 provider 冲突**（冲突直接报错），`name` 可选且必须是非空字符串。
+
+| 字段 | 取值 / 默认 | 说明 |
+|---|---|---|
+| `baseUrl` | 非空 string，必填 | 代理端点，规范化为以 `/v1` 结尾 |
+| `apiKey` | string | 可选；也可走环境变量 |
+| `authHeader` | boolean，默认 `false` | `true` 时发送 `Authorization: Bearer <key>`（替代 Anthropic 系 `x-api-key`） |
+| `disableStrictTools` | boolean，默认 `false` | 代理不支持 strict tool schema 时关闭 |
+| `headers` | `{ [K]: string }` | 附加请求头 |
+| `discovery.type` | `"proxy"`，必填 | 双 wire 自动探测 |
+| `discovery.timeoutMs` | 正整数，默认 `5000` | 探测超时 |
+
+wire 探测按 Anthropic → OpenAI 的固定顺序进行，结果由进程内缓存持有（成功 5 分钟 / 失败 10 秒），不宣称跨进程恢复。
+
+### 15.6 扩展配置层优先级
 
 `builtin(0) < user(10) < project(20) < session(30) < cli(40) < managed(100)`，同层按 source 名与 digest 排序后深合并。
 
