@@ -16,6 +16,7 @@ import { isSessionCatalogResult, isSessionTitleResult, type SessionCatalogResult
 import type { InteractiveModePorts } from "./types.ts";
 import { commandSessionController } from "../adapters/session-domain.ts";
 import { isLoopResetHandoff, type LoopResetHandoff } from "../../runtime/loop/handoff.ts";
+import type { RewindDriverRequest, RewindDriverResponse } from "../../runtime/session-runtime/rewind-reverse-request.ts";
 
 export class SessionWorkflow {
 	private readonly port: InteractiveModePorts;
@@ -216,6 +217,38 @@ export class SessionWorkflow {
 			expectedRevision: catalog.revision,
 		});
 		if (transition !== undefined) await this.port.requestExit({ kind: "switch", action: "fork", target: { sessionId: transition.targetSessionId } });
+	}
+
+	/**
+	 * Model-triggered rewind arrives over the driver reverse-request channel.
+	 * It intentionally bypasses the idle-only slash-command gate: the current
+	 * turn is waiting for this response, and the source/owner/CAS fences remain
+	 * enforced by `session.rewind` before a switch intent is emitted.
+	 */
+	public async rewindToCheckpoint(request: RewindDriverRequest, signal: AbortSignal): Promise<RewindDriverResponse> {
+		if (signal.aborted) return { ok: false, code: "aborted" };
+		if (request.sourceSessionId !== this.port.getSessionId()) return { ok: false, code: "rewind_source_not_current" };
+		try {
+			const result = await commandSessionController(this.port.controller, "session.rewind", {
+				checkpointId: request.checkpointId,
+				checkpointGoal: request.checkpointGoal,
+				sourceSessionId: request.sourceSessionId,
+				checkpointSequence: request.checkpointSequence,
+				expectedSourceHeadSequence: request.expectedSourceHeadSequence,
+				report: request.report,
+			}, {
+				correlationId: `corr-${this.port.nextCorrelationId()}`,
+				effectId: `effect-${this.port.nextEffectId()}`,
+				expectedRevision: request.expectedCatalogRevision,
+			});
+			if (!result.ok) return { ok: false, code: result.code };
+			const targetSessionId = typeof result.value.targetSessionId === "string" ? result.value.targetSessionId : undefined;
+			if (targetSessionId === undefined || signal.aborted) return { ok: false, code: signal.aborted ? "aborted" : "reverse_request_invalid" };
+			await this.port.requestExit({ kind: "switch", action: "fork", target: { sessionId: targetSessionId } });
+			return { ok: true, targetSessionId };
+		} catch {
+			return { ok: false, code: "rewind_delivery_failed" };
+		}
 	}
 
 	/** `/rename <title>` uses the typed Session Domain effect workflow and catalog CAS. */

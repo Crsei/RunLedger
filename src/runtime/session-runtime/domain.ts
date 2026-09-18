@@ -11,6 +11,8 @@ const LOOP_CONDITION_TIMEOUT_MS = 60_000;
 import { resolveGoalSettings, resolveLoopSettings, type EffectiveGoalSettings, type EffectiveLoopSettings } from "../../storage/settings-manager.ts";
 import { createWebSearchCredentials } from "../../storage/web-search-credentials.ts";
 import type { AskPort } from "./ask-reverse-request.ts";
+import type { RewindPort } from "./rewind-reverse-request.ts";
+import { NamedCheckpointDomain } from "./named-checkpoint-domain.ts";
 import { toWebSearchSettings } from "../../storage/web-search-settings.ts";
 import { buildStandardExecutionPrompt } from "./standard-system-prompt.ts";
 import { assertAssembledPromptBase } from "../harness-profiles/composition.ts";
@@ -132,6 +134,8 @@ export interface SessionDomainCompositionOptions {
 	readonly multiAgentChildRuntimeProvider?: ChildRuntimeProviderPort;
 	/** 用户提问端口（`ask` 工具）。缺省时不注册该工具。 */
 	readonly askPort?: AskPort;
+	/** checkpoint rewind 的 driver reverse-request；缺省时 checkpoint/rewind 均不注册。 */
+	readonly rewindPort?: RewindPort;
 }
 
 /** 在 SessionRuntime 内装配真实 InteractiveSessionController(单一 Session 域)。 */
@@ -305,11 +309,16 @@ export async function assembleSessionDomain(
 				}
 			},
 		};
+	// checkpoint/rewind 只属于 standard profile，并且必须同时具备 driver
+	// handoff 端口；缺口时不暴露 create-only 的半成品工具。
+	const namedCheckpointDomain = harnessProfile.descriptor.tools.mode !== "standard" || options.rewindPort === undefined
+		? undefined
+		: new NamedCheckpointDomain({ store, fence, attemptPort: () => attemptPort.get(), rewindPort: options.rewindPort });
 	const baseTools = [
 		...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions, {
 			credentials: createWebSearchCredentials({ layout: options.layout }),
 			...(options.settings.webSearch === undefined ? {} : { settings: toWebSearchSettings(options.settings.webSearch) }),
-		}, options.askPort, manageSkillPort),
+		}, options.askPort, manageSkillPort, namedCheckpointDomain),
 		...planTools.tools,
 		...(goalSettings.enabled ? goalTools.tools : []),
 	];
@@ -513,6 +522,7 @@ export async function assembleSessionDomain(
 	const resources = composeSessionResourceDomains([
 		...(extensions === undefined ? [] : [extensions.resources]),
 		securitySettings, compaction, planDomain,
+		...(namedCheckpointDomain === undefined ? [] : [namedCheckpointDomain]),
 		// goal 与 plan 同属 session-owned canonical 状态域；goal 关闭时不注册。
 		...(goalSettings.enabled ? [goalDomain] : []),
 	]);
@@ -787,6 +797,7 @@ export function productionSessionTools(
 	webSearch?: StdlibToolsOptions["webSearch"],
 	askPort?: StdlibToolsOptions["askPort"],
 	manageSkill?: StdlibToolsOptions["manageSkill"],
+	namedCheckpoint?: StdlibToolsOptions["namedCheckpoint"],
 ): AgentTool[] {
 	const excluded = new Set(["NotebookEdit", "echo"]);
 	excluded.add("Skill");
@@ -798,6 +809,7 @@ export function productionSessionTools(
 		...(webSearch === undefined ? {} : { webSearch }),
 		...(askPort === undefined ? {} : { askPort }),
 		...(manageSkill === undefined ? {} : { manageSkill }),
+		...(namedCheckpoint === undefined ? {} : { namedCheckpoint }),
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));

@@ -16,6 +16,8 @@ export interface SessionForkRequest extends TuiPortRequest {
 	readonly sourceSessionId: string;
 	readonly expectedSourceHeadSequence: number;
 	readonly expectedRevision: number;
+	readonly compaction?: "inherit" | "raw";
+	readonly throughSequence?: number;
 }
 
 export interface SessionRenameRequest extends TuiPortRequest {

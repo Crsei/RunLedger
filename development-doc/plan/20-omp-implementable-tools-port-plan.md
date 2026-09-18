@@ -36,9 +36,9 @@
 
 ### 3.1 语义
 
-`checkpoint({ goal })` 在当前 durable、stable assistant boundary 创建一条 named-checkpoint 事实：名称/goal、source session、head sequence、创建者 generation、摘要 digest。它不是 `session_checkpoints` cache，也不是工作区或 Git snapshot。
+`checkpoint({ goal })` 在当前 durable、stable assistant boundary 创建一条 named-checkpoint 事实：名称/goal、source session、boundary sequence/hash、创建者 generation、goal 摘要 digest。它不是 `session_checkpoints` cache，也不是工作区或 Git snapshot。
 
-`rewind({ checkpoint, report })` 只解析当前 session 的命名 checkpoint，并发送不可伪造的 reverse-request handoff。TUI driver 复用 `session.fork({ throughSequence })`，成功后切到新 session；失败、取消、stale head 或不稳定边界均不改变源 session。headless 没有 handler必须立即 typed failure，禁止 polling。
+`rewind({ checkpoint, report })` 只解析当前 session 的命名 checkpoint，并发送不可伪造的 reverse-request handoff。TUI driver 调用 `session.rewind`，它在一个 SQLite 事务内以 `session.fork({ throughSequence })` 的历史投影创建目标、写入目标 report 和源端审计，再切到新 session；失败、取消、stale head 或不稳定边界均不改变源 session。headless 没有 handler必须立即 typed failure，禁止 polling。
 
 ### 3.2 实现文件
 
@@ -52,11 +52,11 @@
 | `src/runtime/tools/index.ts`、`src/runtime/tools/capabilities.ts` | 仅有 port 时注册；checkpoint 为 session mutation、rewind 为 driver-switch mutation，Plan Mode 默认 unknown/deny。 |
 | `src/runtime/session-runtime/domain.ts` | 创建 domain、将它加到 session resource domains，并把两个 port 传入 `productionSessionTools`。 |
 | `src/cli/embedded-session-runtime.ts` | owner-side `RewindPort` 的唯一生产构造。 |
-| `src/tui/interactive/approval-workflow.ts`、`src/tui/interactive/session-workflow.ts` | 处理 `rewind_request`，以已有 `session.fork` command、expected revision/head 和 switch exit intent 完成 handoff。 |
+| `src/tui/interactive/approval-workflow.ts`、`src/tui/interactive/session-workflow.ts` | 处理 `checkpoint_rewind`，以 `session.rewind` command、expected revision/head 和 switch exit intent 完成 handoff。 |
 
 ### 3.3 验收
 
-新增 `tests/runtime/session-runtime/named-checkpoint.test.ts`、`tests/runtime/tools/{checkpoint,rewind}.test.ts`、`tests/tui/rewind-reverse-request.test.ts`。覆盖 event replay、同名冲突、cache 删除后仍可 rewind、headless fail-fast、fork CAS/stale/cancel 和 source immutable。最后用 built CLI/真实 TTY 创建一个 checkpoint 并 rewind；验证 source/child session ID 和 sequence，而非只看 modal。
+新增 `tests/runtime/session-runtime/named-checkpoint.test.ts`、`tests/runtime/tools/{checkpoint,rewind}.test.ts`、`tests/tui/rewind-reverse-request.test.ts`。覆盖 event replay、活跃 checkpoint 冲突、cache 不参与 resolve、headless fail-fast、fork CAS/stale 和 source immutable。最后用 built CLI/真实 TTY 创建一个 checkpoint 并 rewind；验证 source/child session ID 和 sequence，而非只看 modal。
 
 ## 4. 阶段 II：非 PDF 文档转换 read branch
 
@@ -144,7 +144,7 @@
 
 | 阶段 | 初始状态 | 进入下一阶段的门槛 |
 |---|---|---|
-| I checkpoint/rewind | planned | 定向 tests + source immutability + built CLI/TTY fork evidence |
+| I checkpoint/rewind | implemented，待真实 TTY tool-call evidence | 已完成 named event projection、owner-fenced atomic target/source handoff、标准 profile 注册、headless fail-fast、router/TUI switch 和 32 项定向测试；仍需可用 provider 下的 built CLI/TTY 实际工具调用证据。 |
 | II office/EPUB read | planned | 定向 converter/read tests + execution-boundary check |
 | III image_gen | planned | fake governed network tests；真实 provider 另列 pending/accepted 证据 |
 | IV GitHub read | implemented，待 built CLI smoke | `src/websource/github-read.ts` 与 `src/runtime/tools/github.ts` 已经由 `createWebSearchFetch({ principal: "github" })` 接入标准组合；定向 transport/tool/stdlib 测试已通过，仍须随本批次完成 check/build/CLI 验证。 |

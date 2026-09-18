@@ -7,7 +7,7 @@ export type TuiEffect =
 	| ({ readonly type: "session.list" } & CorrelatedRequestRef)
 	| ({ readonly type: "session.create"; readonly expectedRevision: number; readonly harnessProfileId?: "standard" | "minimal"; readonly agentMode?: "default" | "minimal" | "plan" } & CorrelatedRequestRef)
 	| ({ readonly type: "session.resume"; readonly targetSessionId: string; readonly expectedRevision: number } & CorrelatedRequestRef)
-	| ({ readonly type: "session.fork"; readonly sourceSessionId: string; readonly expectedSourceHeadSequence: number; readonly expectedRevision: number } & CorrelatedRequestRef)
+	| ({ readonly type: "session.fork"; readonly sourceSessionId: string; readonly expectedSourceHeadSequence: number; readonly expectedRevision: number; readonly compaction?: "inherit" | "raw"; readonly throughSequence?: number } & CorrelatedRequestRef)
 	| ({ readonly type: "session.rename"; readonly title: string; readonly expectedRevision: number; readonly expectedTitle?: string | null } & CorrelatedRequestRef)
 	| ({ readonly type: "provider.list" } & CorrelatedRequestRef)
 	| ({ readonly type: "auth.inspect" } & CorrelatedRequestRef)

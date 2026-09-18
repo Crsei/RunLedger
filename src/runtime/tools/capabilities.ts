@@ -21,7 +21,7 @@ const READ_TOOLS = new Set(["read", "grep", "glob", "ls"]);
  * 的 `repository_read + filesystem` 才允许的判定),不代表它真的读文件。
  */
 const READ_INTERACTION_TOOLS = new Set(["ask"]);
-const WRITE_TOOLS = new Set(["write", "edit", "MultiEdit", "todo", "manage_skill"]);
+const WRITE_TOOLS = new Set(["write", "edit", "MultiEdit", "todo", "manage_skill", "checkpoint", "rewind"]);
 const PROCESS_TOOLS = new Set(["bash", "process_output", "process_wait", "write_stdin", "process_stop", "process_resize"]);
 
 export function builtinCapabilityClaims(toolName: string): readonly CapabilityClaim[] | undefined {

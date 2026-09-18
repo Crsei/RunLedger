@@ -357,7 +357,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       capabilities: {
 		...capabilitiesFromPorts(this.ports, {
 			sessionCatalog: this.authAdapter.supports("session.catalog.list"),
-			sessionMutation: ["session.create", "session.resume", "session.fork", "session.title.set"].some((operation) => this.authAdapter.supports(operation)),
+			sessionMutation: ["session.create", "session.resume", "session.fork", "session.rewind", "session.title.set"].some((operation) => this.authAdapter.supports(operation)),
 			process: this.authAdapter.supports("session.process.list") && this.authAdapter.supports("session.process.output"),
 		}),
       },
@@ -401,7 +401,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.agentWorkflow = new AgentWorkflow(port);
     this.promptDumpWorkflow = new PromptDumpWorkflow(port);
     this.processWorkflow = new ProcessWorkflow(port);
-    this.approvalWorkflow = new ApprovalWorkflow(port);
+		this.approvalWorkflow = new ApprovalWorkflow(port, {
+			rewind: (request, signal) => this.sessionWorkflow.rewindToCheckpoint(request, signal),
+		});
     this.permissionsWorkflow = new PermissionsWorkflow({
       onApplied: (profile) => { this.permissionProfile = profile; this.ui.requestRender(); },
       controller: this.controller,

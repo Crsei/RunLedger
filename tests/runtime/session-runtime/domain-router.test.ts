@@ -9,6 +9,7 @@ import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { SessionDomainRouter, SESSION_PROMPT_INSPECTION_MAX_BYTES } from "../../../src/runtime/session-runtime/domain-router.ts";
 import type { SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { resolveSessionWorkspaceIdentity } from "../../../src/cli/session-workspace-identity.ts";
+import { checkpointCreationPayload, type NamedCheckpoint } from "../../../src/runtime/session-runtime/named-checkpoint.ts";
 
 let harness: RuntimeHarness | undefined;
 
@@ -811,5 +812,47 @@ describe("S1 Session Domain Router", () => {
 		expect(harness.store.getSession(targetSessionId)?.harnessProfile).toEqual(standardHarnessProfileRef());
 		expect(harness.store.listSessions()).toHaveLength(2);
 		expect(harness.store.listAllAttemptReceipts(harness.sessionId).map((receipt) => receipt.outcome)).toEqual(["started", "committed"]);
+	});
+
+	it("rewinds only an active checkpoint through a fenced fork and leaves source history append-only", async () => {
+		harness = await createRuntimeHarness("domain-rewind-success");
+		const append = (eventId: string, eventType: string, payloadJson: string): void => {
+			const tail = harness!.store.latestEventHead(harness!.sessionId);
+			harness!.store.appendEvent(harness!.fence, {
+				eventId: createRuntimeId("event", eventId), ownerGeneration: harness!.fence.generation,
+				eventType, payloadJson, createdAtMs: Date.now(), expectedPreviousEventHash: tail.hash,
+			});
+		};
+		append("rewind-stable", "ledger.message", JSON.stringify({
+			id: "entry_rewind_stable", sessionId: harness.sessionId, parentId: harness.sessionId,
+			timestamp: 1, type: "message", payload: { message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "stable" }] } },
+		}));
+		const stable = harness.store.replaySessionEvents(harness.sessionId).at(-1)!;
+		const checkpoint: NamedCheckpoint = {
+			checkpointId: createRuntimeId("snapshot", "domain-rewind"), sessionId: harness.sessionId, goal: "Before refactor",
+			summaryDigest: runtimeDigest("Before refactor").digest,
+			boundarySequence: stable.sequence, boundaryEventHash: stable.currentEventHash, createdAtMs: Date.now(), ownerGeneration: harness.fence.generation,
+		};
+		append("rewind-checkpoint", "checkpoint.created", JSON.stringify(checkpointCreationPayload(checkpoint)));
+		const sourceBefore = harness.store.getSession(harness.sessionId)!;
+		const result = await harness.runtime.handleCommand({
+			commandId: createRuntimeId("command", "domain-rewind-success"), kind: "domain_command",
+			body: {
+				sessionId: harness.sessionId, generation: harness.fence.generation,
+				correlationId: "correlation_domain_rewind", effectId: "effect_domain_rewind",
+				operation: "session.rewind", expectedRevision: harness.store.catalogRevision(),
+				payload: {
+					checkpointId: checkpoint.checkpointId, checkpointGoal: checkpoint.goal, sourceSessionId: harness.sessionId,
+					checkpointSequence: checkpoint.boundarySequence, expectedSourceHeadSequence: sourceBefore.headSequence,
+					report: "Continue with the safer design.",
+				},
+			},
+		}, { connectionId: createRuntimeId("connection", "domain-rewind-driver"), clientId: "client_domain_rewind_driver", isDriver: true });
+		expect(result).toMatchObject({ ok: true, result: { ok: true, operation: "session.rewind", value: { targetSessionId: expect.stringMatching(/^session_/u) } } });
+		if (!result.ok || !result.result.ok) throw new Error("rewind failed");
+		if (typeof result.result.value !== "object" || result.result.value === null || !("targetSessionId" in result.result.value)) throw new Error("rewind target missing");
+		const targetSessionId = String(result.result.value.targetSessionId);
+		expect(harness.store.replaySessionEvents(harness.sessionId).at(-1)?.eventType).toBe("checkpoint.rewound");
+		expect(harness.store.replaySessionEvents(targetSessionId).map((event) => event.eventType)).toEqual(["ledger.message", "session.forked", "ledger.custom"]);
 	});
 });

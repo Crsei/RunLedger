@@ -12,6 +12,7 @@ import { makeSelectListTheme } from "../theme/factories.ts";
 import { approvalChoices, approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "../approval.ts";
 import { decodeAuthEvent, decodeAuthPrompt } from "../../runtime/session-runtime/credential-reverse-request.ts";
 import { ASK_REVERSE_REQUEST_KIND, decodeAskRequest, type AskQuestion } from "../../runtime/session-runtime/ask-reverse-request.ts";
+import { CHECKPOINT_REWIND_REQUEST_KIND, decodeRewindRequest, type RewindDriverResponse } from "../../runtime/session-runtime/rewind-reverse-request.ts";
 import type { AuthEvent, AuthPrompt } from "../../auth/types.ts";
 import type { SessionFrameEnvelope } from "../../runtime/session-server/protocol.ts";
 import type { InteractiveModePorts } from "./types.ts";
@@ -27,15 +28,21 @@ export interface HostReverseFrame {
 /** 多选问题的「提交所选」哨兵值;选项标签里不会出现(重复标签已被解码拒绝)。 */
 const ASK_SUBMIT_VALUE = "__ask_submit__";
 
+export interface ApprovalWorkflowOptions {
+	readonly rewind?: (request: NonNullable<ReturnType<typeof decodeRewindRequest>>, signal: AbortSignal) => Promise<RewindDriverResponse>;
+}
+
 export class ApprovalWorkflow {
 	private readonly port: InteractiveModePorts;
 	/** 活跃 permission view(approval 测试读取);busy 拒绝依赖它。 */
 	activePermissionView: PermissionRequestView | undefined;
 	/** 活跃 ask 提问:同一时刻只允许一个提问序列占据 overlay。 */
 	private activeAsk = false;
+	private readonly rewind: ApprovalWorkflowOptions["rewind"];
 
-	public constructor(port: InteractiveModePorts) {
+	public constructor(port: InteractiveModePorts, options: ApprovalWorkflowOptions = {}) {
 		this.port = port;
+		this.rewind = options.rewind;
 	}
 
 	/** Host 逆向 approval 请求：只收集并返回决策；Host receipt 未接入前不更新 approval workflow。 */
@@ -56,7 +63,16 @@ export class ApprovalWorkflow {
 			return this.handleCredentialReverseRequest(frame, signal);
 		}
 		if (requestKind === ASK_REVERSE_REQUEST_KIND) return this.handleAskReverseRequest(frame, signal);
+		if (requestKind === CHECKPOINT_REWIND_REQUEST_KIND) return this.handleRewindReverseRequest(frame, signal);
 		return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+	}
+
+	private async handleRewindReverseRequest(frame: SessionFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
+		const request = decodeRewindRequest(frame.body.body);
+		if (request === undefined) return { ok: false, code: "reverse_request_invalid" };
+		if (this.rewind === undefined) return { ok: false, code: "reverse_request_unhandled" };
+		const result = await this.rewind(request, signal);
+		return result.ok ? { ok: true, targetSessionId: result.targetSessionId } : { ok: false, code: result.code };
 	}
 
 	private handleApprovalReverseRequest(body: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {

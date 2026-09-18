@@ -106,6 +106,18 @@ export interface ForkSessionInput {
 	readonly expectedCatalogRevision?: number;
 }
 
+/**
+ * A rewind is a bounded fork plus a durable source-side audit record.  The
+ * checkpoint boundary is intentionally separate from the source head: the
+ * latter fences concurrent appends, while the former is the copied history.
+ */
+export interface RewindSessionInput extends ForkSessionInput {
+	readonly checkpointId: string;
+	readonly checkpointGoal: string;
+	readonly checkpointSequence: number;
+	readonly report: string;
+}
+
 export interface AppendEventInput {
 	readonly eventId: string;
 	readonly ownerGeneration: number;
@@ -195,6 +207,11 @@ export class SessionStore {
 
 	public forkSession(input: ForkSessionInput): SessionCatalogRecord {
 		return this.catalog.forkSession(input);
+	}
+
+	/** Source audit, target fork, and replay report share one SQLite transaction. */
+	public rewindSession(fence: OwnerFence, input: RewindSessionInput): SessionCatalogRecord {
+		return this.catalog.rewindSession(fence, input);
 	}
 
 	/** §4.5/R2:owner-fenced event append,事务内校验 admission/fence/sequence/previous hash。 */

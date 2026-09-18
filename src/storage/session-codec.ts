@@ -50,6 +50,16 @@ export function projectSessionReplay(
         config.thinkingLevel = entry.payload.thinkingLevel;
       }
     }
+    if (entry.type === "custom" && entry.payload.kind === "checkpoint.rewind_report") {
+      const report = typeof entry.payload.report === "string" ? entry.payload.report : undefined;
+      const goal = typeof entry.payload.goal === "string" ? entry.payload.goal : undefined;
+      if (report !== undefined && goal !== undefined) {
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: `Rewind report for checkpoint goal: ${goal}\n\n${report}` }],
+        } as AgentMessage);
+      }
+    }
     if (entry.type === "tool_call" || entry.type === "tool_result") auditEntries.push(entry);
   }
 

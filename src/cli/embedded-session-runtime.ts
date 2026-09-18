@@ -25,6 +25,7 @@ import { assembleSessionDomain, type SessionDomainCompositionOptions } from "../
 import { LateBoundAttemptPort } from "../runtime/session-runtime/attempt-gateway.ts";
 import { createSessionApprovalPorts, LateBoundHumanInputWaitPort } from "../runtime/session-runtime/approval-reverse-request.ts";
 import { createReverseRequestAskPort } from "../runtime/session-runtime/ask-reverse-request.ts";
+import { createReverseRequestRewindPort } from "../runtime/session-runtime/rewind-reverse-request.ts";
 import { restoreSession } from "../runtime/session-runtime/restore.ts";
 import { LateBoundAgentRunBudgetUsage } from "../runtime/session-runtime/run-timing.ts";
 import { SessionClient, type OwnedSessionHandle } from "./session-client.ts";
@@ -231,6 +232,14 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 			sender: server,
 			connectionId: () => server.driverConnectionId(),
 		});
+	// Rewind follows the same single-shot reverse-request semantics as ask:
+	// a headless driver explicitly rejects it instead of leaving a hidden wait.
+	const rewindPort = options.domain === undefined
+		? undefined
+		: createReverseRequestRewindPort({
+			sender: server,
+			connectionId: () => server.driverConnectionId(),
+		});
 	const domainOptions = options.domain === undefined
 		? undefined
 		: {
@@ -238,6 +247,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 				...(workspace === undefined ? {} : { cwd: workspace.effectiveCwd }),
 				...(approvalPorts === undefined ? {} : { approvalPorts }),
 				...(askPort === undefined ? {} : { askPort }),
+				...(rewindPort === undefined ? {} : { rewindPort }),
 			};
 	let domain: SessionDomainPort | undefined;
 	try {

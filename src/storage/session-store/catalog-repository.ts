@@ -17,6 +17,7 @@ import type {
 	CreateSessionInput,
 	ForkSessionInput,
 	PutWorktreeLocatorInput,
+	RewindSessionInput,
 	SessionCatalogRecord,
 	SetSessionTitleInput,
 } from "./session-store.ts";
@@ -274,8 +275,56 @@ export class CatalogRepository {
 	/** fork:冻结 source head，typed 投影 canonical ledger，并写入目标自己的 lineage event。 */
 	public forkSession(input: ForkSessionInput): SessionCatalogRecord {
 		this.assertAdmissionReady();
-		let forked: SessionCatalogRecord | undefined;
 		this.db.withImmediateTransactionSync((tx) => {
+			this.forkSessionInTransaction(tx, input);
+		});
+		return this.getSession(input.sessionId)!;
+	}
+
+	/**
+	 * Rewind never rewrites source history.  It creates the target from the
+	 * checkpoint boundary, appends the report to that target, then appends the
+	 * source audit record in the same transaction.
+	 */
+	public rewindSession(fence: OwnerFence, input: RewindSessionInput): SessionCatalogRecord {
+		this.assertAdmissionReady();
+		this.db.withImmediateTransactionSync((tx) => {
+			if (!verifyOwnerFence(tx, fence)) throw new SessionStoreError("owner_fenced", "owner fenced");
+			this.forkSessionInTransaction(tx, input, fence);
+			const now = Date.now();
+			this.appendRewindReportInTransaction(tx, fence, input, now);
+			const sourceHead = tx.querySingle(
+				"SELECT head_sequence FROM sessions WHERE session_id = ?",
+				[input.sourceSessionId],
+			);
+			if (sourceHead === undefined) throw new SessionStoreError("fork_source_not_found", "rewind source disappeared");
+			const sourceSequence = Number(sourceHead.head_sequence);
+			const sourceTail = tx.querySingle(
+				"SELECT current_event_hash FROM session_events WHERE session_id = ? AND sequence = ?",
+				[input.sourceSessionId, sourceSequence],
+			);
+			appendEventInTransaction(tx, fence, {
+				eventId: createRuntimeId("event", canonicalDigest({ type: "checkpoint.rewound", checkpointId: input.checkpointId, target: input.sessionId, now }).slice(0, 64)),
+				ownerGeneration: fence.generation,
+				eventType: "checkpoint.rewound",
+				payloadJson: JSON.stringify({
+					schema: "runledger.named-checkpoint-rewind@1",
+					checkpointId: input.checkpointId,
+					sessionId: input.sourceSessionId,
+					checkpointSequence: input.checkpointSequence,
+					targetSessionId: input.sessionId,
+					reportDigest: canonicalDigest(input.report),
+				}),
+				createdAtMs: now,
+				expectedPreviousEventHash: sourceTail?.current_event_hash === undefined ? null : String(sourceTail.current_event_hash),
+			});
+		});
+		return this.getSession(input.sessionId)!;
+	}
+
+	/** `fence` is required by rewind; ordinary fork establishes a fresh target before it has an owner. */
+	private forkSessionInTransaction(tx: SessionDatabase, input: ForkSessionInput, fence?: OwnerFence): void {
+		if (fence !== undefined && !verifyOwnerFence(tx, fence)) throw new SessionStoreError("owner_fenced", "owner fenced");
 			if (input.expectedCatalogRevision !== undefined) {
 				if (catalogRevisionInTransaction(tx) !== input.expectedCatalogRevision) {
 					throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before the fork transaction");
@@ -386,8 +435,56 @@ export class CatalogRepository {
 			);
 			tx.runSync("UPDATE sessions SET head_sequence = ?, updated_at_ms = ? WHERE session_id = ?", [sequence, now, input.sessionId]);
 			tx.runSync("UPDATE store_control SET catalog_revision = catalog_revision + 1 WHERE singleton_id = 1");
-		});
-		forked = this.getSession(input.sessionId);
-		return forked!;
 	}
+
+	private appendRewindReportInTransaction(tx: SessionDatabase, fence: OwnerFence, input: RewindSessionInput, now: number): void {
+		if (!verifyOwnerFence(tx, fence)) throw new SessionStoreError("owner_fenced", "owner fenced");
+		const target = tx.querySingle("SELECT head_sequence FROM sessions WHERE session_id = ?", [input.sessionId]);
+		if (target === undefined) throw new SessionStoreError("session_not_found", "rewind target was not created");
+		const headSequence = Number(target.head_sequence);
+		const tail = headSequence === 0
+			? undefined
+			: tx.querySingle("SELECT event_id, current_event_hash FROM session_events WHERE session_id = ? AND sequence = ?", [input.sessionId, headSequence]);
+		const parent = tx.querySingle(
+			"SELECT payload_json FROM session_events WHERE session_id = ? AND event_type LIKE 'ledger.%' ORDER BY sequence DESC LIMIT 1",
+			[input.sessionId],
+		);
+		const parentId = ledgerEntryId(parent?.payload_json, input.sessionId);
+		const entryId = createRuntimeId("event", canonicalDigest({ type: "checkpoint.rewind_report", checkpointId: input.checkpointId, target: input.sessionId }).slice(0, 64));
+		const payloadJson = JSON.stringify({
+			id: entryId,
+			sessionId: input.sessionId,
+			parentId,
+			timestamp: now,
+			type: "custom",
+			payload: {
+				kind: "checkpoint.rewind_report",
+				checkpointId: input.checkpointId,
+				goal: input.checkpointGoal,
+				report: input.report,
+			},
+		});
+		const sequence = headSequence + 1;
+		const previous = tail?.current_event_hash === undefined ? null : String(tail.current_event_hash);
+		const eventId = createRuntimeId("event", canonicalDigest({ type: "checkpoint.rewind_report.event", checkpointId: input.checkpointId, target: input.sessionId }).slice(0, 64));
+		const current = sessionEventHash(input.sessionId, sequence, eventId, "ledger.custom", payloadJson, previous);
+		tx.runSync(
+			"INSERT INTO session_events (session_id, sequence, event_id, owner_generation, event_type, payload_json, previous_event_hash, current_event_hash, created_at_ms) VALUES (?, ?, ?, 0, 'ledger.custom', ?, ?, ?, ?)",
+			[input.sessionId, sequence, eventId, payloadJson, previous, current, now],
+		);
+		tx.runSync("UPDATE sessions SET head_sequence = ?, updated_at_ms = ? WHERE session_id = ?", [sequence, now, input.sessionId]);
+	}
+}
+
+function ledgerEntryId(payloadJson: unknown, fallback: string): string {
+	if (typeof payloadJson !== "string") return fallback;
+	try {
+		const parsed: unknown = JSON.parse(payloadJson);
+		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && typeof (parsed as Record<string, unknown>).id === "string") {
+			return (parsed as Record<string, unknown>).id as string;
+		}
+	} catch {
+		return fallback;
+	}
+	return fallback;
 }

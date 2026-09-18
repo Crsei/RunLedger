@@ -11,6 +11,7 @@ import type { SessionPlanInspection } from "./plan-composition.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
 import { resolveHarnessProfileId } from "../harness-profiles/index.ts";
 import type { PromptInspection } from "../types.ts";
+import { resolveNamedCheckpoint } from "./named-checkpoint.ts";
 
 /**
  * `/dump` 单帧预算：传输上限是 `SESSION_PROTOCOL_BOUNDS.maxFrameBytes`(256 KiB)，
@@ -112,6 +113,7 @@ export class SessionDomainRouter {
 			Object.freeze({ operation: "session.create", capability: "session.catalog", access: "mutate" }),
 			Object.freeze({ operation: "session.resume", capability: "session.catalog", access: "mutate" }),
 			Object.freeze({ operation: "session.fork", capability: "session.catalog", access: "mutate" }),
+			Object.freeze({ operation: "session.rewind", capability: "session.catalog", access: "mutate" }),
 			Object.freeze({ operation: "session.title.set", capability: "session.catalog", access: "mutate" }),
 			...(this.securityInspection === undefined
 				? []
@@ -485,6 +487,64 @@ export class SessionDomainRouter {
 			} catch (error) {
 				const settled = this.attempts.settleAttempt(begun.attemptId, "rejected", runtimeDigest({ operation, error: error instanceof Error ? error.message : String(error) }));
 				return { ok: false, status: "failed", code: settled.ok ? "session_fork_failed" : settled.code, operation };
+			}
+		}
+		if (operation === "session.rewind") {
+			const catalogRevision = this.store.catalogRevision();
+			if (input.expectedRevision !== catalogRevision) {
+				return { ok: false, status: "stale", code: "domain_revision_conflict", operation, currentRevision: catalogRevision };
+			}
+			if (this.ownerFence === undefined) return { ok: false, status: "failed", code: "owner_fence_unavailable", operation, currentRevision: catalogRevision };
+			const payload = recordValue(input.payload);
+			const allowed = new Set(["checkpointId", "checkpointGoal", "sourceSessionId", "checkpointSequence", "expectedSourceHeadSequence", "report"]);
+			if (Object.keys(payload).some((key) => !allowed.has(key))) return { ok: false, status: "failed", code: "rewind_payload_invalid", operation, currentRevision: catalogRevision };
+			const checkpointId = typeof payload.checkpointId === "string" ? payload.checkpointId : undefined;
+			const checkpointGoal = typeof payload.checkpointGoal === "string" ? payload.checkpointGoal : undefined;
+			const sourceSessionId = typeof payload.sourceSessionId === "string" ? payload.sourceSessionId : undefined;
+			const checkpointSequence = typeof payload.checkpointSequence === "number" && Number.isSafeInteger(payload.checkpointSequence) ? payload.checkpointSequence : undefined;
+			const expectedSourceHeadSequence = typeof payload.expectedSourceHeadSequence === "number" && Number.isSafeInteger(payload.expectedSourceHeadSequence) ? payload.expectedSourceHeadSequence : undefined;
+			const report = typeof payload.report === "string" ? payload.report : undefined;
+			if (checkpointId === undefined || checkpointGoal === undefined || sourceSessionId === undefined || checkpointSequence === undefined || expectedSourceHeadSequence === undefined || report === undefined || report.length === 0 || report.length > 16_384) {
+				return { ok: false, status: "failed", code: "rewind_payload_invalid", operation, currentRevision: catalogRevision };
+			}
+			if (sourceSessionId !== this.sessionId) return { ok: false, status: "denied", code: "rewind_source_not_current", operation, currentRevision: catalogRevision };
+			const source = this.store.getSession(sourceSessionId);
+			if (source === undefined) return { ok: false, status: "unavailable", code: "session_not_found", operation, currentRevision: catalogRevision };
+			if (source.headSequence !== expectedSourceHeadSequence) return { ok: false, status: "stale", code: "rewind_source_head_conflict", operation, currentRevision: source.headSequence };
+			const checkpoint = resolveNamedCheckpoint(this.store, sourceSessionId, checkpointId);
+			if (checkpoint === undefined || checkpoint.goal !== checkpointGoal || checkpoint.boundarySequence !== checkpointSequence) {
+				return { ok: false, status: "stale", code: "checkpoint_not_active", operation, currentRevision: source.headSequence };
+			}
+			const begun = this.attempts.beginAttempt("workspace_mutation", runtimeDigest({
+				operation, correlationId: input.correlationId, effectId: input.effectId, checkpointId,
+				reportDigest: runtimeDigest(report).digest, expectedRevision: input.expectedRevision,
+			}));
+			if ("error" in begun) return { ok: false, status: begun.error === "recovery_barrier_active" ? "recovery_required" : "failed", code: begun.error, operation, currentRevision: source.headSequence };
+			if (!("attemptId" in begun)) return { ok: false, status: "failed", code: "rewind_attempt_unavailable", operation, currentRevision: source.headSequence };
+			try {
+				const targetSessionId = createRuntimeId("session", `rewind-${Date.now().toString(36)}-${String(input.effectId).slice(-24)}`);
+				this.store.rewindSession(this.ownerFence, {
+					sessionId: targetSessionId,
+					sourceSessionId,
+					expectedSourceHeadSequence,
+					expectedCatalogRevision: catalogRevision,
+					throughSequence: checkpoint.boundarySequence,
+					checkpointId,
+					checkpointGoal,
+					checkpointSequence,
+					report,
+				});
+				const settled = this.attempts.settleAttempt(begun.attemptId, "committed", runtimeDigest({ operation, checkpointId, targetSessionId }));
+				if (!settled.ok) return { ok: false, status: "failed", code: settled.code, operation };
+				return {
+					ok: true, status: "ok", operation, domainRevision: this.store.catalogRevision(),
+					value: { targetSessionId, sourceSessionId, sourceHeadSequence: expectedSourceHeadSequence, harnessProfileId: source.harnessProfile.id, harnessProfileVersion: source.harnessProfile.version },
+					receipt: { attemptId: begun.attemptId, commandId: begun.commandId, outcome: "committed" },
+				};
+			} catch (error) {
+				const code = error instanceof Error && "code" in error ? String((error as { readonly code?: unknown }).code) : "session_rewind_failed";
+				const settled = this.attempts.settleAttempt(begun.attemptId, "rejected", runtimeDigest({ operation, checkpointId, code }));
+				return { ok: false, status: code.includes("conflict") ? "stale" : "failed", code: settled.ok ? code : settled.code, operation, currentRevision: this.store.catalogRevision() };
 			}
 		}
 		return { ok: false, status: "unavailable", code: "operation_unavailable", operation };

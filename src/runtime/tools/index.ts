@@ -53,6 +53,9 @@ import { createAskTool } from "./ask.ts";
 import type { AskPort } from "../session-runtime/ask-reverse-request.ts";
 import { createGithubTool } from "./github.ts";
 import { createManageSkillTool, type ManageSkillPort } from "./manage-skill.ts";
+import { createCheckpointTool } from "./checkpoint.ts";
+import { createRewindTool } from "./rewind.ts";
+import type { NamedCheckpointToolPort } from "../session-runtime/named-checkpoint-domain.ts";
 
 export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
@@ -71,6 +74,8 @@ export interface StdlibToolsOptions {
 	readonly askPort?: AskPort;
 	/** Canonical user-skill 写入端口；仅 standard Session Owner 组合注入。 */
 	readonly manageSkill?: ManageSkillPort;
+	/** Named checkpoint/fork handoff; both tools are absent unless the full port is wired. */
+	readonly namedCheckpoint?: NamedCheckpointToolPort;
 	/** todo 工具的持久化 sink;未注入时 todo 只在进程内维护状态。 */
 	readonly ledger?: import("../ledger/types.ts").LedgerSink;
 	/**
@@ -137,6 +142,10 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
 	if (options.permissionRequester !== undefined) register(createRequestPermissionsTool(options.permissionRequester));
 	if (options.askPort !== undefined) register(createAskTool(options.askPort));
 	if (options.manageSkill !== undefined) register(createManageSkillTool(options.manageSkill));
+	if (options.namedCheckpoint !== undefined) {
+		register(createCheckpointTool(options.namedCheckpoint));
+		register(createRewindTool(options.namedCheckpoint));
+	}
 	register(echoTool);
 	if (options.managedProcess) {
 		const processClient = options.managedProcess;
@@ -254,4 +263,9 @@ export type { AskToolDetails } from "./ask.ts";
 export type { AskAnswers, AskPort, AskQuestion } from "../session-runtime/ask-reverse-request.ts";
 export { createManageSkillTool, manageSkillSchema } from "./manage-skill.ts";
 export type { ManageSkillPort, ManageSkillToolInput } from "./manage-skill.ts";
+export { createCheckpointTool, checkpointSchema } from "./checkpoint.ts";
+export type { CheckpointToolInput } from "./checkpoint.ts";
+export { createRewindTool, rewindSchema } from "./rewind.ts";
+export type { RewindToolInput } from "./rewind.ts";
+export type { NamedCheckpointToolPort, CheckpointCreateResult } from "../session-runtime/named-checkpoint-domain.ts";
 export { echoTool };

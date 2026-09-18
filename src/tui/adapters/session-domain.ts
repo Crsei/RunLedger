@@ -81,10 +81,12 @@ export function createSessionDomainPort(domain: SessionDomainPortInput): Session
 			...(request.agentMode === undefined ? {} : { agentMode: request.agentMode }),
 		}),
 		resume: async (request) => transition(domain, request, "session.resume", "resume", { targetSessionId: request.targetSessionId }),
-			fork: async (request) => transition(domain, request, "session.fork", "fork", {
-				sourceSessionId: request.sourceSessionId,
-				expectedSourceHeadSequence: request.expectedSourceHeadSequence,
-			}),
+		fork: async (request) => transition(domain, request, "session.fork", "fork", {
+			sourceSessionId: request.sourceSessionId,
+			expectedSourceHeadSequence: request.expectedSourceHeadSequence,
+			...(request.compaction === undefined ? {} : { compaction: request.compaction }),
+			...(request.throughSequence === undefined ? {} : { throughSequence: request.throughSequence }),
+		}),
 			rename: async (request) => {
 				if (!domain.supports("session.title.set") || domain.command === undefined) return unavailable(request, "session.title.set");
 				const result = await invoke(request, () => domain.command!("session.title.set", {
