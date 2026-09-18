@@ -3,6 +3,7 @@
 本目录保存跨领域实施编排；公共合同、生产 authority 与验收状态仍归各专题。完整历史计划导航见 [开发索引](../00-index.md)。
 
 | 计划 | 范围与状态入口 |
+| [Plan 22：配置格式 YAML 支持与 settings 参数扩展](22-config-yaml-and-settings-parameter-plan.md) | `planned`；以 oh-my-pi `settings-schema.ts` 的 459 项为口径给出参数映射判定（约 90 项在 RunLedger 有落点，其余为不移植或需先裁定），并设计 YAML 配置入口。**Y1 动手前需先关闭 §8 的 D1–D3 裁定**；§7 R1 的 `webSearch` 未接线缺陷建议先单独修复。 |
 | [Plan 21：oh-my-pi computer use 能力复刻](21-omp-computer-use-port-plan.md) | `not started`；把上游的 host desktop 控制（窗口/截图/native 输入/AX/剪贴板）复刻为受治理的一等工具，而不是 eval prelude。阶段 A 合同与端口 → B Windows native → C 工具面 → D settings/CLI/TUI → E 提示词 → F 非 Windows。明确不移植 `eval`/`run-code` 内核、`browser`、PDF 与 provider 原生 computer tool，且不触碰 `src/security/sandbox/`。 |
 | [Plan 20：omp 可实现工具移植](20-omp-implementable-tools-port-plan.md) | `in progress`；在 Plan 19 已落地的 archive/sqlite/ask 基础上，依次实现命名 checkpoint/新会话 rewind、DOCX/PPTX/XLSX/EPUB `read`、受治理 `image_gen`、只读 `github` 和 canonical user `manage_skill`。明确排除 ast/PDF/browser/eval/Memory/yield-hub；每阶段的 authority、文件和验收门槛见本文。 |
 |---|---|
