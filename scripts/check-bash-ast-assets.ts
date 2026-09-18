@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { promisify } from "node:util";
-import { dirname, join, relative } from "node:path";
+import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanBashAstSecurityBoundaries } from "./bash-ast-security-boundaries.ts";
 
@@ -68,10 +69,31 @@ async function assertPackageManifest(): Promise<void> {
 	}
 }
 
+/**
+ * 定位 npm 的 JS 入口。Windows 上 PATH 只提供 `npm.cmd` 与无扩展名的 shell shim，
+ * 二者在无 shell 时都无法直接 spawn（execFile 会 ENOENT 或 EINVAL），因此统一解析
+ * 到 npm 的 JS 入口并用当前 Node 执行，不依赖 shell 解析与 PATHEXT。
+ */
+function resolveNpmCli(): { readonly executable: string; readonly args: readonly string[] } {
+	const executable = process.execPath;
+	const candidates: string[] = [];
+	const fromEnvironment = process.env.npm_execpath;
+	if (fromEnvironment !== undefined && fromEnvironment.endsWith(".js")) candidates.push(fromEnvironment);
+	// npm 与 node 同装时入口固定在 <nodeDir>/node_modules/npm/bin/npm-cli.js。
+	candidates.push(join(dirname(executable), "node_modules", "npm", "bin", "npm-cli.js"));
+	for (const entry of (process.env.PATH ?? "").split(delimiter)) {
+		candidates.push(join(entry || ".", "node_modules", "npm", "bin", "npm-cli.js"));
+	}
+	const entry = candidates.find((candidate) => existsSync(candidate));
+	if (entry === undefined) throw new Error("unable to locate npm-cli.js; cannot verify packed assets");
+	return { executable, args: [entry] };
+}
+
 async function assertPackedAssets(): Promise<void> {
 	// `dist/**` 也进包，清单随构建产物增长；默认 1 MiB stdout 上限会在 dist
 	// 变大后误报 "stdout maxBuffer length exceeded"。这里只解析清单，不需要限流。
-	const result = await execFileAsync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+	const npm = resolveNpmCli();
+	const result = await execFileAsync(npm.executable, [...npm.args, "pack", "--dry-run", "--json", "--ignore-scripts"], {
 		cwd: root,
 		maxBuffer: 64 * 1024 * 1024,
 	});

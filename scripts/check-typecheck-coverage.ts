@@ -7,6 +7,15 @@ import ts from "typescript";
 const CONFIGS = ["tsconfig.tests.json", "tsconfig.bun-tests.json", "tsconfig.scripts.json", "tsconfig.examples.json"] as const;
 const ROOT_CONSUMERS = new Map([["vitest.config.ts", "tsconfig.scripts.json"]]);
 
+/**
+ * TS 的 `parsed.fileNames` 在所有平台上都规范成 `/` 分隔，而 `node:path` 的
+ * resolve/readdir 在 Windows 上产出 `\`；两侧统一分隔符后再比较，否则整份
+ * consumer 清单都会被判成 unowned。
+ */
+function coverageKey(path: string): string {
+	return path.replaceAll("\\", "/");
+}
+
 async function listTypescriptFiles(directory: string): Promise<string[]> {
 	let entries;
 	try { entries = await readdir(directory, { withFileTypes: true }); }
@@ -56,7 +65,7 @@ async function inspectWorkspacePackages(
 			if (read.error) { diagnostics.push(`invalid_config: ${label}: ${ts.flattenDiagnosticMessageText(read.error.messageText, " ")}`); continue; }
 			const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, directory, undefined, path);
 			for (const error of parsed.errors) diagnostics.push(`invalid_config: ${label}: ${ts.flattenDiagnosticMessageText(error.messageText, " ")}`);
-			for (const file of parsed.fileNames) owners.set(file, [...(owners.get(file) ?? []), label]);
+			for (const file of parsed.fileNames) owners.set(coverageKey(file), [...(owners.get(coverageKey(file)) ?? []), label]);
 		}
 		files.push(...(await listTypescriptFiles(resolve(directory, "src"))), ...(await listTypescriptFiles(resolve(directory, "test"))));
 	}
@@ -80,7 +89,7 @@ async function run(): Promise<void> {
 		for (const error of parsed.errors) diagnostics.push(`invalid_config: ${config}: ${ts.flattenDiagnosticMessageText(error.messageText, " ")}`);
 		if (config === "tsconfig.bun-tests.json" && !parsed.options.types?.includes("bun")) diagnostics.push(`missing_bun_types: ${config}`);
 		if (config !== "tsconfig.bun-tests.json" && parsed.options.types?.includes("bun")) diagnostics.push(`unexpected_bun_types: ${config}`);
-		for (const file of parsed.fileNames) owners.set(file, [...(owners.get(file) ?? []), config]);
+		for (const file of parsed.fileNames) owners.set(coverageKey(file), [...(owners.get(coverageKey(file)) ?? []), config]);
 	}
 	const files = [
 		...(await Promise.all(["tests", "scripts", "examples"].map((directory) => listTypescriptFiles(resolve(root, directory))))).flat(),
@@ -88,7 +97,7 @@ async function run(): Promise<void> {
 	].sort();
 	for (const file of files) {
 		const path = relative(root, file).replaceAll("\\", "/");
-		const fileOwners = owners.get(file) ?? [];
+		const fileOwners = owners.get(coverageKey(file)) ?? [];
 		const expectedOwner = ROOT_CONSUMERS.get(path) ?? (path.startsWith("scripts/") ? "tsconfig.scripts.json" : path.startsWith("examples/") ? "tsconfig.examples.json" : path.endsWith(".bun.test.ts") ? "tsconfig.bun-tests.json" : "tsconfig.tests.json");
 		if (fileOwners.length === 0) diagnostics.push(`unowned_consumer: ${path}`);
 		else if (fileOwners.length > 1) diagnostics.push(`overlapping_consumer: ${path}: ${fileOwners.join(", ")}`);
@@ -97,7 +106,7 @@ async function run(): Promise<void> {
 	const packages = await inspectWorkspacePackages(root, diagnostics);
 	for (const file of packages.files) {
 		const path = relative(root, file).replaceAll("\\", "/");
-		const fileOwners = packages.owners.get(file) ?? [];
+		const fileOwners = packages.owners.get(coverageKey(file)) ?? [];
 		if (fileOwners.length === 0) diagnostics.push(`unowned_package_consumer: ${path}`);
 		else if (fileOwners.length > 1) diagnostics.push(`overlapping_package_consumer: ${path}: ${fileOwners.join(", ")}`);
 	}
