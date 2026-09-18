@@ -11,8 +11,9 @@
 1. **参数映射：459 项中只有约 90 项在 RunLedger 有落点。** 其中约 40 项已对等（只是命名/层级不同），约 50 项「能力已在、可新增配置暴露」。其余约 370 项要么 RunLedger 没有对应产品面（不移植），要么与既有裁定冲突（须先裁定）。
 2. **RunLedger 的配置面比 omp 小一个数量级**，差异不是「缺配置项」，而是**缺产品能力**。因此本计划的重点应放在「把已有能力暴露成配置」，而不是照搬 omp 的键名。
 3. **YAML 不是格式替换，而是新增一层解析入口。** 现有全部配置载体（8 类文件）都是 JSON，且多数走 `JSON.parse` 后接**结构化清洗**（sanitizer）或 **exact schema 校验**（fail closed）。YAML 必须在**不改变任何 authority 规则**的前提下接入。
-4. **有三项必须用户裁定后才能动代码**，见 §8：D1 YAML 解析器选型、D2 YAML 与 JSON 的关系、D3 参数扩展范围。其中 D1 在 `plugin-mcp-skill-hooks/01` §648/§656 已有「**未引入 YAML parser**」的历史决定，重新开启需要显式裁定。
-5. **不建议一次性实现 459 项。** 建议按 §5 的 Y0–Y6 分阶段：先把 YAML 通道打通（Y1–Y3），再按收益逐批暴露参数（Y4–Y6）。
+4. **三项前置裁定已锁定**（见 §8）：D1 = **A**（引入 `yaml` 包，显式撤销 `plugin-mcp-skill-hooks/01` §648/§656 的「未引入 YAML parser」范围裁定）、D2 = **B**（双读，**YAML 优先** + 必须显式诊断）、D3 = **(a)**（只做 `MAPPED`+`EXPOSABLE`，不新建能力）。
+5. **§7 R1（`settings.webSearch` 被 sanitizer 丢弃）已先于 YAML 单独修复并提交**（`f15ccf2`），因为它是现存缺陷、与 YAML 无关。
+6. **不建议一次性实现 459 项。** 按 §5 的 Y0–Y6 分阶段：先把 YAML 通道打通（Y1–Y3），再按收益逐批暴露参数（Y4–Y6）。
 
 ---
 
@@ -83,7 +84,7 @@
 | `marketplace.autoUpdate` | `marketplace.autoUpdate` | 取值 `off\|notify\|auto` 一致 |
 | `security.enabled` | `settings.security` 段 | RunLedger 无总开关，靠 schema fail closed |
 | `bashInterceptor.enabled`、`bashInterceptor.patterns` | `settings.security.bashAnalyzerMode` + `--bash-analyzer` | RunLedger 为 `legacy\|shadow\|ast` 三态 |
-| `providers.webSearchOrder`、`webSearchExclude`、`webSearchTimeoutSeconds` | `settings.webSearch.order` / `.exclude` / `.timeoutSeconds` | ⚠️ 见 §7 风险 R1：该字段当前被 sanitizer 丢弃 |
+| `providers.webSearchOrder`、`webSearchExclude`、`webSearchTimeoutSeconds` | `settings.webSearch.order` / `.exclude` / `.timeoutSeconds` | 已接线；§7 R1 的 sanitizer 丢弃缺陷已于 `f15ccf2` 单独修复 |
 | `searxng.*`（8 项） | `settings.webSearch.searxng.*` | 字段一一对应 |
 | `exa.enabled`、`exa.searchDelayMs` | `websource` 的 `ExaSettings` | 库层已有类型，settings 未接线 |
 | `worktree.base`、`cleanSource`、`clone` | `--worktree` / `--worktree-ref` / `--worktree-branch` | RunLedger 为 CLI 参数 + 持久化绑定 |
@@ -212,17 +213,19 @@ security:
 
 **要点**：YAML 只承担**语法层**替代，**字段名、层级、authority、校验规则与 JSON 完全一致**。不引入 YAML 专属的键名映射，避免出现两套 schema。
 
-### 4.2 解析器选型（待裁定 D1）
+### 4.2 解析器选型（D1 = **A**，已裁定）
 
 | 方案 | 优点 | 缺点 |
 |---|---|---|
-| **A. 引入成熟解析库**（`yaml`，MIT，零依赖，ESM） | 语义完整（anchor/alias/多行/注释/流式）；`plugin-mcp-skill-hooks/01` §407 原定方案；不手写解析器的长期维护负担 | 新增生产依赖，需 `package-lock.json` 审阅；该决策在 §648/§656 曾被明确**推迟**，重开需裁定 |
+| **A. 引入成熟解析库**（`yaml`，MIT，零依赖，ESM） | 语义完整（anchor/alias/多行/注释/流式）；`plugin-mcp-skill-hooks/01` §407 原定方案；不手写解析器的长期维护负担 | 新增生产依赖，需 `package-lock.json` 审阅；该决策在 §648/§656 曾被明确**推迟**，本次裁定重开 |
 | **B. 自写有界子集 parser** | 零依赖，与 `src/extensions/skills/frontmatter.ts` 先例一致；边界可控 | 只能覆盖标量/列表/映射；用户写标准 YAML 会踩到「看起来对但不支持」的坑；配置面比 frontmatter 大得多，维护成本高 |
 | **C. 不引入 YAML，只做 JSON + 注释友好格式** | 零风险 | 不满足本次需求 |
 
-**建议：A。** 理由：配置面（含 `security` fail-closed 段）比 SKILL.md frontmatter 复杂得多，自写子集 parser 的「静默不支持」会直接变成用户配置失效；`yaml` 包零依赖、许可证干净，符合「依赖沿用仓库版本约束」的可审阅要求。若坚持零依赖，则必须选 B **并把支持的子集写进用户文档**，且对超出子集的语法**显式报错**（不静默忽略）。
+**裁定：A。** 理由：配置面（含 `security` fail-closed 段）比 SKILL.md frontmatter 复杂得多，自写子集 parser 的「静默不支持」会直接变成用户配置失效；`yaml` 包零依赖、许可证干净，符合「依赖沿用仓库版本约束」的可审阅要求。
 
-### 4.3 YAML 与 JSON 的关系（待裁定 D2）
+**撤销记录**：`plugin-mcp-skill-hooks/01` §648/§656 曾裁定「不引入 YAML parser，仅用自写 frontmatter 子集」。本计划按 D1=A 显式撤销该范围裁定——**该撤销仅适用于配置文件解析**，`src/extensions/skills/frontmatter.ts` 的有界 parser 保持不变，不因本次引入依赖而被替换。
+
+### 4.3 YAML 与 JSON 的关系（D2 = **B**，已裁定）
 
 | 方案 | 行为 | 风险 |
 |---|---|---|
@@ -230,7 +233,12 @@ security:
 | **B. 双读 + YAML 优先** | YAML 覆盖 JSON | 符合「新格式优先」直觉；但对已有 JSON 用户是隐式行为变更 |
 | **C. 只读 YAML（一次性切换）** | 移除 JSON 读取 | 破坏性；与 `migrate` 的显式迁移原则冲突 |
 
-**建议：A**，并把「双文件同时存在」作为**显式诊断**（不是静默）输出；后续如要切换优先级，另开显式迁移入口。
+**裁定：B。** YAML 存在时以 YAML 为准，JSON 仅作兜底。两条硬性约束：
+
+1. **必须显式诊断**：同一载体下 `.yaml` 与 `.json` 同时存在时，向 stderr 输出一条诊断，明确写出「正在使用 `<yaml path>`，`<json path>` 被忽略」。**不允许静默忽略**——这是 B 相对 A 唯一新增的风险面。
+2. **YAML 解析失败不回退 JSON**：若 `.yaml` 存在但解析失败，按该载体既有的 fail-closed 规则处理（settings 段未知字段使整段失效；`settings.json` 整体非法时降级 `recording: off` + stderr 诊断），**不得**转而读取 `.json`，否则会出现「YAML 写错却按旧 JSON 生效」的隐性状态。
+
+`.yml` 与 `.yaml` 同时存在视为同格式冲突，按同一诊断路径报错，不引入第三优先级。
 
 ### 4.4 文件候选与作用域
 
@@ -252,7 +260,7 @@ security:
 ### 4.5 迁移与兼容
 
 - **不做自动迁移**：不把 `settings.json` 转写成 YAML（与「旧数据迁移必须走显式迁移入口」一致）。
-- 提供可选的 `runledger config convert --to yaml [--scope user|workspace]`（**待裁定**是否纳入本期）：只做格式转换，不改变 authority，输出前打印 diff 摘要，要求显式 `--confirm`。
+- 提供可选的 `runledger config convert --to yaml [--scope user|workspace]`（**D4 = 否，本期不做**）：只做格式转换，不改变 authority，输出前打印 diff 摘要，要求显式 `--confirm`。
 - `docs/configuration.md` 需把「配置格式：仅 JSON，不支持 YAML」一节改写为双格式说明，并明确优先级与诊断行为。
 
 ### 4.6 涉及文件清单
@@ -281,7 +289,7 @@ security:
 | **Y1** | 解析层：新增统一的 `parseConfigText(text, format)` 与 `resolveConfigCandidates(basePath)`，只做「文本 → 未知对象」，不碰 schema | Y0 | 单测覆盖 JSON/YAML 等价性、非法输入、BOM、CRLF、空文件 |
 | **Y2** | 接入 `settings`（user + workspace）与 `security` 段；**authority 与 fail-closed 语义不变** | Y1 | 现有 `settings`/`security` 测试全绿；新增 YAML 等价性测试；workspace 层 `compaction`/`agentMode` 仍抛错 |
 | **Y3** | 接入其余载体（`models`、`tui-preferences`、`mcp`、`hooks`、`lsp`、managed security） | Y2 | 各载体等价性测试；managed YAML 的收紧校验与 JSON 一致 |
-| **Y4** | 暴露 `MAPPED` 对照文档 + 修复 `webSearch` 未接线（§7 R1） | Y3 | `docs/configuration.md` 双格式章节；`webSearch` 可实际生效 |
+| **Y4** | 暴露 `MAPPED` 对照文档（§7 R1 的 `webSearch` 修复已提前单独完成） | Y3 | `docs/configuration.md` 双格式章节；`webSearch` 已可实际生效 |
 | **Y5** | 按收益暴露第一批 `EXPOSABLE`：read/todo/checkpoint/plan/ask/github/image_gen/web_search/bash/tools/thinkingBudgets/display/tui | Y4 | 每项有独立字段表 + 定向测试；不改变默认行为 |
 | **Y6** | 视裁定处理 `NEW-CAPABILITY` 与 `BLOCKED` 项 | 各专项裁定 | 按专项计划验收 |
 
@@ -304,7 +312,7 @@ security:
 
 | 编号 | 风险 | 处置 |
 |---|---|---|
-| **R1** | `settings.webSearch` 被 `sanitizeProjectSettings()` 丢弃（已实测：写入 `settings.json` 后 `loadProjectSettings()` 不返回该字段），而 `session-runtime/domain.ts` 会消费它 | Y4 修复：补齐 sanitizer 分支。**这是现存缺陷，与 YAML 无关，应优先于 YAML 单独修复** |
+| **R1** | `settings.webSearch` 被 `sanitizeProjectSettings()` 丢弃（已实测：写入 `settings.json` 后 `loadProjectSettings()` 不返回该字段），而 `session-runtime/domain.ts` 会消费它 | **已关闭（`f15ccf2`）**：补齐 user 层 sanitizer、workspace 层只保留 `exclude`，并在 CLI `openView()` 用 `mergeWebSearchSettings()` 收窄合并。回归用例 7 条（`tests/storage/settings-manager.test.ts` 37 → 44 passed）；`docs/configuration.md` §11/§13/§17 同步更正。与 YAML 无关，已先于 YAML 单独提交 |
 | **R2** | YAML 的 anchor/alias/多行/类型隐式转换（`yes`/`on`/`1.0`）可能产生与 JSON 不同的值语义 | 选 D1-A 时禁用隐式类型转换或显式声明；选 D1-B 时直接拒绝这些语法并报错 |
 | **R3** | 双格式并存导致「改了不生效」 | §4.3 的显式诊断 + 文档前置说明 |
 | **R4** | 引入依赖后进入 `dist/`，影响打包与边界脚本 | 依赖审阅 + `check:*` 全跑；确认不新增 `process.platform` 分支 |
@@ -313,15 +321,15 @@ security:
 
 ---
 
-## 8. 待裁定
+## 8. 裁定记录
 
-| 编号 | 问题 | 选项 | 建议 |
+| 编号 | 问题 | 选项 | 裁定 |
 |---|---|---|---|
-| **D1** | YAML 解析器选型 | A 引入 `yaml` 包 / B 自写有界子集 parser / C 不做 | **A**（见 §4.2）；注意 `plugin-mcp-skill-hooks/01` §648/§656 的「未引入」决定需显式撤销 |
-| **D2** | YAML 与 JSON 的关系 | A 双读 + JSON 优先 / B 双读 + YAML 优先 / C 只读 YAML | **A** |
-| **D3** | 参数扩展范围 | (a) 只做 `MAPPED`+`EXPOSABLE`（约 90 项）/ (b) 追加 `NEW-CAPABILITY`（约 40 项）/ (c) 全量对齐 | **(a)**；`NEW-CAPABILITY` 与 `BLOCKED` 逐项另立专项 |
+| **D1** | YAML 解析器选型 | A 引入 `yaml` 包 / B 自写有界子集 parser / C 不做 | **A（已裁定）**：引入 `yaml` 包。显式撤销 `plugin-mcp-skill-hooks/01` §648/§656 的「未引入 YAML parser」决定，该处需同步加注 |
+| **D2** | YAML 与 JSON 的关系 | A 双读 + JSON 优先 / B 双读 + YAML 优先 / C 只读 YAML | **B（已裁定）**：双读，**YAML 优先**。两文件同时存在时必须给出显式诊断，说明实际生效的是 YAML，避免「改了 JSON 不生效」 |
+| **D3** | 参数扩展范围 | (a) 只做 `MAPPED`+`EXPOSABLE`（约 90 项）/ (b) 追加 `NEW-CAPABILITY`（约 40 项）/ (c) 全量对齐 | **(a)（已裁定）**：只做 `MAPPED`+`EXPOSABLE`，不新建能力；`NEW-CAPABILITY` 与 `BLOCKED` 逐项另立专项 |
 | **D4** | 是否提供 `config convert` 迁移命令 | 是 / 否 | 否（本期），避免与「显式迁移入口」原则混淆 |
-| **D5** | 是否同步修复 §7 R1（`webSearch` 未接线） | 是 / 否 | **是**，且建议先于 YAML 单独提交 |
+| **D5** | 是否同步修复 §7 R1（`webSearch` 未接线） | 是 / 否 | **是（已执行）**：先于 YAML 单独提交，见 `f15ccf2` 与 §7 R1 |
 
 ---
 

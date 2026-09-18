@@ -299,19 +299,21 @@ canonical home 由 composition root 解析一次：`RUNLEDGER_DIR` 必须是**�
 
 ## 11. 用户级 `settings.json` — Web 检索
 
-`webSearch` 声明在 `ProjectSettings` 中，字段如下。**注意：当前 `settings-manager.ts` 的 sanitizer 未保留该字段，写在 `settings.json` 里会被丢弃**（见第 16 节）。
+`webSearch` 声明在 `ProjectSettings` 中，字段如下。**user 层拥有 `order` / `timeoutSeconds` / `searxng` 的 authority**；workspace 层只能追加 `exclude` 收窄（见第 13 节）。
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `order` | string[] | 内建顺序 | 优先 provider 列表；未识别的 id 在解析时丢弃 |
-| `exclude` | string[] | 无 | 永不使用的 provider；只做排除 |
-| `timeoutSeconds` | number | `60` | 单次 provider 传输硬超时；上限 300 |
-| `searxng.endpoint` | string | 无 | SearXNG 端点 |
-| `searxng.token` | string | 无 | SearXNG token |
-| `searxng.basicUsername` / `basicPassword` | string | 无 | Basic 认证 |
-| `searxng.engines` / `categories` | string[] | 无 | 引擎与分类过滤 |
-| `searxng.language` | string | 无 | 语言 |
-| `searxng.safesearch` | number | 无 | 安全搜索等级 |
+| `order` | string[] | 内建顺序 | 优先 provider 列表；未识别的 id 在解析时丢弃。**仅 user 层** |
+| `exclude` | string[] | 无 | 永不使用的 provider；只做排除。user 与 workspace 均可写，两层取并集 |
+| `timeoutSeconds` | number | `60` | 单次 provider 传输硬超时；上限 300。**仅 user 层** |
+| `searxng.endpoint` | string | 无 | SearXNG 端点。**仅 user 层** |
+| `searxng.token` | string | 无 | SearXNG token。**仅 user 层** |
+| `searxng.basicUsername` / `basicPassword` | string | 无 | Basic 认证。**仅 user 层** |
+| `searxng.engines` / `categories` | string[] | 无 | 引擎与分类过滤。**仅 user 层** |
+| `searxng.language` | string | 无 | 语言。**仅 user 层** |
+| `searxng.safesearch` | number | 无 | 安全搜索等级。**仅 user 层** |
+
+provider id 列表在清洗时去重并保持首次出现顺序；未识别的 id 由 `storage/web-search-settings.ts` 在消费时过滤，不会因拼写错误改变 fallback 顺序。
 
 ## 12. 用户级 `settings.json` — 权限与安全（`security` 段）
 
@@ -417,7 +419,7 @@ sandbox 强度序：`off < external < workspace-write < read-only < strict`。sa
 | `uiTheme` | 加载时忽略 |
 | `multiAgent` | 可写，但只能收窄 user 有效值 |
 | `skills` | 可写，但只能收窄（user `false` 不可被反转） |
-| `webSearch` | 声明为「workspace 只能追加 `exclude`」，但当前 sanitizer 未保留该字段 |
+| `webSearch` | 可写，但只保留 `exclude`；`order` / `timeoutSeconds` / `searxng` 被丢弃 |
 | 其余（`provider`、`model`、`thinkingLevel`、`autoTitle`、`recap`、`goal`、`loop`、`theme`、`logo`、`enabledModels`、`steeringMode`、`followUpMode`、`hideThinkingBlock`、`plugins`） | 可写 |
 
 `sessionDir` 在任何层都被结构化拒绝，且不会被持久化。
@@ -551,7 +553,7 @@ wire 探测按 Anthropic → OpenAI 的固定顺序进行，结果由进程内�
 以下为本次核对中发现的、与既有文档或接口声明不一致之处，按源码事实记录：
 
 1. **`recording` 默认值**：实现为 `{ mode: "events", failurePolicy: "best_effort" }`（`src/storage/settings-manager.ts`）。[CLI 参数表](cli.md) 第 5 节写作「默认 `off + best_effort`」，与实现不符。
-2. **`webSearch` 字段未接线**：`ProjectSettings` 声明了 `webSearch`，`src/runtime/session-runtime/domain.ts` 也消费 `options.settings.webSearch`，但 `sanitizeProjectSettings()` 未保留该键。实测把 `webSearch` 写进 `settings.json` 后，`loadProjectSettings()` 返回结果中不含该字段，即**当前无法通过 canonical settings 生效**。
+2. **`webSearch` 曾是未接线字段（已修复）**：`ProjectSettings` 声明了 `webSearch`，`src/runtime/session-runtime/domain.ts` 也消费 `options.settings.webSearch`，但此前 `sanitizeProjectSettings()` 未保留该键，写进 `settings.json` 会被整体丢弃。已在 `f15ccf2` 修复：user 层全量保留，workspace 层只保留 `exclude`，CLI `openView()` 用 `mergeWebSearchSettings()` 把 workspace 的 exclude 收窄合并到 user 有效值上。
 3. **`docs/cli.md` 未覆盖的启动参数**：`--mode`、`--fork-raw`、`--fork-at`、`--prompt-file` 已在 `src/cli/args.ts` 中解析并消费，但 CLI 参数表仍称「当前没有顶层 `--prompt`、`--print`」。
 4. **workspace 层非法字段会抛错**：`compaction` 与 `agentMode` 出现在 workspace `settings.json` 时，`loadProjectSettings()` 抛异常而非返回诊断，该 workspace 的 settings 加载会整体失败。
 5. **`multiAgent` 配置上限 ≠ 运行时能力**：配置允许 `maxChildrenPerRoot: 3`、`maxTotalAgents: 4`，但当前产品内 child 委派仍是同一 root 最多一个 active child。
