@@ -164,7 +164,10 @@ function readOperations(env: ExecutionEnv): NonNullable<ReadToolOptions["operati
 	return {
 		readFile: (path) => env.fs.readFile(path),
 		access: async (path) => { await env.fs.stat(path); },
-		stat: async (path) => ({ mtimeMs: (await env.fs.stat(path)).mtimeMs }),
+		stat: async (path) => {
+			const value = await env.fs.stat(path);
+			return { mtimeMs: value.mtimeMs, size: value.size };
+		},
 	};
 }
 

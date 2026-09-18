@@ -35,6 +35,11 @@ import {
   type TruncationResult,
 } from "./tool-support.ts";
 import { looksLikeArchiveBytes, parseArchiveReadTarget, readArchiveBytes } from "./read-archive.ts";
+import {
+  isOfficeDocumentSizeAllowed,
+  parseOfficeReadTarget,
+  readOfficeBytes,
+} from "./read-office.ts";
 import { looksLikeSqlite, parseSqliteReadTarget, readSqliteBytes } from "./read-sqlite.ts";
 
 export const readSchema = Type.Object({
@@ -67,14 +72,14 @@ export interface ReadToolDetails {
   /** 选择器生效时被忽略的 offset/limit 参数名,便于模型纠正调用。 */
   ignoredParams?: readonly string[];
   /** 本次走的是非文本分支(sqlite 库 / 归档);缺省为普通文本读取。 */
-  media?: "sqlite" | "archive";
+  media?: "sqlite" | "archive" | "office";
 }
 
 /** 可替换 IO;默认走 node:fs。便于测试注入 / 远端代理。 */
 export interface ReadOperations {
   readFile: (absolutePath: string) => Promise<Buffer>;
   access: (absolutePath: string) => Promise<void>;
-  stat: (absolutePath: string) => Promise<{ mtimeMs: number }>;
+  stat: (absolutePath: string) => Promise<{ mtimeMs: number; size?: number }>;
 }
 
 /** read 默认 ops:本地 fs;生产由 createStdlibTools 注入 governed env。 */
@@ -133,6 +138,74 @@ function sliceBySelector(
     }
   }
   return { lines: out, firstLine: firstLine === 0 ? 1 : firstLine };
+}
+
+/** 将已解码文本统一套用 `read` 的选择器、行号与截断语义。 */
+function renderTextResult(
+  text: string,
+  rawPath: string,
+  absolutePath: string,
+  params: ReadToolInput,
+  options: { cacheHit?: boolean; media?: ReadToolDetails["media"] } = {},
+): AgentToolResult<ReadToolDetails> {
+  const { offset, limit } = params;
+  const split = splitPathAndSel(rawPath);
+  const parsed = parseSel(split.sel);
+  const hasSelector = parsed.kind !== "none";
+  const addLineNumbers = hasSelector
+    ? !isRawSelector(parsed) && (params.lineNumbers ?? true)
+    : (params.lineNumbers ?? true);
+  const allLines = splitAddressableLines(text);
+
+  let displayLines: string[];
+  let startLine: number;
+  let maxLines: number;
+  if (hasSelector) {
+    const resolved = resolveTailSelector(parsed, allLines.length);
+    const sliced = sliceBySelector(allLines, resolved, addLineNumbers);
+    displayLines = sliced.lines;
+    startLine = sliced.firstLine - 1 + sliced.lines.length;
+    maxLines = Number.MAX_SAFE_INTEGER;
+  } else {
+    const rawStartLine = (offset ?? 1) - 1;
+    const sliceEnd = limit !== undefined ? rawStartLine + limit : allLines.length;
+    const sliced = allLines.slice(Math.max(0, rawStartLine), Math.max(0, sliceEnd));
+    const base = offset ?? 1;
+    displayLines = addLineNumbers
+      ? sliced.map((line, index) => formatLineNumber(base + index, line))
+      : sliced;
+    startLine = rawStartLine + sliced.length;
+    maxLines = limit ?? DEFAULT_MAX_LINES;
+  }
+  const { text: outText, truncation } = truncateHead(displayLines.join("\n"), {
+    maxLines,
+    maxBytes: DEFAULT_MAX_BYTES,
+    detectBytesPerLine: true,
+  });
+  const hints: string[] = [];
+  if (truncation.truncated) {
+    if (truncation.firstLineExceedsLimit) {
+      hints.push(
+        `Line ${truncation.firstLineExceedsLimit} exceeds byte limit; use \`bash sed -n '${truncation.firstLineExceedsLimit}p' ${absolutePath} | head -c ${DEFAULT_MAX_BYTES}\` to read it.`,
+      );
+    } else {
+      hints.push(`Use \`offset=${startLine}\` to continue reading.`);
+    }
+  }
+  const details: ReadToolDetails = { truncation, lineCount: truncation.outputLines };
+  if (options.cacheHit) details.cacheHit = true;
+  if (options.media !== undefined) details.media = options.media;
+  if (hasSelector) {
+    details.selector = split.sel;
+    const ignored: string[] = [];
+    if (offset !== undefined) ignored.push("offset");
+    if (limit !== undefined) ignored.push("limit");
+    if (ignored.length > 0) details.ignoredParams = ignored;
+  }
+  return {
+    content: [{ type: "text", text: hints.length === 0 ? outText : `${outText}\n\n${hints.join("\n")}` }],
+    details,
+  };
 }
 
 export function createReadTool(
@@ -233,16 +306,27 @@ export function createReadTool(
         }
       }
 
-      const split = splitPathAndSel(rawPath);
-      const parsed = parseSel(split.sel);
-      const hasSelector = parsed.kind !== "none";
-      // 选择器带 :raw 时抑制行号前缀;显式 lineNumbers 仍可在无选择器时生效。
-      const addLineNumbers = hasSelector
-        ? !isRawSelector(parsed) && (params.lineNumbers ?? true)
-        : (params.lineNumbers ?? true);
+      // Office/EPUB 容器的选择器属于转换后的 Markdown，而不是 ZIP 成员路径。
+      // 先按既有选择器规则切出真实文件名，再检查 ZIP magic；伪造扩展名仍按文本
+      // 读取，已确认的异常 ZIP 则必须以转换错误结束，不能静默泄漏二进制正文。
+      const officeSplit = splitPathAndSel(rawPath);
+      const officeTarget = parseOfficeReadTarget(officeSplit.path);
+      if (officeTarget !== null) {
+        const officePath = resolveToCwd(officeTarget.path, cwd);
+        const officeStat = await ops.stat(officePath);
+        if (officeStat.size !== undefined && !isOfficeDocumentSizeAllowed(officeStat.size)) {
+          throw new Error(`Document exceeds Office/EPUB ${8 * 1024 * 1024} byte input limit`);
+        }
+        const officeBytes = await ops.readFile(officePath);
+        if (looksLikeArchiveBytes(officeBytes)) {
+          const rendered = await readOfficeBytes(officeBytes, officeTarget.format);
+          return renderTextResult(rendered.text, rawPath, officePath, params, { media: "office" });
+        }
+      }
+
       // Path resolution is lexical here; a governed operations port performs
       // canonicalization and policy checks before touching the filesystem.
-      const absolutePath = resolveToCwd(split.path, cwd);
+      const absolutePath = resolveToCwd(officeSplit.path, cwd);
       await ops.access(absolutePath);
 
       // mtime 去重缓存
@@ -265,66 +349,7 @@ export function createReadTool(
         text = bytes.toString("utf8");
       }
 
-      const allLines = splitAddressableLines(text);
-
-      let displayLines: string[];
-      let startLine: number;
-      let maxLines: number;
-      if (hasSelector) {
-        const resolved = resolveTailSelector(parsed, allLines.length);
-        const sliced = sliceBySelector(allLines, resolved, addLineNumbers);
-        displayLines = sliced.lines;
-        // continuation hint 的行号基准:最后一段的末尾。
-        startLine = sliced.firstLine - 1 + sliced.lines.length;
-        maxLines = Number.MAX_SAFE_INTEGER;
-      } else {
-        const rawStartLine = (offset ?? 1) - 1;
-        const sliceEnd = limit !== undefined ? rawStartLine + limit : allLines.length;
-        const sliced = allLines.slice(Math.max(0, rawStartLine), Math.max(0, sliceEnd));
-        const base = offset ?? 1;
-        displayLines = addLineNumbers
-          ? sliced.map((ln, i) => formatLineNumber(base + i, ln))
-          : sliced;
-        startLine = rawStartLine + sliced.length;
-        maxLines = limit ?? DEFAULT_MAX_LINES;
-      }
-      const joined = displayLines.join("\n");
-
-      const { text: outText, truncation } = truncateHead(joined, {
-        maxLines,
-        maxBytes: DEFAULT_MAX_BYTES,
-        detectBytesPerLine: true,
-      });
-
-      // 截断附 hint
-      let displayText = outText;
-      const hints: string[] = [];
-      if (truncation.truncated) {
-        if (truncation.firstLineExceedsLimit) {
-          hints.push(
-            `Line ${truncation.firstLineExceedsLimit} exceeds byte limit; use \`bash sed -n '${truncation.firstLineExceedsLimit}p' ${absolutePath} | head -c ${DEFAULT_MAX_BYTES}\` to read it.`,
-          );
-        } else {
-          hints.push(`Use \`offset=${startLine}\` to continue reading.`);
-        }
-      }
-      if (hints.length > 0) {
-        displayText = `${outText}\n\n${hints.join("\n")}`;
-      }
-
-      const details: ReadToolDetails = { truncation, lineCount: truncation.outputLines };
-      if (cacheHit) details.cacheHit = true;
-      if (hasSelector) {
-        details.selector = split.sel;
-        const ignored: string[] = [];
-        if (offset !== undefined) ignored.push("offset");
-        if (limit !== undefined) ignored.push("limit");
-        if (ignored.length > 0) details.ignoredParams = ignored;
-      }
-      return {
-        content: [{ type: "text", text: displayText }],
-        details,
-      };
+      return renderTextResult(text, rawPath, absolutePath, params, { cacheHit });
     },
   };
 }

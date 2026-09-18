@@ -23,7 +23,10 @@ export function localReadOperations(): ReadOperations {
   return {
     readFile: (p) => fs.readFile(p),
     access: async (p) => { await fs.stat(p); },
-    stat: async (p) => ({ mtimeMs: (await fs.stat(p)).mtimeMs }),
+    stat: async (p) => {
+      const value = await fs.stat(p);
+      return { mtimeMs: value.mtimeMs, size: value.size };
+    },
   };
 }
 

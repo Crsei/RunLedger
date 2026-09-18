@@ -30,9 +30,9 @@ parity/02 §8 的结论是：RunLedger 当前**不需要** omp 的呈现层，�
 |---|---|---|---|
 | **A1** | `read` 的类型分派层 + sqlite 分支 + archive 分支 | 无（archive 解码器纯 TS） | **已实现**（证据见 §5.1） |
 | **A2** | `ask` 工具 + 通用反向请求 kind | 无新外部依赖 | **已实现**（证据见 §5.2） |
-| **B1** | `checkpoint` / `rewind` 语义 | 已裁定：**复用现有 fork 语义**（新会话） | planned |
+| **B1** | `checkpoint` / `rewind` 语义 | 已裁定：**复用现有 fork 语义**（新会话） | 已由 Plan 20 Stage I 实现；真实 provider TTY tool-call evidence 仍待补 |
 | **B2** | `ast_grep` / `ast_edit` | 已裁定：**不做**（保持 Plan 16 裁定 4） | 不做 |
-| **B3** | `read` 的 PDF 分支 / markit 文档转换 | 已裁定：**不做** | 不做 |
+| **B3** | `read` 的 PDF 分支 / markit 文档转换 | PDF 已裁定：**不做**；四种纯 TS 文档格式由 Plan 20 单列 | DOCX/PPTX/XLSX/EPUB 已由 Plan 20 Stage II 接入；PDF 不做 |
 | **C** | 工具呈现层（schema 预算 / 按需加载） | **实测未达触发条件**（见 §5.3），暂不实施 | 评估完成 |
 
 **范围外**：`eval`（模型侧代码执行内核，parity/00 §6 明确不移植）、`internal-urls`（同上）、`edit` 多模式 hashline（Plan 16 裁定 4）。

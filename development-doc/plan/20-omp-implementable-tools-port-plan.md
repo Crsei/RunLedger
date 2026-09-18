@@ -68,11 +68,11 @@
 
 | 文件 | 变更 |
 |---|---|
-| `src/websource/internal/xml.ts` | 自上游 `packages/utils/src/xml.ts` 移植的受限 XML parser，保留 entity expansion cap。 |
-| `src/websource/internal/docx/{converter,xml,index}.ts` | 自上游 `packages/utils/src/docx/**` 移植的 Buffer-only DOCX → HTML 层；去除 path/Bun.write 分支。 |
-| `src/runtime/tools/read-office.ts` | DOCX/PPTX/XLSX/EPUB 的 extension/magic 判定、纯 Buffer converter registry、Markdown 渲染与统一上限。 |
+| `src/websource/internal/xml.ts` | 受限 XML parser：保留命名空间/属性/文本，拒绝 DTD/custom entity，并有字节、元素、深度与 entity 引用上限。 |
+| `src/websource/internal/docx/{converter,xml,index}.ts` | Buffer-only DOCX 正文/表格/图片占位 Markdown 投影；无 path/Bun.write 分支。 |
+| `src/runtime/tools/read-office.ts` | DOCX/PPTX/XLSX/EPUB 的 extension/ZIP magic 判定、纯 Buffer converter registry、Markdown 渲染与统一输入/ZIP/XML/输出上限。 |
 | `src/runtime/tools/read.ts` | 调用 `readOfficeBytes`、保留现有 selector/truncation，`ReadToolDetails.media` 扩展为 `office`。 |
-| `src/websource/internal/turndown/{create,html}.ts` | 仅在上游 table/HTML 兼容缺口确实出现时补齐；不重写既有 scraper 语义。 |
+| `src/websource/internal/turndown/{create,html}.ts` | 复用 Plan 18 已有的 HTML → Markdown 实现处理 EPUB；不重写 scraper 语义。 |
 | `development-doc/plan/19-omp-tool-surface-expansion-plan.md` | 将 markit 四种纯 TS 格式的实现 authority 指向本计划，PDF 仍保留非目标。 |
 
 ### 4.3 验收
@@ -145,7 +145,7 @@
 | 阶段 | 初始状态 | 进入下一阶段的门槛 |
 |---|---|---|
 | I checkpoint/rewind | implemented，待真实 TTY tool-call evidence | 已完成 named event projection、owner-fenced atomic target/source handoff、标准 profile 注册、headless fail-fast、router/TUI switch 和 32 项定向测试；仍需可用 provider 下的 built CLI/TTY 实际工具调用证据。 |
-| II office/EPUB read | planned | 定向 converter/read tests + execution-boundary check |
+| II office/EPUB read | implemented | `read-office` 已仅通过 governed `read` 字节分派 DOCX/PPTX/XLSX/EPUB；受限 XML/ZIP 与输出界限、图片占位、converted Markdown selector 的定向测试和 execution-boundary check 已完成。PDF 仍不在范围。 |
 | III image_gen | planned | fake governed network tests；真实 provider 另列 pending/accepted 证据 |
 | IV GitHub read | implemented，待 built CLI smoke | `src/websource/github-read.ts` 与 `src/runtime/tools/github.ts` 已经由 `createWebSearchFetch({ principal: "github" })` 接入标准组合；定向 transport/tool/stdlib 测试已通过，仍须随本批次完成 check/build/CLI 验证。 |
 | V manage_skill | implemented，待 built CLI lifecycle | canonical user root、attempt fence、active-turn pending reload 与 standard-only 注册已接入；存储/工具定向测试已通过，仍须补 isolated CLI 的 create → next-turn discovery → delete 证据。 |
@@ -155,6 +155,8 @@
 ### 8.1 2026-09-18 本批次证据
 
 - 阶段 IV/V 已完成源码接线：GitHub 仅通过 governed `github` principal 访问固定 REST endpoint；`manage_skill` 仅写 canonical home、经 attempt fence，且 active turn 只登记 pending reload。
+- 阶段 II 已完成源码接线：`read-office.ts` 只接受 `ExecutionEnv.fs` 已读取的 ZIP 字节，DOCX/PPTX/XLSX/EPUB 输出 Markdown；输入 8 MiB、ZIP entry/member、XML byte/depth/element/entity 与转换输出均有上限。DTD/custom entity、坏 ZIP 不回落为正文；图像从不写盘，只投影占位。PDF 仍为 native 依赖非目标。
+- 定向测试 `tests/runtime/tools/read-office.test.ts` 加既有 archive/sqlite/read dispatch 测试：31 tests passed；覆盖四种最小容器、DOCX/PPTX 表格、EPUB metadata、图片占位、DTD 拒绝、converted selector 及伪装 `.docx` 文本回落。
 - 定向测试 `tests/{websource/github-read,runtime/tools/github,extensions/skills/managed-store,runtime/tools/manage-skill}.test.ts` 加 `tests/stdlib-tools.test.ts`：39 assertions passed。
 - `npm run check` 与 `npm run build` 均 exit 0；built `runledger --help` 在一个新建、隔离的 `RUNLEDGER_DIR` 下成功，随后已删除该空目录。
 - `npm test` 的 80 files / 577 assertions 都通过，但 Vitest worker 最终报 `Timeout calling "onTaskUpdate"`，使命令 exit 1；该 runner-level unhandled error 不视为本批次完整测试绿灯，也不由本计划范围外修改掩盖。
